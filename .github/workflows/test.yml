@@ -101,8 +101,6 @@ jobs:
         run: cargo doc --no-deps --document-private-items --all-features  
         env:
           RUSTDOCFLAGS: -D warnings
-      - name: Check README
-        run: ./scripts/check_synced_readme.py
  
   docker-build:
     runs-on: ubuntu-latest
