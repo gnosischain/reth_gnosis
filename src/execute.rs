@@ -180,7 +180,7 @@ where
         self.state.set_state_clear_flag(state_clear_flag);
     }
 
-    /// Apply post execution state changes that do not require an [EVM](Evm), such as: block
+    /// Apply post execution state changes that do not require an such as: block
     /// rewards, withdrawals, and irregular DAO hardfork state change
     // [Gnosis/fork:DIFF]
     pub fn post_execution(

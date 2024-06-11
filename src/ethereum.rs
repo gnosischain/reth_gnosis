@@ -1,4 +1,5 @@
-///! This module is exactly identical to https://github.com/paradigmxyz/reth/blob/268e768d822a0d4eb8ed365dc6390862f759a849/crates/ethereum/evm/src/execute.rs
+//! This module is exactly identical to <https://github.com/paradigmxyz/reth/blob/268e768d822a0d4eb8ed365dc6390862f759a849/crates/ethereum/evm/src/execute.rs>
+
 use reth::{
     primitives::{BlockWithSenders, ChainSpec, Receipt, Request},
     providers::ProviderError,
@@ -44,11 +45,6 @@ where
     ///
     /// This applies the pre-execution and post-execution changes that require an [EVM](Evm), and
     /// executes the transactions.
-    ///
-    /// # Note
-    ///
-    /// It does __not__ apply post-execution changes that do not require an [EVM](Evm), for that see
-    /// [`EthBlockExecutor::post_execution`].
     pub fn execute_state_transitions<Ext, DB>(
         &self,
         block: &BlockWithSenders,
