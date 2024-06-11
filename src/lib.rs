@@ -14,6 +14,7 @@ use reth_node_ethereum::{
 };
 
 mod execute;
+mod gnosis;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Gnosis")]

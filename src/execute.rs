@@ -1,8 +1,9 @@
+use crate::gnosis::{apply_block_rewards_contract_call, apply_withdrawals_contract_call};
 use reth::{
     api::ConfigureEvm,
     primitives::{
-        BlockNumber, BlockWithSenders, ChainSpec, Hardfork, Header, PruneModes, Receipt, Receipts,
-        Request, Withdrawals, U256,
+        Address, BlockNumber, BlockWithSenders, ChainSpec, Header, PruneModes, Receipt, Receipts,
+        Request, U256,
     },
     providers::ProviderError,
     revm::{
@@ -11,7 +12,7 @@ use reth::{
         primitives::{BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ResultAndState},
         state_change::{
             apply_beacon_root_contract_call, apply_blockhashes_update,
-            apply_withdrawal_requests_contract_call, post_block_balance_increments,
+            apply_withdrawal_requests_contract_call,
         },
         Database, DatabaseCommit, Evm, State,
     },
@@ -21,11 +22,8 @@ use reth_evm::execute::{
     BatchBlockExecutionOutput, BatchExecutor, BlockExecutionError, BlockExecutionInput,
     BlockExecutionOutput, BlockExecutorProvider, BlockValidationError, Executor,
 };
-use reth_evm_ethereum::{
-    dao_fork::{DAO_HARDFORK_BENEFICIARY, DAO_HARDKFORK_ACCOUNTS},
-    eip6110::parse_deposits_from_receipts,
-};
-use std::sync::Arc;
+use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
+use std::{collections::HashMap, sync::Arc};
 
 /// Helper container type for EVM with chain spec.
 // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
@@ -232,6 +230,10 @@ impl<EvmConfig, DB> GnosisBlockExecutor<EvmConfig, DB> {
         &self.executor.chain_spec
     }
 
+    fn chain_spec_clone(&self) -> Arc<ChainSpec> {
+        self.executor.chain_spec.clone()
+    }
+
     /// Returns mutable reference to the state that wraps the underlying database.
     #[allow(unused)]
     fn state_mut(&mut self) -> &mut State<DB> {
@@ -295,41 +297,53 @@ where
 
     /// Apply post execution state changes that do not require an [EVM](Evm), such as: block
     /// rewards, withdrawals, and irregular DAO hardfork state change
+    // [Gnosis/fork:DIFF]
     pub fn post_execution(
         &mut self,
         block: &BlockWithSenders,
         total_difficulty: U256,
     ) -> Result<(), BlockExecutionError> {
-        let mut balance_increments = post_block_balance_increments(
-            self.chain_spec(),
-            block.number,
-            block.difficulty,
-            block.beneficiary,
-            block.timestamp,
-            total_difficulty,
-            &block.ommers,
-            block.withdrawals.as_ref().map(Withdrawals::as_ref),
-        );
+        // [Gnosis/fork:DIFF]: Upstream code in EthBlockExecutor computes balance changes for:
+        // - Pre-merge omer and block rewards
+        // - Beacon withdrawal mints
+        // - DAO hardfork drain balances
+        //
+        // For gnosis instead:
+        // - Do NOT credit withdrawals as native token mint
+        // - Call into deposit contract with withdrawal data
+        // - Call block rewards contract for bridged xDAI mint
 
-        // Irregular state change at Ethereum DAO hardfork
-        if self
-            .chain_spec()
-            .fork(Hardfork::Dao)
-            .transitions_at_block(block.number)
+        let chain_spec = self.chain_spec_clone();
+
         {
-            // drain balances from hardcoded addresses.
-            let drained_balance: u128 = self
-                .state
-                .drain_balances(DAO_HARDKFORK_ACCOUNTS)
-                .map_err(|_| BlockValidationError::IncrementBalanceFailed)?
-                .into_iter()
-                .sum();
+            let env = self.evm_env_for_block(&block.header, total_difficulty);
+            let mut evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
 
-            // return balance to DAO beneficiary.
-            *balance_increments
-                .entry(DAO_HARDFORK_BENEFICIARY)
-                .or_default() += drained_balance;
+            apply_withdrawals_contract_call(
+                &chain_spec,
+                block.timestamp,
+                block
+                    .withdrawals
+                    .as_ref()
+                    .ok_or(BlockExecutionError::Other(
+                        "block has no withdrawals field".to_owned().into(),
+                    ))?,
+                &mut evm,
+            )?;
         }
+
+        let balance_increments: HashMap<Address, u128> = {
+            let env = self.evm_env_for_block(&block.header, total_difficulty);
+            let mut evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
+
+            apply_block_rewards_contract_call(
+                &chain_spec,
+                block.timestamp,
+                block.beneficiary,
+                &mut evm,
+            )?
+        };
+
         // increment balances
         self.state
             .increment_balances(balance_increments)
