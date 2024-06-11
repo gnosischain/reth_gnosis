@@ -6,7 +6,7 @@ use reth::{
     primitives::{address, Address, Bytes, ChainSpec, Withdrawal, U256},
     revm::{
         interpreter::Host,
-        primitives::{Env, TransactTo, TxEnv},
+        primitives::{Env, ExecutionResult, Output, ResultAndState, TransactTo, TxEnv},
         Database, DatabaseCommit, Evm,
     },
 };
@@ -89,11 +89,12 @@ where
         }
     };
 
+    // TODO: Should check the execution is successful? Is an Ok from transact() enough?
+
+    // Clean-up post system tx context
     state.remove(&SYSTEM_ADDRESS);
     state.remove(&evm.block().coinbase);
-
     evm.context.evm.db.commit(state);
-
     // re-set the previous env
     evm.context.evm.env = previous_env;
 
@@ -131,26 +132,57 @@ where
         .into(),
     );
 
-    let mut state = match evm.transact() {
-        Ok(res) => res.state,
+    let ResultAndState { result, mut state } = match evm.transact() {
+        Ok(res) => res,
         Err(e) => {
             evm.context.evm.env = previous_env;
             return Err(BlockExecutionError::Other(
-                format!("withdrawal contract system call revert: {}", e).into(),
+                format!("withdrawal contract system call error: {}", e).into(),
             ));
         }
     };
 
+    let output_bytes = match result {
+        ExecutionResult::Success { output, .. } => match output {
+            Output::Call(output_bytes) |
+            // Should never happen, we craft a transaction without constructor code
+            Output::Create(output_bytes, _) => output_bytes,
+        },
+        ExecutionResult::Revert { output, .. } => {
+            return Err(BlockExecutionError::Other(
+                format!("withdrawal contract system call revert {}", output).into(),
+            ));
+        }
+        ExecutionResult::Halt { reason, .. } => {
+            return Err(BlockExecutionError::Other(
+                format!("withdrawal contract system call halt {:?}", reason).into(),
+            ));
+        }
+    };
+
+    let result = rewardCall::abi_decode_returns(output_bytes.as_ref(), true).map_err(|e| {
+        BlockExecutionError::Other(
+            format!("error parsing withdrawal contract system call return {}", e).into(),
+        )
+    })?;
+
+    // Clean-up post system tx context
     state.remove(&SYSTEM_ADDRESS);
     state.remove(&evm.block().coinbase);
-
     evm.context.evm.db.commit(state);
-
     // re-set the previous env
     evm.context.evm.env = previous_env;
 
     // TODO: How to get function return call from evm.transact()?
-    let balance_increments = HashMap::new();
+    let mut balance_increments = HashMap::new();
+    for (address, amount) in result
+        .receiversNative
+        .iter()
+        .zip(result.rewardsNative.iter())
+    {
+        // TODO: .to panics if the return value is too large
+        balance_increments.insert(*address, amount.to::<u128>());
+    }
 
     Ok(balance_increments)
 }
