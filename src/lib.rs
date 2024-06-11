@@ -13,6 +13,7 @@ use reth_node_ethereum::{
     EthEngineTypes, EthereumNode,
 };
 
+mod ethereum;
 mod execute;
 mod gnosis;
 
