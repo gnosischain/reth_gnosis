@@ -1,79 +1,255 @@
-use std::sync::Arc;
-
 use reth::{
-    api::{ConfigureEvm, ConfigureEvmEnv},
+    api::ConfigureEvm,
     primitives::{
-        Address, BlockWithSenders, ChainSpec, Header, Receipt, Request, TransactionSigned, U256,
+        BlockNumber, BlockWithSenders, ChainSpec, Hardfork, Header, PruneModes, Receipt, Receipts,
+        Request, Withdrawals, U256,
     },
     providers::ProviderError,
     revm::{
+        batch::{BlockBatchRecord, BlockExecutorStats},
         db::states::bundle_state::BundleRetention,
-        primitives::{CfgEnvWithHandlerCfg, TxEnv},
-        Database, Evm, EvmBuilder, State,
+        primitives::{BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ResultAndState},
+        state_change::{
+            apply_beacon_root_contract_call, apply_blockhashes_update,
+            apply_withdrawal_requests_contract_call, post_block_balance_increments,
+        },
+        Database, DatabaseCommit, Evm, State,
     },
 };
+use reth_ethereum_consensus::validate_block_post_execution;
 use reth_evm::execute::{
-    BlockExecutionError, BlockExecutionInput, BlockExecutionOutput, BlockExecutorProvider, Executor,
+    BatchBlockExecutionOutput, BatchExecutor, BlockExecutionError, BlockExecutionInput,
+    BlockExecutionOutput, BlockExecutorProvider, BlockValidationError, Executor,
 };
+use reth_evm_ethereum::{
+    dao_fork::{DAO_HARDFORK_BENEFICIARY, DAO_HARDKFORK_ACCOUNTS},
+    eip6110::parse_deposits_from_receipts,
+};
+use std::sync::Arc;
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct GnosisEvmConfig {}
-
-// Trait required by ExecutorBuilder
-impl ConfigureEvm for GnosisEvmConfig {
-    type DefaultExternalContext<'a> = ();
-
-    fn evm<'a, DB: Database + 'a>(
-        &'a self,
-        db: DB,
-    ) -> Evm<'a, Self::DefaultExternalContext<'a>, DB> {
-        EvmBuilder::default().with_db(db).build()
-    }
-}
-
-// Trait required by ConfigureEvm
-impl ConfigureEvmEnv for GnosisEvmConfig {
-    fn fill_tx_env(_tx_env: &mut TxEnv, _transaction: &TransactionSigned, _sender: Address) {
-        todo!();
-    }
-
-    fn fill_cfg_env(
-        _cfg_env: &mut CfgEnvWithHandlerCfg,
-        _chain_spec: &ChainSpec,
-        _header: &Header,
-        _total_difficulty: U256,
-    ) {
-        todo!();
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct GnosisExecutorProvider<EvmConfig> {
+/// Helper container type for EVM with chain spec.
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+#[derive(Debug, Clone)]
+struct GnosisEvmExecutor<EvmConfig> {
+    /// The chainspec
+    chain_spec: Arc<ChainSpec>,
+    /// How to create an EVM.
     evm_config: EvmConfig,
 }
 
-impl<EvmConfig> GnosisExecutorProvider<EvmConfig> {
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+impl<EvmConfig> GnosisEvmExecutor<EvmConfig>
+where
+    EvmConfig: ConfigureEvm,
+{
+    /// Executes the transactions in the block and returns the receipts of the transactions in the
+    /// block, the total gas used and the list of EIP-7685 [requests](Request).
+    ///
+    /// This applies the pre-execution and post-execution changes that require an [EVM](Evm), and
+    /// executes the transactions.
+    ///
+    /// # Note
+    ///
+    /// It does __not__ apply post-execution changes that do not require an [EVM](Evm), for that see
+    /// [`EthBlockExecutor::post_execution`].
+    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+    fn execute_state_transitions<Ext, DB>(
+        &self,
+        block: &BlockWithSenders,
+        mut evm: Evm<'_, Ext, &mut State<DB>>,
+    ) -> Result<EthExecuteOutput, BlockExecutionError>
+    where
+        DB: Database<Error = ProviderError>,
+    {
+        // apply pre execution changes
+        apply_beacon_root_contract_call(
+            &self.chain_spec,
+            block.timestamp,
+            block.number,
+            block.parent_beacon_block_root,
+            &mut evm,
+        )?;
+        apply_blockhashes_update(
+            evm.db_mut(),
+            &self.chain_spec,
+            block.timestamp,
+            block.number,
+            block.parent_hash,
+        )?;
+
+        // execute transactions
+        let mut cumulative_gas_used = 0;
+        let mut receipts = Vec::with_capacity(block.body.len());
+        for (sender, transaction) in block.transactions_with_sender() {
+            // The sum of the transaction‚Äôs gas limit, Tg, and the gas utilized in this block prior,
+            // must be no greater than the block‚Äôs gasLimit.
+            let block_available_gas = block.header.gas_limit - cumulative_gas_used;
+            if transaction.gas_limit() > block_available_gas {
+                return Err(
+                    BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                        transaction_gas_limit: transaction.gas_limit(),
+                        block_available_gas,
+                    }
+                    .into(),
+                );
+            }
+
+            EvmConfig::fill_tx_env(evm.tx_mut(), transaction, *sender);
+
+            // Execute transaction.
+            let ResultAndState { result, state } = evm.transact().map_err(move |err| {
+                // Ensure hash is calculated for error log, if not already done
+                BlockValidationError::EVM {
+                    hash: transaction.recalculate_hash(),
+                    error: err.into(),
+                }
+            })?;
+            evm.db_mut().commit(state);
+
+            // append gas used
+            cumulative_gas_used += result.gas_used();
+
+            // Push transaction changeset and calculate header bloom filter for receipt.
+            receipts.push(
+                #[allow(clippy::needless_update)] // side-effect of optimism fields
+                Receipt {
+                    tx_type: transaction.tx_type(),
+                    // Success flag was added in `EIP-658: Embedding transaction status code in
+                    // receipts`.
+                    success: result.is_success(),
+                    cumulative_gas_used,
+                    // convert to reth log
+                    logs: result.into_logs(),
+                    ..Default::default()
+                },
+            );
+        }
+
+        let requests = if self
+            .chain_spec
+            .is_prague_active_at_timestamp(block.timestamp)
+        {
+            // Collect all EIP-6110 deposits
+            let deposit_requests = parse_deposits_from_receipts(&self.chain_spec, &receipts)?;
+
+            // Collect all EIP-7685 requests
+            let withdrawal_requests = apply_withdrawal_requests_contract_call(&mut evm)?;
+
+            [deposit_requests, withdrawal_requests].concat()
+        } else {
+            vec![]
+        };
+
+        Ok(EthExecuteOutput {
+            receipts,
+            requests,
+            gas_used: cumulative_gas_used,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GnosisExecutorProvider<EvmConfig: Clone> {
+    chain_spec: Arc<ChainSpec>,
+    evm_config: EvmConfig,
+}
+
+impl<EvmConfig: Clone> GnosisExecutorProvider<EvmConfig> {
     /// Creates a new executor provider.
-    pub fn new(_chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> Self {
-        Self { evm_config }
+    pub fn new(chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> Self {
+        Self {
+            chain_spec,
+            evm_config,
+        }
+    }
+}
+
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthExecutorProvider
+impl<EvmConfig: Clone> GnosisExecutorProvider<EvmConfig>
+where
+    EvmConfig: ConfigureEvm,
+{
+    fn gnosis_executor<DB>(&self, db: DB) -> GnosisBlockExecutor<EvmConfig, DB>
+    where
+        DB: Database<Error = ProviderError>,
+    {
+        GnosisBlockExecutor::new(
+            self.chain_spec.clone(),
+            self.evm_config.clone(),
+            State::builder()
+                .with_database(db)
+                .with_bundle_update()
+                .without_state_clear()
+                .build(),
+        )
     }
 }
 
 // Trait required by ExecutorBuilder
-impl<EvmConfig> BlockExecutorProvider for GnosisExecutorProvider<EvmConfig> {
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthExecutorProvider
+impl<EvmConfig: Clone> BlockExecutorProvider for GnosisExecutorProvider<EvmConfig>
+where
+    EvmConfig: ConfigureEvm,
+{
     type Executor<DB: Database<Error = ProviderError>> = GnosisBlockExecutor<EvmConfig, DB>;
     type BatchExecutor<DB: Database<Error = ProviderError>> = GnosisBatchExecutor<EvmConfig, DB>;
+
+    fn executor<DB>(&self, db: DB) -> Self::Executor<DB>
+    where
+        DB: Database<Error = ProviderError>,
+    {
+        self.gnosis_executor(db)
+    }
+
+    fn batch_executor<DB>(&self, db: DB, prune_modes: PruneModes) -> Self::BatchExecutor<DB>
+    where
+        DB: Database<Error = ProviderError>,
+    {
+        let executor = self.gnosis_executor(db);
+        GnosisBatchExecutor {
+            executor,
+            batch_record: BlockBatchRecord::new(prune_modes),
+            stats: BlockExecutorStats::default(),
+        }
+    }
 }
 
 // Struct required for BlockExecutorProvider trait
-#[derive(Debug, Default, Clone, Copy)]
-struct GnosisBlockExecutor<EvmConfig, DB> {
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBlockExecutor
+#[derive(Debug)]
+pub struct GnosisBlockExecutor<EvmConfig, DB> {
     /// Chain specific evm config that's used to execute a block.
-    executor: GnosisEvmConfig<EvmConfig>,
+    executor: GnosisEvmExecutor<EvmConfig>,
     /// The state to use for execution
     state: State<DB>,
 }
 
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBlockExecutor
+impl<EvmConfig, DB> GnosisBlockExecutor<EvmConfig, DB> {
+    /// Creates a new Ethereum block executor.
+    pub fn new(chain_spec: Arc<ChainSpec>, evm_config: EvmConfig, state: State<DB>) -> Self {
+        Self {
+            executor: GnosisEvmExecutor {
+                chain_spec,
+                evm_config,
+            },
+            state,
+        }
+    }
+
+    #[inline]
+    fn chain_spec(&self) -> &ChainSpec {
+        &self.executor.chain_spec
+    }
+
+    /// Returns mutable reference to the state that wraps the underlying database.
+    #[allow(unused)]
+    fn state_mut(&mut self) -> &mut State<DB> {
+        &mut self.state
+    }
+}
+
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBlockExecutor
 impl<EvmConfig, DB> GnosisBlockExecutor<EvmConfig, DB>
 where
     EvmConfig: ConfigureEvm,
@@ -98,7 +274,6 @@ where
         EnvWithHandlerCfg::new_with_cfg_env(cfg, block_env, Default::default())
     }
 
-    /// No diff with EthBlockExecutor
     fn execute_without_verification(
         &mut self,
         block: &BlockWithSenders,
@@ -120,7 +295,6 @@ where
         Ok(output)
     }
 
-    /// No diff with EthBlockExecutor
     fn on_new_block(&mut self, header: &Header) {
         // Set state clear flag if the block is after the Spurious Dragon hardfork.
         let state_clear_flag = self
@@ -129,13 +303,54 @@ where
         self.state.set_state_clear_flag(state_clear_flag);
     }
 
-    #[inline]
-    fn chain_spec(&self) -> &ChainSpec {
-        &self.executor.chain_spec
+    /// Apply post execution state changes that do not require an [EVM](Evm), such as: block
+    /// rewards, withdrawals, and irregular DAO hardfork state change
+    pub fn post_execution(
+        &mut self,
+        block: &BlockWithSenders,
+        total_difficulty: U256,
+    ) -> Result<(), BlockExecutionError> {
+        let mut balance_increments = post_block_balance_increments(
+            self.chain_spec(),
+            block.number,
+            block.difficulty,
+            block.beneficiary,
+            block.timestamp,
+            total_difficulty,
+            &block.ommers,
+            block.withdrawals.as_ref().map(Withdrawals::as_ref),
+        );
+
+        // Irregular state change at Ethereum DAO hardfork
+        if self
+            .chain_spec()
+            .fork(Hardfork::Dao)
+            .transitions_at_block(block.number)
+        {
+            // drain balances from hardcoded addresses.
+            let drained_balance: u128 = self
+                .state
+                .drain_balances(DAO_HARDKFORK_ACCOUNTS)
+                .map_err(|_| BlockValidationError::IncrementBalanceFailed)?
+                .into_iter()
+                .sum();
+
+            // return balance to DAO beneficiary.
+            *balance_increments
+                .entry(DAO_HARDFORK_BENEFICIARY)
+                .or_default() += drained_balance;
+        }
+        // increment balances
+        self.state
+            .increment_balances(balance_increments)
+            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
+
+        Ok(())
     }
 }
 
 /// Helper type for the output of executing a block.
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthExecuteOutput
 #[derive(Debug, Clone)]
 struct EthExecuteOutput {
     receipts: Vec<Receipt>,
@@ -153,8 +368,7 @@ where
     type Output = BlockExecutionOutput<Receipt>;
     type Error = BlockExecutionError;
 
-    // EthBlockExecutor Executor impl in:
-    // crates/ethereum/evm/src/execute.rs:352
+    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBlockExecutor
     fn execute(mut self, input: Self::Input<'_>) -> Result<Self::Output, Self::Error> {
         // No diff with EthBlockExecutor
         let BlockExecutionInput {
@@ -176,5 +390,98 @@ where
             requests,
             gas_used,
         })
+    }
+}
+
+/// An executor for a batch of blocks.
+///
+/// State changes are tracked until the executor is finalized.
+#[derive(Debug)]
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+pub struct GnosisBatchExecutor<EvmConfig, DB> {
+    /// The executor used to execute blocks.
+    executor: GnosisBlockExecutor<EvmConfig, DB>,
+    /// Keeps track of the batch and record receipts based on the configured prune mode
+    batch_record: BlockBatchRecord,
+    stats: BlockExecutorStats,
+}
+
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+impl<EvmConfig, DB> GnosisBatchExecutor<EvmConfig, DB> {
+    /// Returns the receipts of the executed blocks.
+    pub const fn receipts(&self) -> &Receipts {
+        self.batch_record.receipts()
+    }
+
+    /// Returns mutable reference to the state that wraps the underlying database.
+    #[allow(unused)]
+    fn state_mut(&mut self) -> &mut State<DB> {
+        self.executor.state_mut()
+    }
+}
+
+// [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+impl<EvmConfig, DB> BatchExecutor<DB> for GnosisBatchExecutor<EvmConfig, DB>
+where
+    EvmConfig: ConfigureEvm,
+    DB: Database<Error = ProviderError>,
+{
+    type Input<'a> = BlockExecutionInput<'a, BlockWithSenders>;
+    type Output = BatchBlockExecutionOutput;
+    type Error = BlockExecutionError;
+
+    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+    fn execute_and_verify_one(&mut self, input: Self::Input<'_>) -> Result<(), Self::Error> {
+        let BlockExecutionInput {
+            block,
+            total_difficulty,
+        } = input;
+        let EthExecuteOutput {
+            receipts,
+            requests,
+            gas_used: _,
+        } = self
+            .executor
+            .execute_without_verification(block, total_difficulty)?;
+
+        validate_block_post_execution(block, self.executor.chain_spec(), &receipts, &requests)?;
+
+        // prepare the state according to the prune mode
+        let retention = self.batch_record.bundle_retention(block.number);
+        self.executor.state.merge_transitions(retention);
+
+        // store receipts in the set
+        self.batch_record.save_receipts(receipts)?;
+
+        // store requests in the set
+        self.batch_record.save_requests(requests);
+
+        if self.batch_record.first_block().is_none() {
+            self.batch_record.set_first_block(block.number);
+        }
+
+        Ok(())
+    }
+
+    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+    fn finalize(mut self) -> Self::Output {
+        self.stats.log_debug();
+
+        BatchBlockExecutionOutput::new(
+            self.executor.state.take_bundle(),
+            self.batch_record.take_receipts(),
+            self.batch_record.take_requests(),
+            self.batch_record.first_block().unwrap_or_default(),
+        )
+    }
+
+    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+    fn set_tip(&mut self, tip: BlockNumber) {
+        self.batch_record.set_tip(tip);
+    }
+
+    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.executor.state.bundle_state.size_hint())
     }
 }

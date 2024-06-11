@@ -1,54 +1,79 @@
-use execute::{GnosisEvmConfig, GnosisExecutorProvider};
+use execute::GnosisExecutorProvider;
 use reth::{
-    args::RpcServerArgs,
+    api::NodeTypes,
     builder::{
-        components::ExecutorBuilder, node::FullNodeTypes, BuilderContext, NodeBuilder, NodeConfig,
+        components::{ComponentsBuilder, ExecutorBuilder},
+        node::FullNodeTypes,
+        BuilderContext, Node,
     },
-    primitives::{Chain, ChainSpec, Genesis},
-    tasks::TaskManager,
 };
-use reth_node_ethereum::EthereumNode;
+use reth_evm_ethereum::EthEvmConfig;
+use reth_node_ethereum::{
+    node::{EthereumNetworkBuilder, EthereumPayloadBuilder, EthereumPoolBuilder},
+    EthEngineTypes, EthereumNode,
+};
 
 mod execute;
 
-#[derive(Debug, Default, Clone)]
-struct Args {}
+#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+#[command(next_help_heading = "Gnosis")]
+pub struct GnosisArgs {
+    /// Sample arg to test
+    #[arg(long = "gnosis.sample-arg", value_name = "SAMPLE_ARG")]
+    pub sample_arg: Option<String>,
+}
 
 /// Type configuration for a regular Optimism node.
 #[derive(Debug, Default, Clone)]
 pub struct GnosisNode {
     /// Additional Optimism args
-    pub args: Args,
+    pub args: GnosisArgs,
 }
 
-pub async fn start_node() {
-    let tasks = TaskManager::current();
+impl GnosisNode {
+    pub const fn new(args: GnosisArgs) -> Self {
+        Self { args }
+    }
 
-    // create optimism genesis with canyon at block 2
-    let spec = ChainSpec::builder()
-        .chain(Chain::mainnet())
-        .genesis(Genesis::default())
-        .london_activated()
-        .paris_activated()
-        .shanghai_activated()
-        .cancun_activated()
-        .build();
+    /// Returns the components for the given [Args].
+    pub fn components<Node>(
+        _args: GnosisArgs,
+    ) -> ComponentsBuilder<
+        Node,
+        EthereumPoolBuilder,
+        EthereumPayloadBuilder,
+        EthereumNetworkBuilder,
+        GnosisExecutorBuilder,
+    >
+    where
+        Node: FullNodeTypes<Engine = EthEngineTypes>,
+    {
+        EthereumNode::components().executor(GnosisExecutorBuilder::default())
+    }
+}
 
-    let node_config = NodeConfig::test()
-        .with_rpc(RpcServerArgs::default().with_http())
-        .with_chain(spec);
+/// Configure the node types
+impl NodeTypes for GnosisNode {
+    type Primitives = ();
+    type Engine = EthEngineTypes;
+}
 
-    let handle = NodeBuilder::new(node_config)
-        .testing_node(tasks.executor())
-        .with_types::<EthereumNode>()
-        .with_components(EthereumNode::components().executor(GnosisExecutorBuilder::default()))
-        .launch()
-        .await
-        .unwrap();
+impl<N> Node<N> for GnosisNode
+where
+    N: FullNodeTypes<Engine = EthEngineTypes>,
+{
+    type ComponentsBuilder = ComponentsBuilder<
+        N,
+        EthereumPoolBuilder,
+        EthereumPayloadBuilder,
+        EthereumNetworkBuilder,
+        GnosisExecutorBuilder,
+    >;
 
-    println!("Node started");
-
-    handle.wait_for_node_exit().await.unwrap();
+    fn components_builder(self) -> Self::ComponentsBuilder {
+        let Self { args } = self;
+        Self::components(args)
+    }
 }
 
 /// A regular optimism evm and executor builder.
@@ -61,16 +86,16 @@ where
     Node: FullNodeTypes,
 {
     // Must implement ConfigureEvm;
-    type EVM = GnosisEvmConfig;
+    type EVM = EthEvmConfig;
     // Must implement BlockExecutorProvider;
     type Executor = GnosisExecutorProvider<Self::EVM>;
 
     async fn build_evm(
         self,
         ctx: &BuilderContext<Node>,
-    ) -> Result<(Self::EVM, Self::Executor), ()> {
+    ) -> eyre::Result<(Self::EVM, Self::Executor)> {
         let chain_spec = ctx.chain_spec();
-        let evm_config = GnosisEvmConfig::default();
+        let evm_config = EthEvmConfig::default();
         let executor = GnosisExecutorProvider::new(chain_spec, evm_config);
 
         Ok((evm_config, executor))
