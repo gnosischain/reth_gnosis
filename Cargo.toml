@@ -1,0 +1,17 @@
+[package]
+name = "reth_gnosis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reth = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
+reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
+
+[patch.crates-io]
+revm = { git = "https://github.com/bluealloy/revm", rev = "a28a543" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm", rev = "a28a543" }
+revm-precompile = { git = "https://github.com/bluealloy/revm", rev = "a28a543" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "a28a543" }
+
