@@ -1,0 +1,120 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+env:
+  REQWEST_TEST_BODY_FULL: 1
+  RUST_BACKTRACE: 1
+
+jobs:
+  style:
+    name: Check Style
+    runs-on: ubuntu-latest
+    env:
+      SQLX_OFFLINE: true
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+        # </setup>
+      - run: cargo fmt -- --check
+      - run: cargo check --all-targets
+      - run: cargo clippy -- --deny warnings
+
+  tests:
+    name: Tests ${{ matrix.name }}
+    needs: [style]
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux / stable
+          - name: linux / beta
+            rust: beta
+              # - name: macOS / stable
+              #   os: macOS-latest
+              # TODO: Support windows
+              # - name: windows / stable-x86_64-gnu
+              # os: windows-latest
+              # rust: stable-x86_64-pc-windows-gnu
+              # target: x86_64-pc-windows-gnu
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust || 'stable' }}
+          targets: ${{ matrix.target }}
+      - name: Setup docker (missing on MacOS)
+        if: runner.os == 'macos'
+        run: |
+          brew install docker
+          brew install docker-buildx
+      - name: Test docker
+        run: docker run hello-world
+      - name: Check
+        run: cargo check
+      - name: Test
+        run: cargo test -- --test-threads=1 --nocapture
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    env:
+      SQLX_OFFLINE: true
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        # </setup>
+      - name: Check documentation
+        run: cargo doc --no-deps --document-private-items --all-features  
+        env:
+          RUSTDOCFLAGS: -D warnings
+ 
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: docker/setup-buildx-action@v2
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          load: true
+          tags: blobshare:dev
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Test image
+        run: docker run --rm blobshare:dev --help
+
