@@ -35,7 +35,7 @@ impl GnosisNode {
         Self { args }
     }
 
-    /// Returns the components for the given [Args].
+    /// Returns the components for the given [GnosisArgs].
     pub fn components<Node>(
         _args: GnosisArgs,
     ) -> ComponentsBuilder<

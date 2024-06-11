@@ -42,17 +42,7 @@ impl<EvmConfig> GnosisEvmExecutor<EvmConfig>
 where
     EvmConfig: ConfigureEvm,
 {
-    /// Executes the transactions in the block and returns the receipts of the transactions in the
-    /// block, the total gas used and the list of EIP-7685 [requests](Request).
-    ///
-    /// This applies the pre-execution and post-execution changes that require an [EVM](Evm), and
-    /// executes the transactions.
-    ///
-    /// # Note
-    ///
-    /// It does __not__ apply post-execution changes that do not require an [EVM](Evm), for that see
-    /// [`EthBlockExecutor::post_execution`].
-    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthEvmExecutor
     fn execute_state_transitions<Ext, DB>(
         &self,
         block: &BlockWithSenders,
