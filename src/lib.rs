@@ -1,3 +1,4 @@
+use evm_config::GnosisEvmConfig;
 use execute::GnosisExecutorProvider;
 use reth::{
     api::NodeTypes,
@@ -7,13 +8,13 @@ use reth::{
         BuilderContext, Node,
     },
 };
-use reth_evm_ethereum::EthEvmConfig;
 use reth_node_ethereum::{
     node::{EthereumNetworkBuilder, EthereumPayloadBuilder, EthereumPoolBuilder},
     EthEngineTypes, EthereumNode,
 };
 
 mod ethereum;
+mod evm_config;
 mod execute;
 mod gnosis;
 
@@ -88,7 +89,7 @@ where
     Node: FullNodeTypes,
 {
     // Must implement ConfigureEvm;
-    type EVM = EthEvmConfig;
+    type EVM = GnosisEvmConfig;
     // Must implement BlockExecutorProvider;
     type Executor = GnosisExecutorProvider<Self::EVM>;
 
@@ -97,7 +98,7 @@ where
         ctx: &BuilderContext<Node>,
     ) -> eyre::Result<(Self::EVM, Self::Executor)> {
         let chain_spec = ctx.chain_spec();
-        let evm_config = EthEvmConfig::default();
+        let evm_config = GnosisEvmConfig;
         let executor = GnosisExecutorProvider::new(chain_spec, evm_config);
 
         Ok((evm_config, executor))
