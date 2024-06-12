@@ -6497,6 +6497,7 @@ dependencies = [
  "reth-evm-ethereum",
  "reth-node-ethereum",
  "revm",
+ "serde_json",
  "tikv-jemallocator",
 ]
 

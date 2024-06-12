@@ -1,5 +1,6 @@
 use evm_config::GnosisEvmConfig;
 use execute::GnosisExecutorProvider;
+use eyre::eyre;
 use reth::{
     api::NodeTypes,
     builder::{
@@ -98,7 +99,18 @@ where
         ctx: &BuilderContext<Node>,
     ) -> eyre::Result<(Self::EVM, Self::Executor)> {
         let chain_spec = ctx.chain_spec();
-        let evm_config = GnosisEvmConfig;
+        let collector_address = ctx
+            .config()
+            .chain
+            .genesis()
+            .config
+            .extra_fields
+            .get("eip1559collector")
+            .ok_or(eyre!("no eip1559collector field"))?;
+
+        let evm_config = GnosisEvmConfig {
+            collector_address: serde_json::from_value(collector_address.clone())?,
+        };
         let executor = GnosisExecutorProvider::new(chain_spec, evm_config);
 
         Ok((evm_config, executor))

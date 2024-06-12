@@ -1,5 +1,5 @@
 use reth::{
-    primitives::{address, Address, ChainSpec, Header, TransactionSigned, U256},
+    primitives::{Address, ChainSpec, Header, TransactionSigned, U256},
     revm::{
         inspector_handle_register,
         interpreter::Gas,
@@ -12,18 +12,16 @@ use reth_evm_ethereum::EthEvmConfig;
 use revm::handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet;
 use std::sync::Arc;
 
-// TODO: Define a per-network collector address configurable via genesis file
-const COLLECTOR_ADDRESS: Address = address!("6BBe78ee9e474842Dbd4AB4987b3CeFE88426A92");
-
 /// Reward beneficiary with gas fee.
 #[inline]
 pub fn reward_beneficiary<SPEC: Spec, EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     gas: &Gas,
+    collector_address: Address,
 ) -> Result<(), EVMError<DB::Error>> {
     reward_beneficiary_mainnet::<SPEC, EXT, DB>(context, gas)?;
     if SPEC::enabled(SpecId::LONDON) {
-        mint_basefee_to_collector_address::<EXT, DB>(context, gas)?;
+        mint_basefee_to_collector_address::<EXT, DB>(context, gas, collector_address)?;
     }
     Ok(())
 }
@@ -33,6 +31,7 @@ pub fn reward_beneficiary<SPEC: Spec, EXT, DB: Database>(
 pub fn mint_basefee_to_collector_address<EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     gas: &Gas,
+    collector_address: Address,
 ) -> Result<(), EVMError<DB::Error>> {
     // TODO: Define a per-network collector address configurable via genesis file
     let base_fee = context.evm.env.block.basefee;
@@ -42,7 +41,7 @@ pub fn mint_basefee_to_collector_address<EXT, DB: Database>(
         .evm
         .inner
         .journaled_state
-        .load_account(COLLECTOR_ADDRESS, &mut context.evm.inner.db)?;
+        .load_account(collector_address, &mut context.evm.inner.db)?;
 
     collector_account.mark_touch();
     collector_account.info.balance = collector_account
@@ -54,19 +53,23 @@ pub fn mint_basefee_to_collector_address<EXT, DB: Database>(
 }
 
 /// Custom EVM configuration
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GnosisEvmConfig;
+#[derive(Debug, Clone, Copy)]
+pub struct GnosisEvmConfig {
+    pub collector_address: Address,
+}
 
 impl ConfigureEvm for GnosisEvmConfig {
     type DefaultExternalContext<'a> = ();
 
     fn evm<'a, DB: Database + 'a>(&self, db: DB) -> Evm<'a, Self::DefaultExternalContext<'a>, DB> {
+        let collector_address = self.collector_address;
         EvmBuilder::default()
             .with_db(db)
-            .append_handler_register_box(Box::new(|h| {
+            .append_handler_register_box(Box::new(move |h| {
                 spec_to_generic!(h.spec_id(), {
-                    h.post_execution.reward_beneficiary =
-                        Arc::new(reward_beneficiary::<SPEC, (), DB>);
+                    h.post_execution.reward_beneficiary = Arc::new(move |context, gas| {
+                        reward_beneficiary::<SPEC, (), DB>(context, gas, collector_address)
+                    });
                 });
             }))
             .build()
@@ -77,13 +80,15 @@ impl ConfigureEvm for GnosisEvmConfig {
         DB: Database + 'a,
         I: GetInspector<DB>,
     {
+        let collector_address = self.collector_address;
         EvmBuilder::default()
             .with_db(db)
             .with_external_context(inspector)
-            .append_handler_register_box(Box::new(|h| {
+            .append_handler_register_box(Box::new(move |h| {
                 spec_to_generic!(h.spec_id(), {
-                    h.post_execution.reward_beneficiary =
-                        Arc::new(reward_beneficiary::<SPEC, I, DB>);
+                    h.post_execution.reward_beneficiary = Arc::new(move |context, gas| {
+                        reward_beneficiary::<SPEC, I, DB>(context, gas, collector_address)
+                    });
                 });
             }))
             .append_handler_register(inspector_handle_register)
