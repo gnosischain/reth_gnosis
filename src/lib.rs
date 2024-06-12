@@ -118,7 +118,7 @@ where
         let evm_config = GnosisEvmConfig {
             collector_address: serde_json::from_value(collector_address.clone())?,
         };
-        let executor = GnosisExecutorProvider::new(chain_spec, evm_config);
+        let executor = GnosisExecutorProvider::new(chain_spec, evm_config)?;
 
         Ok((evm_config, executor))
     }
