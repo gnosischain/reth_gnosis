@@ -11,7 +11,8 @@ rm -rf $DATA_DIR
 # $PWD/target/release/reth \
 cargo run -- \
   node \
-  --chain=$PWD/networkdata/reth_genesis.json \
+  -vvvv \
+  --chain=$PWD/chiado_genesis_alloc.json \
   --datadir=$DATA_DIR \
   --http \
   --http.port=8545 \
