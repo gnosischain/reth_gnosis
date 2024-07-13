@@ -38,9 +38,3 @@ libc = "0.2"
 default = ["jemalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
 
-[patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm", rev = "a28a543" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm", rev = "a28a543" }
-revm-precompile = { git = "https://github.com/bluealloy/revm", rev = "a28a543" }
-revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "a28a543" }
-
