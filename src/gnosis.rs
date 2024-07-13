@@ -3,13 +3,14 @@ use std::collections::HashMap;
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use reth::{
-    primitives::{address, Address, Bytes, ChainSpec, Withdrawal, U256},
+    primitives::{address, Address, Bytes, Withdrawal, U256},
     revm::{
         interpreter::Host,
         primitives::{Env, ExecutionResult, Output, ResultAndState, TransactTo, TxEnv},
         Database, DatabaseCommit, Evm,
     },
 };
+use reth_chainspec::ChainSpec;
 use reth_evm::execute::BlockExecutionError;
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
@@ -222,6 +223,7 @@ fn fill_tx_env_with_system_contract_call(
         // blob fields can be None for this tx
         blob_hashes: Vec::new(),
         max_fee_per_blob_gas: None,
+        authorization_list: None,
     };
 
     // ensure the block gas limit is >= the tx

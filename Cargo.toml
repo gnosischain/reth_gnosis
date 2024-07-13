@@ -12,17 +12,22 @@ name = "reth"
 path = "src/main.rs"
 
 [dependencies]
-reth = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
-reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
-reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
-reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "7b435e0d6dede497dca211090d95a4cfa387dd1b" }
+reth = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-auto-seal-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
 eyre = "0.6.12"
 clap = { version = "4.5.6", features = ["derive"] }
 alloy-sol-macro = "0.7.6"
 alloy-sol-types = "0.7.6"
-revm = "9.0.0"
+revm = "11.0.0"
+revm-primitives = "6.0.0"
 serde_json = "1.0.117"
 
 [target.'cfg(unix)'.dependencies]

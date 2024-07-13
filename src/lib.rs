@@ -1,10 +1,11 @@
+use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
 use execute::GnosisExecutorProvider;
 use eyre::eyre;
 use reth::{
     api::NodeTypes,
     builder::{
-        components::{ComponentsBuilder, ExecutorBuilder},
+        components::{ComponentsBuilder, ConsensusBuilder, ExecutorBuilder},
         node::FullNodeTypes,
         BuilderContext, Node,
     },
@@ -13,7 +14,9 @@ use reth_node_ethereum::{
     node::{EthereumNetworkBuilder, EthereumPayloadBuilder, EthereumPoolBuilder},
     EthEngineTypes, EthereumNode,
 };
+use std::sync::Arc;
 
+mod consensus;
 mod ethereum;
 mod evm_config;
 mod execute;
@@ -48,11 +51,14 @@ impl GnosisNode {
         EthereumPayloadBuilder,
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
+        GnosisConsensusBuilder,
     >
     where
         Node: FullNodeTypes<Engine = EthEngineTypes>,
     {
-        EthereumNode::components().executor(GnosisExecutorBuilder::default())
+        EthereumNode::components()
+            .executor(GnosisExecutorBuilder::default())
+            .consensus(GnosisConsensusBuilder::default())
     }
 }
 
@@ -72,6 +78,7 @@ where
         EthereumPayloadBuilder,
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
+        GnosisConsensusBuilder,
     >;
 
     fn components_builder(self) -> Self::ComponentsBuilder {
@@ -114,5 +121,27 @@ where
         let executor = GnosisExecutorProvider::new(chain_spec, evm_config);
 
         Ok((evm_config, executor))
+    }
+}
+
+/// A basic optimism consensus builder.
+#[derive(Debug, Default, Clone)]
+#[non_exhaustive]
+pub struct GnosisConsensusBuilder;
+
+impl<Node> ConsensusBuilder<Node> for GnosisConsensusBuilder
+where
+    Node: FullNodeTypes,
+{
+    type Consensus = Arc<dyn reth_consensus::Consensus>;
+
+    async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
+        if ctx.is_dev() {
+            Ok(Arc::new(reth_auto_seal_consensus::AutoSealConsensus::new(
+                ctx.chain_spec(),
+            )))
+        } else {
+            Ok(Arc::new(GnosisBeaconConsensus::new(ctx.chain_spec())))
+        }
     }
 }
