@@ -1,11 +1,9 @@
 use crate::ethereum::{EthEvmExecutor, EthExecuteOutput};
 use crate::gnosis::{apply_block_rewards_contract_call, apply_withdrawals_contract_call};
+use reth::providers::ExecutionOutcome;
 use reth::{
     api::ConfigureEvm,
-    primitives::{
-        Address, BlockNumber, BlockWithSenders, ChainSpec, Header, PruneModes, Receipt, Receipts,
-        U256,
-    },
+    primitives::{Address, BlockNumber, BlockWithSenders, Header, Receipt, Receipts, U256},
     providers::ProviderError,
     revm::{
         batch::{BlockBatchRecord, BlockExecutorStats},
@@ -14,11 +12,14 @@ use reth::{
         Database, State,
     },
 };
+use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_ethereum_consensus::validate_block_post_execution;
 use reth_evm::execute::{
-    BatchBlockExecutionOutput, BatchExecutor, BlockExecutionError, BlockExecutionInput,
-    BlockExecutionOutput, BlockExecutorProvider, BlockValidationError, Executor,
+    BatchExecutor, BlockExecutionError, BlockExecutionInput, BlockExecutionOutput,
+    BlockExecutorProvider, BlockValidationError, Executor,
 };
+use reth_prune_types::PruneModes;
+use std::fmt::Display;
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Debug, Clone)]
@@ -44,7 +45,7 @@ where
 {
     fn gnosis_executor<DB>(&self, db: DB) -> GnosisBlockExecutor<EvmConfig, DB>
     where
-        DB: Database<Error = ProviderError>,
+        DB: Database<Error: Into<ProviderError> + Display>,
     {
         GnosisBlockExecutor::new(
             self.chain_spec.clone(),
@@ -64,24 +65,26 @@ impl<EvmConfig: Clone> BlockExecutorProvider for GnosisExecutorProvider<EvmConfi
 where
     EvmConfig: ConfigureEvm,
 {
-    type Executor<DB: Database<Error = ProviderError>> = GnosisBlockExecutor<EvmConfig, DB>;
-    type BatchExecutor<DB: Database<Error = ProviderError>> = GnosisBatchExecutor<EvmConfig, DB>;
+    type Executor<DB: Database<Error: Into<ProviderError> + Display>> =
+        GnosisBlockExecutor<EvmConfig, DB>;
+    type BatchExecutor<DB: Database<Error: Into<ProviderError> + Display>> =
+        GnosisBatchExecutor<EvmConfig, DB>;
 
     fn executor<DB>(&self, db: DB) -> Self::Executor<DB>
     where
-        DB: Database<Error = ProviderError>,
+        DB: Database<Error: Into<ProviderError> + Display>,
     {
         self.gnosis_executor(db)
     }
 
-    fn batch_executor<DB>(&self, db: DB, prune_modes: PruneModes) -> Self::BatchExecutor<DB>
+    fn batch_executor<DB>(&self, db: DB) -> Self::BatchExecutor<DB>
     where
-        DB: Database<Error = ProviderError>,
+        DB: Database<Error: Into<ProviderError> + Display>,
     {
         let executor = self.gnosis_executor(db);
         GnosisBatchExecutor {
             executor,
-            batch_record: BlockBatchRecord::new(prune_modes),
+            batch_record: BlockBatchRecord::default(),
             stats: BlockExecutorStats::default(),
         }
     }
@@ -130,7 +133,7 @@ impl<EvmConfig, DB> GnosisBlockExecutor<EvmConfig, DB> {
 impl<EvmConfig, DB> GnosisBlockExecutor<EvmConfig, DB>
 where
     EvmConfig: ConfigureEvm,
-    DB: Database<Error = ProviderError>,
+    DB: Database<Error: Into<ProviderError> + Display>,
 {
     /// Configures a new evm configuration and block environment for the given block.
     ///
@@ -140,7 +143,7 @@ where
     fn evm_env_for_block(&self, header: &Header, total_difficulty: U256) -> EnvWithHandlerCfg {
         let mut cfg = CfgEnvWithHandlerCfg::new(Default::default(), Default::default());
         let mut block_env = BlockEnv::default();
-        EvmConfig::fill_cfg_and_block_env(
+        self.executor.evm_config.fill_cfg_and_block_env(
             &mut cfg,
             &mut block_env,
             self.chain_spec(),
@@ -242,7 +245,7 @@ where
 impl<EvmConfig, DB> Executor<DB> for GnosisBlockExecutor<EvmConfig, DB>
 where
     EvmConfig: ConfigureEvm,
-    DB: Database<Error = ProviderError>,
+    DB: Database<Error: Into<ProviderError> + Display>,
 {
     type Input<'a> = BlockExecutionInput<'a, BlockWithSenders>;
     type Output = BlockExecutionOutput<Receipt>;
@@ -304,10 +307,10 @@ impl<EvmConfig, DB> GnosisBatchExecutor<EvmConfig, DB> {
 impl<EvmConfig, DB> BatchExecutor<DB> for GnosisBatchExecutor<EvmConfig, DB>
 where
     EvmConfig: ConfigureEvm,
-    DB: Database<Error = ProviderError>,
+    DB: Database<Error: Into<ProviderError> + Display>,
 {
     type Input<'a> = BlockExecutionInput<'a, BlockWithSenders>;
-    type Output = BatchBlockExecutionOutput;
+    type Output = ExecutionOutcome;
     type Error = BlockExecutionError;
 
     // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
@@ -347,17 +350,22 @@ where
     fn finalize(mut self) -> Self::Output {
         self.stats.log_debug();
 
-        BatchBlockExecutionOutput::new(
+        ExecutionOutcome::new(
             self.executor.state.take_bundle(),
             self.batch_record.take_receipts(),
-            self.batch_record.take_requests(),
             self.batch_record.first_block().unwrap_or_default(),
+            self.batch_record.take_requests(),
         )
     }
 
     // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
     fn set_tip(&mut self, tip: BlockNumber) {
         self.batch_record.set_tip(tip);
+    }
+
+    // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
+    fn set_prune_modes(&mut self, prune_modes: PruneModes) {
+        self.batch_record.set_prune_modes(prune_modes);
     }
 
     // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor

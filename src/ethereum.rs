@@ -1,23 +1,25 @@
 //! This module is exactly identical to <https://github.com/paradigmxyz/reth/blob/268e768d822a0d4eb8ed365dc6390862f759a849/crates/ethereum/evm/src/execute.rs>
 
 use reth::{
-    primitives::{BlockWithSenders, ChainSpec, Receipt, Request},
+    primitives::{BlockWithSenders, Receipt, Request},
     providers::ProviderError,
     revm::{
-        primitives::ResultAndState,
-        state_change::{
-            apply_beacon_root_contract_call, apply_blockhashes_update,
-            apply_withdrawal_requests_contract_call,
-        },
-        Database, DatabaseCommit, Evm, State,
+        primitives::ResultAndState, state_change::apply_blockhashes_update, Database,
+        DatabaseCommit, Evm, State,
     },
 };
+use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_evm::{
     execute::{BlockExecutionError, BlockValidationError},
+    system_calls::{
+        apply_beacon_root_contract_call, apply_consolidation_requests_contract_call,
+        apply_withdrawal_requests_contract_call,
+    },
     ConfigureEvm,
 };
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
-use std::sync::Arc;
+use revm_primitives::EVMError;
+use std::{fmt::Display, sync::Arc};
 
 /// Helper type for the output of executing a block.
 #[derive(Debug, Clone)]
@@ -51,10 +53,11 @@ where
         mut evm: Evm<'_, Ext, &mut State<DB>>,
     ) -> Result<EthExecuteOutput, BlockExecutionError>
     where
-        DB: Database<Error = ProviderError>,
+        DB: Database<Error: Into<ProviderError> + Display>,
     {
         // apply pre execution changes
         apply_beacon_root_contract_call(
+            &self.evm_config,
             &self.chain_spec,
             block.timestamp,
             block.number,
@@ -86,14 +89,22 @@ where
                 );
             }
 
-            EvmConfig::fill_tx_env(evm.tx_mut(), transaction, *sender);
+            self.evm_config
+                .fill_tx_env(evm.tx_mut(), transaction, *sender);
 
             // Execute transaction.
             let ResultAndState { result, state } = evm.transact().map_err(move |err| {
+                let new_err = match err {
+                    EVMError::Transaction(e) => EVMError::Transaction(e),
+                    EVMError::Header(e) => EVMError::Header(e),
+                    EVMError::Database(e) => EVMError::Database(e.into()),
+                    EVMError::Custom(e) => EVMError::Custom(e),
+                    EVMError::Precompile(e) => EVMError::Precompile(e),
+                };
                 // Ensure hash is calculated for error log, if not already done
                 BlockValidationError::EVM {
                     hash: transaction.recalculate_hash(),
-                    error: err.into(),
+                    error: Box::new(new_err),
                 }
             })?;
             evm.db_mut().commit(state);
@@ -125,9 +136,19 @@ where
             let deposit_requests = parse_deposits_from_receipts(&self.chain_spec, &receipts)?;
 
             // Collect all EIP-7685 requests
-            let withdrawal_requests = apply_withdrawal_requests_contract_call(&mut evm)?;
+            let withdrawal_requests =
+                apply_withdrawal_requests_contract_call(&self.evm_config, &mut evm)?;
 
-            [deposit_requests, withdrawal_requests].concat()
+            // Collect all EIP-7251 requests
+            let consolidation_requests =
+                apply_consolidation_requests_contract_call(&self.evm_config, &mut evm)?;
+
+            [
+                deposit_requests,
+                withdrawal_requests,
+                consolidation_requests,
+            ]
+            .concat()
         } else {
             vec![]
         };
