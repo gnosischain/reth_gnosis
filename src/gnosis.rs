@@ -15,9 +15,6 @@ use reth_evm::execute::BlockExecutionError;
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
-// TODO: customize from genesis or somewhere
-pub const BLOCK_REWARDS_CONTRACT: Address = address!("481c034c6d9441db23ea48de68bcae812c5d39ba");
-
 // Codegen from https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
 sol!(
     function executeSystemWithdrawals(
@@ -108,7 +105,7 @@ where
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
 #[inline]
 pub fn apply_block_rewards_contract_call<EXT, DB: Database + DatabaseCommit>(
-    _chain_spec: &ChainSpec,
+    block_rewards_contract: Address,
     _block_timestamp: u64,
     coinbase: Address,
     evm: &mut Evm<'_, EXT, DB>,
@@ -123,7 +120,7 @@ where
     fill_tx_env_with_system_contract_call(
         &mut evm.context.evm.env,
         SYSTEM_ADDRESS,
-        BLOCK_REWARDS_CONTRACT,
+        block_rewards_contract,
         rewardCall {
             benefactors: vec![coinbase],
             // Type 0 = RewardAuthor

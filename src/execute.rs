@@ -1,5 +1,6 @@
 use crate::ethereum::{EthEvmExecutor, EthExecuteOutput};
 use crate::gnosis::{apply_block_rewards_contract_call, apply_withdrawals_contract_call};
+use eyre::eyre;
 use reth::providers::ExecutionOutcome;
 use reth::{
     api::ConfigureEvm,
@@ -26,15 +27,28 @@ use std::{collections::HashMap, sync::Arc};
 pub struct GnosisExecutorProvider<EvmConfig: Clone> {
     chain_spec: Arc<ChainSpec>,
     evm_config: EvmConfig,
+    /// AuRa BlockRewards contract address for its system call
+    block_rewards_contract: Address,
 }
 
 impl<EvmConfig: Clone> GnosisExecutorProvider<EvmConfig> {
     /// Creates a new executor provider.
-    pub fn new(chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> Self {
-        Self {
+    pub fn new(chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> eyre::Result<Self> {
+        let block_rewards_contract = chain_spec
+            .genesis()
+            .config
+            .extra_fields
+            .get("blockRewardsContract")
+            .ok_or(eyre!("blockRewardsContract not defined"))?;
+        let block_rewards_contract: Address =
+            serde_json::from_value(block_rewards_contract.clone())
+                .map_err(|e| BlockExecutionError::Other(Box::new(e)))?;
+
+        Ok(Self {
             chain_spec,
             evm_config,
-        }
+            block_rewards_contract,
+        })
     }
 }
 
@@ -48,6 +62,7 @@ where
         DB: Database<Error: Into<ProviderError> + Display>,
     {
         GnosisBlockExecutor::new(
+            self.block_rewards_contract,
             self.chain_spec.clone(),
             self.evm_config.clone(),
             State::builder()
@@ -98,18 +113,26 @@ pub struct GnosisBlockExecutor<EvmConfig, DB> {
     executor: EthEvmExecutor<EvmConfig>,
     /// The state to use for execution
     state: State<DB>,
+    /// AuRa BlockRewards contract address for its system call
+    block_rewards_contract: Address,
 }
 
 // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBlockExecutor
 impl<EvmConfig, DB> GnosisBlockExecutor<EvmConfig, DB> {
     /// Creates a new Ethereum block executor.
-    pub fn new(chain_spec: Arc<ChainSpec>, evm_config: EvmConfig, state: State<DB>) -> Self {
+    pub fn new(
+        block_rewards_contract: Address,
+        chain_spec: Arc<ChainSpec>,
+        evm_config: EvmConfig,
+        state: State<DB>,
+    ) -> Self {
         Self {
             executor: EthEvmExecutor {
                 chain_spec,
                 evm_config,
             },
             state,
+            block_rewards_contract,
         }
     }
 
@@ -225,7 +248,7 @@ where
             let mut evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
 
             apply_block_rewards_contract_call(
-                &chain_spec,
+                self.block_rewards_contract,
                 block.timestamp,
                 block.beneficiary,
                 &mut evm,
