@@ -34,67 +34,71 @@ until curl -X POST -H "Content-Type: application/json" \
     sleep 2
 done
 
-GENESIS_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0", false],"id":1}' \
-  http://localhost:8545)
+function make_block() {
+  GENESIS_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", false],"id":1}' \
+    http://localhost:8545)
 
-# --raw-output remove the double quotes
-GENESIS_HASH=$(echo $GENESIS_BLOCK | jq --raw-output '.result.hash')
-echo GENESIS_HASH=$GENESIS_HASH
+  # --raw-output remove the double quotes
+  GENESIS_HASH=$(echo $GENESIS_BLOCK | jq --raw-output '.result.hash')
+  echo GENESIS_HASH=$GENESIS_HASH
 
-# The ASCII representation of `2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a`
-JWT_SECRET="********************************"
+  # The ASCII representation of `2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a`
+  JWT_SECRET="********************************"
 
-# Generate a JWT token using the secret key
-# jwt is this CLI tool https://github.com/mike-engel/jwt-cli/tree/main
-# iat is appended automatically
-JWT_TOKEN=$(jwt encode --alg HS256 --secret "$JWT_SECRET")
+  # Generate a JWT token using the secret key
+  # jwt is this CLI tool https://github.com/mike-engel/jwt-cli/tree/main
+  # iat is appended automatically
+  JWT_TOKEN=$(jwt encode --alg HS256 --secret "$JWT_SECRET")
 
-echo JWT_TOKEN: $JWT_TOKEN
+  echo JWT_TOKEN: $JWT_TOKEN
 
-# Request to produce block on current head
+  # Request to produce block on current head
 
-RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $JWT_TOKEN" \
-  --data "{
-    \"jsonrpc\":\"2.0\",
-    \"method\":\"engine_forkchoiceUpdatedV1\",
-    \"params\":[
-      {
-        \"headBlockHash\": \"$GENESIS_HASH\",
-        \"safeBlockHash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\",
-        \"finalizedBlockHash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"
-      },
-      {
-        \"timestamp\": 1700000000,
-        \"prevRandao\": \"0x0000000000000000000000000000000000000000000000000000000000000000\",
-        \"suggestedFeeRecipient\": \"0x0000000000000000000000000000000000000000\"
-      }
-    ],
-    \"id\":1
-  }" \
-  http://localhost:8546 \
-)
-echo engine_forkchoiceUpdatedV1 RESPONSE $RESPONSE
+  RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $JWT_TOKEN" \
+    --data "{
+      \"jsonrpc\":\"2.0\",
+      \"method\":\"engine_forkchoiceUpdatedV1\",
+      \"params\":[
+        {
+          \"headBlockHash\": \"$GENESIS_HASH\",
+          \"safeBlockHash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\",
+          \"finalizedBlockHash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"
+        },
+        {
+          \"timestamp\": 1700000000,
+          \"prevRandao\": \"0x0000000000000000000000000000000000000000000000000000000000000000\",
+          \"suggestedFeeRecipient\": \"0x0000000000000000000000000000000000000000\"
+        }
+      ],
+      \"id\":1
+    }" \
+    http://localhost:8546 \
+  )
+  echo engine_forkchoiceUpdatedV1 RESPONSE $RESPONSE
 
-PAYLOAD_ID=$(echo $RESPONSE | jq --raw-output '.result.payloadId')
-echo PAYLOAD_ID=$PAYLOAD_ID
+  PAYLOAD_ID=$(echo $RESPONSE | jq --raw-output '.result.payloadId')
+  echo PAYLOAD_ID=$PAYLOAD_ID
 
-# Fetch producing block by payload ID
+  # Fetch producing block by payload ID
 
-RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $JWT_TOKEN" \
-  --data "{
-    \"jsonrpc\":\"2.0\",
-    \"method\":\"engine_getPayloadV1\",
-    \"params\":[
-      \"$PAYLOAD_ID\"
-    ],
-    \"id\":1
-  }" \
-  http://localhost:8546 \
-)
-echo engine_getPayloadV1 RESPONSE $RESPONSE
+  RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $JWT_TOKEN" \
+    --data "{
+      \"jsonrpc\":\"2.0\",
+      \"method\":\"engine_getPayloadV1\",
+      \"params\":[
+        \"$PAYLOAD_ID\"
+      ],
+      \"id\":1
+    }" \
+    http://localhost:8546 \
+  )
+  echo engine_getPayloadV1 RESPONSE $RESPONSE
+}
+
+make_block
 
 # Clean up container
 docker rm -f neth-vec-gen 2>/dev/null
