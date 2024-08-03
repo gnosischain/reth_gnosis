@@ -8,8 +8,10 @@ OUT_DIR=./blocks
 N=5
 
 
-function apply_block() {
-  BLOCK=$1
+function apply_block_file() {
+  BLOCK_FILEPATH=$1
+  BLOCK=$(<$BLOCK_FILEPATH)
+  echo Applying $BLOCK
 
   # The ASCII representation of `2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a`
   JWT_SECRET="********************************"
@@ -58,8 +60,6 @@ function apply_block() {
 
 for ((i = 1; i <= N; i++)); do
   BLOCK_FILEPATH=$OUT_DIR/block_$i.json
-  BLOCK=$(cat $BLOCK_FILEPATH)
-  echo Applying $BLOCK
-  apply_block $BLOCK
+  apply_block_file $BLOCK_FILEPATH
 done
 
