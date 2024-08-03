@@ -135,7 +135,7 @@ where
         Err(e) => {
             evm.context.evm.env = previous_env;
             return Err(BlockExecutionError::Other(
-                format!("withdrawal contract system call error: {}", e).into(),
+                format!("block rewards contract system call error: {}", e).into(),
             ));
         }
     };
@@ -148,19 +148,24 @@ where
         },
         ExecutionResult::Revert { output, .. } => {
             return Err(BlockExecutionError::Other(
-                format!("withdrawal contract system call revert {}", output).into(),
+                format!("block rewards contract system call revert {}", output).into(),
             ));
         }
         ExecutionResult::Halt { reason, .. } => {
             return Err(BlockExecutionError::Other(
-                format!("withdrawal contract system call halt {:?}", reason).into(),
+                format!("block rewards contract system call halt {:?}", reason).into(),
             ));
         }
     };
 
     let result = rewardCall::abi_decode_returns(output_bytes.as_ref(), true).map_err(|e| {
         BlockExecutionError::Other(
-            format!("error parsing withdrawal contract system call return {}", e).into(),
+            format!(
+                "error parsing block rewards contract system call return {:?}: {}",
+                hex::encode(output_bytes),
+                e
+            )
+            .into(),
         )
     })?;
 

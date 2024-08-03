@@ -226,23 +226,21 @@ where
 
         let chain_spec = self.chain_spec_clone();
 
-        {
-            let env = self.evm_env_for_block(&block.header, total_difficulty);
-            let mut evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
+        if chain_spec.is_shanghai_active_at_timestamp(block.timestamp) {
+            if let Some(withdrawals) = block.withdrawals.as_ref() {
+                let env = self.evm_env_for_block(&block.header, total_difficulty);
+                let mut evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
 
-            apply_withdrawals_contract_call(
-                &chain_spec,
-                block.timestamp,
-                block
-                    .withdrawals
-                    .as_ref()
-                    .ok_or(BlockExecutionError::Other(
-                        "block has no withdrawals field".to_owned().into(),
-                    ))?,
-                &mut evm,
-            )?;
+                apply_withdrawals_contract_call(
+                    &chain_spec,
+                    block.timestamp,
+                    withdrawals,
+                    &mut evm,
+                )?;
+            }
         }
 
+        // TODO: Only post merge?
         let balance_increments: HashMap<Address, u128> = {
             let env = self.evm_env_for_block(&block.header, total_difficulty);
             let mut evm = self.executor.evm_config.evm_with_env(&mut self.state, env);

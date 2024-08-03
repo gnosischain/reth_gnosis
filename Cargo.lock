@@ -6966,6 +6966,7 @@ dependencies = [
  "alloy-sol-types",
  "clap",
  "eyre",
+ "hex",
  "libc",
  "reth",
  "reth-auto-seal-consensus",
