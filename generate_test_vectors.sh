@@ -1,6 +1,16 @@
 #!/bin/bash
-## Exit immediately if any command exits with a non-zero status
 set -e
+
+# Script to generate test vectors from Nethermind. It connects to the engine API of Nethermid to produce
+# blocks on the genesis block and stores them in $OUT_DIR. The jwtsecret is hardcoded, do not modify it.
+# To run just do:
+#
+# ```
+# ./generate_test_vectors.sh
+# ```
+
+OUT_DIR=./blocks
+mkdir -p $OUT_DIR
 
 # Clean up existing container if it exists
 docker rm -f neth-vec-gen 2>/dev/null
@@ -49,12 +59,10 @@ function make_block() {
 
   # The ASCII representation of `2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a`
   JWT_SECRET="********************************"
-
   # Generate a JWT token using the secret key
   # jwt is this CLI tool https://github.com/mike-engel/jwt-cli/tree/main
   # iat is appended automatically
   JWT_TOKEN=$(jwt encode --alg HS256 --secret "$JWT_SECRET")
-
   echo JWT_TOKEN: $JWT_TOKEN
 
   TIMESTAMP=$((1700000000 + BLOCK_COUNTER))
@@ -105,12 +113,14 @@ function make_block() {
 
   BLOCK=$(echo $RESPONSE | jq '.result')
   # BLOCK_NUMBER_HEX = 0x1, 0x2, etc
-  BLOCK_NUMBER_HEX=$(echo $BLOCK | jq --raw-output '.blockNumber')
+  BLOCK_NUMBER_HEX_PREFIX=$(echo $BLOCK | jq --raw-output '.blockNumber')
+  BLOCK_NUMBER_HEX=${BLOCK_NUMBER_HEX_PREFIX#"0x"}
+  BLOCK_NUMBER=$((16#$BLOCK_NUMBER_HEX))
   BLOCK_HASH=$(echo $BLOCK | jq --raw-output '.blockHash')
 
   # persist the block as test-vector
 
-  echo $BLOCK | jq '.' > block_$BLOCK_NUMBER_HEX.json
+  echo $BLOCK | jq '.' > $OUT_DIR/block_$BLOCK_NUMBER_HEX.json
 
   # send the new block as payload
   

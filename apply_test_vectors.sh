@@ -1,0 +1,65 @@
+#!/bin/bash
+set -e
+
+# Expects reth to be running on the background
+
+OUT_DIR=./blocks
+
+N=5
+
+
+function apply_block() {
+  BLOCK=$1
+
+  # The ASCII representation of `2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a`
+  JWT_SECRET="********************************"
+  # Generate a JWT token using the secret key
+  # jwt is this CLI tool https://github.com/mike-engel/jwt-cli/tree/main
+  # iat is appended automatically
+  JWT_TOKEN=$(jwt encode --alg HS256 --secret "$JWT_SECRET")
+  echo JWT_TOKEN: $JWT_TOKEN
+
+  RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $JWT_TOKEN" \
+    --data "{
+      \"jsonrpc\":\"2.0\",
+      \"method\":\"engine_newPayloadV1\",
+      \"params\":[
+        $BLOCK
+      ],
+      \"id\":1
+    }" \
+    http://localhost:8546 \
+  )
+  echo engine_newPayloadV1 with new block RESPONSE $RESPONSE
+
+  BLOCK_HASH=$(echo $BLOCK | jq --raw-output '.blockHash')
+
+  RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $JWT_TOKEN" \
+    --data "{
+      \"jsonrpc\":\"2.0\",
+      \"method\":\"engine_forkchoiceUpdatedV1\",
+      \"params\":[
+        {
+          \"headBlockHash\": \"$BLOCK_HASH\",
+          \"safeBlockHash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\",
+          \"finalizedBlockHash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"
+        },
+        null
+      ],
+      \"id\":1
+    }" \
+    http://localhost:8546 \
+  )
+  echo engine_forkchoiceUpdatedV1 set new block as head RESPONSE $RESPONSE
+}
+
+
+for ((i = 1; i <= N; i++)); do
+  BLOCK_FILEPATH=$OUT_DIR/block_$i.json
+  BLOCK=$(cat $BLOCK_FILEPATH)
+  echo Applying $BLOCK
+  apply_block $BLOCK
+done
+
