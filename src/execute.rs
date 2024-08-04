@@ -288,8 +288,10 @@ where
         // NOTE: we need to merge keep the reverts for the bundle retention
         self.state.merge_transitions(BundleRetention::Reverts);
 
+        let state = self.state.take_bundle();
+        println!("state: {:?}", state);
         Ok(BlockExecutionOutput {
-            state: self.state.take_bundle(),
+            state,
             receipts,
             requests,
             gas_used,
