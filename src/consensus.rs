@@ -19,7 +19,8 @@ impl GnosisBeaconConsensus {
 // `validate_header`, `validate_header_against_parent`, `validate_header_with_total_difficulty`, `validate_block_pre_execution`, `validate_block_post_execution`
 impl Consensus for GnosisBeaconConsensus {
     fn validate_header(&self, _header: &SealedHeader) -> Result<(), ConsensusError> {
-        todo!();
+        // TODO
+        Ok(())
     }
 
     fn validate_header_against_parent(
@@ -27,7 +28,8 @@ impl Consensus for GnosisBeaconConsensus {
         _header: &SealedHeader,
         _parent: &SealedHeader,
     ) -> Result<(), ConsensusError> {
-        todo!();
+        // TODO
+        Ok(())
     }
 
     fn validate_header_with_total_difficulty(
@@ -35,11 +37,13 @@ impl Consensus for GnosisBeaconConsensus {
         _header: &Header,
         _total_difficulty: U256,
     ) -> Result<(), ConsensusError> {
-        todo!();
+        // TODO
+        Ok(())
     }
 
     fn validate_block_pre_execution(&self, _block: &SealedBlock) -> Result<(), ConsensusError> {
-        todo!();
+        // TODO
+        Ok(())
     }
 
     fn validate_block_post_execution(
@@ -47,6 +51,7 @@ impl Consensus for GnosisBeaconConsensus {
         _block: &BlockWithSenders,
         _input: PostExecutionInput<'_>,
     ) -> Result<(), ConsensusError> {
-        todo!();
+        // TODO
+        Ok(())
     }
 }

@@ -78,12 +78,6 @@
     "eip6780TransitionTimestamp": "0x65971a48"
   },
   "genesis": {
-    "seal": {
-      "authorityRound": {
-        "step": "0x0",
-        "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-      }
-    },
     "baseFeePerGas": "0x3b9aca00",
     "difficulty": "0x01",
     "gasLimit": "0x989680"

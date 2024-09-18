@@ -11,7 +11,10 @@ use reth::{
     },
 };
 use reth_node_ethereum::{
-    node::{EthereumNetworkBuilder, EthereumPayloadBuilder, EthereumPoolBuilder},
+    node::{
+        EthereumConsensusBuilder, EthereumNetworkBuilder, EthereumPayloadBuilder,
+        EthereumPoolBuilder,
+    },
     EthEngineTypes, EthereumNode,
 };
 use std::sync::Arc;
@@ -51,14 +54,12 @@ impl GnosisNode {
         EthereumPayloadBuilder,
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
-        GnosisConsensusBuilder,
+        EthereumConsensusBuilder,
     >
     where
         Node: FullNodeTypes<Engine = EthEngineTypes>,
     {
-        EthereumNode::components()
-            .executor(GnosisExecutorBuilder::default())
-            .consensus(GnosisConsensusBuilder::default())
+        EthereumNode::components().executor(GnosisExecutorBuilder::default())
     }
 }
 
@@ -78,7 +79,7 @@ where
         EthereumPayloadBuilder,
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
-        GnosisConsensusBuilder,
+        EthereumConsensusBuilder,
     >;
 
     fn components_builder(self) -> Self::ComponentsBuilder {
