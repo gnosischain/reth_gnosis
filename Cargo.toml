@@ -22,6 +22,10 @@ reth-chainspec = { git = "https://github.com/paradigmxyz/reth", rev = "d59939377
 reth-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
 reth-auto-seal-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
 reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
+reth-errors = { git = "https://github.com/paradigmxyz/reth", rev = "d599393771f9d7d137ea4abf271e1bd118184c73" }
 eyre = "0.6.12"
 clap = { version = "4.5.6", features = ["derive"] }
 alloy-sol-macro = "0.7.6"
