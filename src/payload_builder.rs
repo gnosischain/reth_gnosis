@@ -1,3 +1,4 @@
+use eyre::eyre;
 use reth::{
     api::FullNodeTypes,
     builder::{components::PayloadServiceBuilder, BuilderContext, PayloadBuilderConfig},
@@ -45,16 +46,12 @@ use crate::{evm_config::GnosisEvmConfig, execute::gnosis_post_block_system_calls
 pub struct GnosisPayloadServiceBuilder<EVM = GnosisEvmConfig> {
     /// The EVM configuration to use for the payload builder.
     pub evm_config: EVM,
-    block_rewards_contract: Address,
 }
 
 impl<EVM> GnosisPayloadServiceBuilder<EVM> {
     /// Create a new instance with the given evm config.
-    pub const fn new(evm_config: EVM, block_rewards_contract: Address) -> Self {
-        Self {
-            evm_config,
-            block_rewards_contract,
-        }
+    pub const fn new(evm_config: EVM) -> Self {
+        Self { evm_config }
     }
 }
 
@@ -69,8 +66,17 @@ where
         ctx: &BuilderContext<Node>,
         pool: Pool,
     ) -> eyre::Result<PayloadBuilderHandle<Node::Engine>> {
-        let payload_builder =
-            GnosisPayloadBuilder::new(self.evm_config, self.block_rewards_contract);
+        let chain_spec = ctx.chain_spec();
+        let block_rewards_contract = chain_spec
+            .genesis()
+            .config
+            .extra_fields
+            .get("blockRewardsContract")
+            .ok_or(eyre!("blockRewardsContract not defined"))?;
+        let block_rewards_contract: Address =
+            serde_json::from_value(block_rewards_contract.clone())?;
+
+        let payload_builder = GnosisPayloadBuilder::new(self.evm_config, block_rewards_contract);
         let conf = ctx.payload_builder_config();
 
         let payload_job_config = BasicPayloadJobGeneratorConfig::default()
@@ -520,7 +526,7 @@ where
         &initialized_block_env,
         block_rewards_contract,
         attributes.timestamp,
-        &attributes.withdrawals.iter().cloned().collect::<Vec<_>>(),
+        Some(&attributes.withdrawals),
         attributes.suggested_fee_recipient,
     )
     .map_err(|err| PayloadBuilderError::Internal(err.into()))?;

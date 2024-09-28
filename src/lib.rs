@@ -59,17 +59,11 @@ impl GnosisNode {
     where
         Node: FullNodeTypes<Engine = EthEngineTypes>,
     {
-        // TODO: fix address
-        let block_rewards_contract = SYSTEM_ADDRESS;
-
         EthereumNode::components()
-            .payload(GnosisPayloadServiceBuilder::new(
-                GnosisEvmConfig {
-                    // TODO: fix address
-                    collector_address: SYSTEM_ADDRESS,
-                },
-                block_rewards_contract,
-            ))
+            .payload(GnosisPayloadServiceBuilder::new(GnosisEvmConfig {
+                // TODO: fix address
+                collector_address: SYSTEM_ADDRESS,
+            }))
             .executor(GnosisExecutorBuilder::default())
             .consensus(GnosisConsensusBuilder::default())
     }

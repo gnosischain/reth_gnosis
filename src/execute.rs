@@ -1,7 +1,7 @@
 use crate::ethereum::{EthEvmExecutor, EthExecuteOutput};
 use crate::gnosis::{apply_block_rewards_contract_call, apply_withdrawals_contract_call};
 use eyre::eyre;
-use reth::primitives::Withdrawal;
+use reth::primitives::Withdrawals;
 use reth::providers::ExecutionOutcome;
 use reth::{
     api::ConfigureEvm,
@@ -245,12 +245,7 @@ where
             &block_env,
             self.block_rewards_contract,
             block.timestamp,
-            block
-                .withdrawals
-                .as_ref()
-                .ok_or(BlockExecutionError::Other(
-                    "block has no withdrawals field".to_owned().into(),
-                ))?,
+            block.withdrawals.as_ref(),
             block.beneficiary,
         )?;
 
@@ -266,7 +261,7 @@ pub(crate) fn gnosis_post_block_system_calls<EvmConfig, DB>(
     initialized_block_env: &BlockEnv,
     block_rewards_contract: Address,
     block_timestamp: u64,
-    withdrawals: &[Withdrawal],
+    withdrawals: Option<&Withdrawals>,
     coinbase: Address,
 ) -> Result<(), BlockExecutionError>
 where
@@ -293,13 +288,10 @@ where
     // - Call block rewards contract for bridged xDAI mint
 
     if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
-        apply_withdrawals_contract_call(
-            evm_config,
-            &chain_spec,
-            block_timestamp,
-            withdrawals,
-            &mut evm,
-        )?;
+        let withdrawals = withdrawals.ok_or(BlockExecutionError::Other(
+            "block has no withdrawals field".to_owned().into(),
+        ))?;
+        apply_withdrawals_contract_call(evm_config, &chain_spec, withdrawals, &mut evm)?;
     }
 
     let balance_increments = apply_block_rewards_contract_call(

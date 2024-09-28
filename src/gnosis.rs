@@ -42,7 +42,6 @@ sol!(
 pub fn apply_withdrawals_contract_call<EvmConfig, EXT, DB>(
     evm_config: &EvmConfig,
     chain_spec: &ChainSpec,
-    _block_timestamp: u64,
     withdrawals: &[Withdrawal],
     evm: &mut Evm<'_, EXT, DB>,
 ) -> Result<(), BlockExecutionError>
