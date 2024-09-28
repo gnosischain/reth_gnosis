@@ -253,6 +253,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn gnosis_post_block_system_calls<EvmConfig, DB>(
     chain_spec: &ChainSpec,
     evm_config: &EvmConfig,
@@ -291,7 +292,7 @@ where
         let withdrawals = withdrawals.ok_or(BlockExecutionError::Other(
             "block has no withdrawals field".to_owned().into(),
         ))?;
-        apply_withdrawals_contract_call(evm_config, &chain_spec, withdrawals, &mut evm)?;
+        apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, &mut evm)?;
     }
 
     let balance_increments = apply_block_rewards_contract_call(
