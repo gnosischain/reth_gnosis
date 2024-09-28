@@ -3,7 +3,10 @@ set -e
 
 # Expects reth to be running on the background
 
-OUT_DIR=./blocks
+# Script's directory
+DIR="$(dirname "$0")"
+
+OUT_DIR=$DIR/blocks
 
 N=5
 

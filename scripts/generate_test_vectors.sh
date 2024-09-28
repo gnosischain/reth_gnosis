@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Script to generate test vectors from Nethermind. It connects to the engine API of Nethermid to produce
+# Script to generate test vectors for a running client. It connects to the engine API at :8546 to produce
 # blocks on the genesis block and stores them in $OUT_DIR. The jwtsecret is hardcoded, do not modify it.
 # To run just do:
 #
@@ -9,32 +9,12 @@ set -e
 # ./generate_test_vectors.sh
 # ```
 
-OUT_DIR=./blocks
+# Script's directory
+DIR="$(dirname "$0")"
+
+OUT_DIR=$DIR/blocks
 mkdir -p $OUT_DIR
 
-# Clean up existing container if it exists
-docker rm -f neth-vec-gen 2>/dev/null
-
-# Start the container in the background
-docker run --name neth-vec-gen --rm -d \
-  -v $PWD/networkdata:/networkdata \
-  -p 8545:8545 \
-  -p 8546:8546 \
-  nethermind/nethermind \
-  --config=none \
-  --Init.ChainSpecPath=/networkdata/chainspec.json \
-  --Init.DiscoveryEnabled=false \
-  --JsonRpc.Enabled=true \
-  --JsonRpc.Host=0.0.0.0 \
-  --JsonRpc.Port=8545 \
-  --JsonRpc.EngineHost=0.0.0.0 \
-  --JsonRpc.EnginePort=8546 \
-  --JsonRpc.JwtSecretFile=/networkdata/jwtsecret \
-  --TraceStore.Enabled=true 
-  # --Init.ExitOnBlockNumber=4 \
-
-# Capture the logs in the background
-docker logs -f neth-vec-gen &
 
 # Retry the curl command until it succeeds
 until curl -X POST -H "Content-Type: application/json" \
@@ -168,7 +148,4 @@ N=5
 for ((i = 1; i <= N; i++)); do
   make_block
 done
-
-# Clean up container
-docker rm -f neth-vec-gen 2>/dev/null
 
