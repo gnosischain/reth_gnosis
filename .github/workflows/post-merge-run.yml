@@ -37,12 +37,12 @@ jobs:
         run: jq --help
       # Vectors are already generated, but this serves as a test
       - name: Generate vectors
-        run: ./generate_test_vectors.sh
+        run: ./scripts/generate_test_vectors_nethermind.sh
       # Test vectors against nethermind
       - name: Apply vectors to Nethermind
-        run: ./apply_test_vectors_nethermind.sh
+        run: ./scripts/apply_test_vectors_nethermind.sh
       # Test vectors against Reth
       - name: Apply vectors to Reth
-        run: ./apply_test_vectors_reth.sh
+        run: ./scripts/apply_test_vectors_reth.sh
 
 
