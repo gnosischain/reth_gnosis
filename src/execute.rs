@@ -1,6 +1,7 @@
 use crate::ethereum::{EthEvmExecutor, EthExecuteOutput};
 use crate::gnosis::{apply_block_rewards_contract_call, apply_withdrawals_contract_call};
 use eyre::eyre;
+use reth::primitives::Withdrawals;
 use reth::providers::ExecutionOutcome;
 use reth::{
     api::ConfigureEvm,
@@ -20,8 +21,9 @@ use reth_evm::execute::{
     BlockExecutorProvider, BlockValidationError, Executor,
 };
 use reth_prune_types::PruneModes;
+use revm::Evm;
 use std::fmt::Display;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct GnosisExecutorProvider<EvmConfig: Clone> {
@@ -206,7 +208,7 @@ where
         self.state.set_state_clear_flag(state_clear_flag);
     }
 
-    /// Apply post execution state changes that do not require an such as: block
+    /// Apply post execution state changes that do not require an evm such as: block
     /// rewards, withdrawals, and irregular DAO hardfork state change
     // [Gnosis/fork:DIFF]
     pub fn post_execution(
@@ -225,41 +227,90 @@ where
         // - Call block rewards contract for bridged xDAI mint
 
         let chain_spec = self.chain_spec_clone();
+        let mut cfg = CfgEnvWithHandlerCfg::new(Default::default(), Default::default());
+        let mut block_env = BlockEnv::default();
+        self.executor.evm_config.fill_cfg_and_block_env(
+            &mut cfg,
+            &mut block_env,
+            self.chain_spec(),
+            &block.header,
+            total_difficulty,
+        );
 
-        if chain_spec.is_shanghai_active_at_timestamp(block.timestamp) {
-            if let Some(withdrawals) = block.withdrawals.as_ref() {
-                let env = self.evm_env_for_block(&block.header, total_difficulty);
-                let mut evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
-
-                apply_withdrawals_contract_call(
-                    &chain_spec,
-                    block.timestamp,
-                    withdrawals,
-                    &mut evm,
-                )?;
-            }
-        }
-
-        // TODO: Only post merge?
-        let balance_increments: HashMap<Address, u128> = {
-            let env = self.evm_env_for_block(&block.header, total_difficulty);
-            let mut evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
-
-            apply_block_rewards_contract_call(
-                self.block_rewards_contract,
-                block.timestamp,
-                block.beneficiary,
-                &mut evm,
-            )?
-        };
-
-        // increment balances
-        self.state
-            .increment_balances(balance_increments)
-            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
+        gnosis_post_block_system_calls::<EvmConfig, DB>(
+            &chain_spec,
+            &self.executor.evm_config,
+            &mut self.state,
+            &cfg,
+            &block_env,
+            self.block_rewards_contract,
+            block.timestamp,
+            block.withdrawals.as_ref(),
+            block.beneficiary,
+        )?;
 
         Ok(())
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gnosis_post_block_system_calls<EvmConfig, DB>(
+    chain_spec: &ChainSpec,
+    evm_config: &EvmConfig,
+    db: &mut State<DB>,
+    initialized_cfg: &CfgEnvWithHandlerCfg,
+    initialized_block_env: &BlockEnv,
+    block_rewards_contract: Address,
+    block_timestamp: u64,
+    withdrawals: Option<&Withdrawals>,
+    coinbase: Address,
+) -> Result<(), BlockExecutionError>
+where
+    EvmConfig: ConfigureEvm,
+    DB: Database<Error: Into<ProviderError> + Display>,
+{
+    let mut evm = Evm::builder()
+        .with_db(db)
+        .with_env_with_handler_cfg(EnvWithHandlerCfg::new_with_cfg_env(
+            initialized_cfg.clone(),
+            initialized_block_env.clone(),
+            Default::default(),
+        ))
+        .build();
+
+    // [Gnosis/fork:DIFF]: Upstream code in EthBlockExecutor computes balance changes for:
+    // - Pre-merge omer and block rewards
+    // - Beacon withdrawal mints
+    // - DAO hardfork drain balances
+    //
+    // For gnosis instead:
+    // - Do NOT credit withdrawals as native token mint
+    // - Call into deposit contract with withdrawal data
+    // - Call block rewards contract for bridged xDAI mint
+
+    if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
+        let withdrawals = withdrawals.ok_or(BlockExecutionError::Other(
+            "block has no withdrawals field".to_owned().into(),
+        ))?;
+        apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, &mut evm)?;
+    }
+
+    let balance_increments = apply_block_rewards_contract_call(
+        evm_config,
+        block_rewards_contract,
+        block_timestamp,
+        coinbase,
+        &mut evm,
+    )?;
+
+    // increment balances
+    evm.context
+        .evm
+        .db
+        .increment_balances(balance_increments)
+        .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
+
+    Ok(())
 }
 
 // Trait required by BlockExecutorProvider associated type Executor

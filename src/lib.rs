@@ -2,6 +2,8 @@ use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
 use execute::GnosisExecutorProvider;
 use eyre::eyre;
+use gnosis::SYSTEM_ADDRESS;
+use payload_builder::GnosisPayloadServiceBuilder;
 use reth::{
     api::NodeTypes,
     builder::{
@@ -11,10 +13,7 @@ use reth::{
     },
 };
 use reth_node_ethereum::{
-    node::{
-        EthereumConsensusBuilder, EthereumNetworkBuilder, EthereumPayloadBuilder,
-        EthereumPoolBuilder,
-    },
+    node::{EthereumNetworkBuilder, EthereumPoolBuilder},
     EthEngineTypes, EthereumNode,
 };
 use std::sync::Arc;
@@ -24,6 +23,7 @@ mod ethereum;
 mod evm_config;
 mod execute;
 mod gnosis;
+mod payload_builder;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Gnosis")]
@@ -33,10 +33,10 @@ pub struct GnosisArgs {
     pub sample_arg: Option<String>,
 }
 
-/// Type configuration for a regular Optimism node.
+/// Type configuration for a regular Gnosis node.
 #[derive(Debug, Default, Clone)]
 pub struct GnosisNode {
-    /// Additional Optimism args
+    /// Additional Gnosis args
     pub args: GnosisArgs,
 }
 
@@ -51,15 +51,21 @@ impl GnosisNode {
     ) -> ComponentsBuilder<
         Node,
         EthereumPoolBuilder,
-        EthereumPayloadBuilder,
+        GnosisPayloadServiceBuilder,
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
-        EthereumConsensusBuilder,
+        GnosisConsensusBuilder,
     >
     where
         Node: FullNodeTypes<Engine = EthEngineTypes>,
     {
-        EthereumNode::components().executor(GnosisExecutorBuilder::default())
+        EthereumNode::components()
+            .payload(GnosisPayloadServiceBuilder::new(GnosisEvmConfig {
+                // TODO: fix address
+                collector_address: SYSTEM_ADDRESS,
+            }))
+            .executor(GnosisExecutorBuilder::default())
+            .consensus(GnosisConsensusBuilder::default())
     }
 }
 
@@ -76,10 +82,10 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         EthereumPoolBuilder,
-        EthereumPayloadBuilder,
+        GnosisPayloadServiceBuilder,
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
-        EthereumConsensusBuilder,
+        GnosisConsensusBuilder,
     >;
 
     fn components_builder(self) -> Self::ComponentsBuilder {
@@ -88,7 +94,7 @@ where
     }
 }
 
-/// A regular optimism evm and executor builder.
+/// A regular Gnosis evm and executor builder.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct GnosisExecutorBuilder;
@@ -125,7 +131,7 @@ where
     }
 }
 
-/// A basic optimism consensus builder.
+/// A basic Gnosis consensus builder.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct GnosisConsensusBuilder;
