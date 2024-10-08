@@ -4,18 +4,28 @@ use execute::GnosisExecutorProvider;
 use eyre::eyre;
 use gnosis::SYSTEM_ADDRESS;
 use payload_builder::GnosisPayloadServiceBuilder;
-use reth::{api::{FullNodeComponents, NodeAddOns}, builder::{
-        components::{ComponentsBuilder, ConsensusBuilder, EngineValidatorBuilder, ExecutorBuilder},
+use reth::{
+    api::{FullNodeComponents, NodeAddOns},
+    builder::{
+        components::{
+            ComponentsBuilder, ConsensusBuilder, EngineValidatorBuilder, ExecutorBuilder,
+        },
         node::{FullNodeTypes, NodeTypes, NodeTypesWithEngine},
         BuilderContext, Node,
-    }, network::NetworkHandle, payload::EthBuiltPayload, rpc::eth::EthApi};
+    },
+    network::NetworkHandle,
+    payload::EthBuiltPayload,
+    rpc::eth::EthApi,
+};
 use reth_chainspec::ChainSpec;
 use reth_engine_primitives::{EngineValidator, PayloadTypes};
+use reth_ethereum_engine_primitives::{
+    EthPayloadAttributes, EthPayloadBuilderAttributes, EthereumEngineValidator,
+};
 use reth_node_ethereum::{
     node::{EthereumEngineValidatorBuilder, EthereumNetworkBuilder, EthereumPoolBuilder},
     EthEngineTypes, EthereumNode,
 };
-use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes, EthereumEngineValidator};
 use std::sync::Arc;
 
 mod consensus;
@@ -44,9 +54,7 @@ pub struct GnosisNode {
 
 impl GnosisNode {
     pub const fn new() -> Self {
-        let args = GnosisArgs {
-            sample_arg: None,
-        };
+        let args = GnosisArgs { sample_arg: None };
         Self { args }
     }
 
@@ -60,7 +68,7 @@ impl GnosisNode {
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
         GnosisConsensusBuilder,
-        EthereumEngineValidatorBuilder
+        EthereumEngineValidatorBuilder,
     >
     where
         Node: FullNodeTypes<
@@ -116,7 +124,7 @@ where
         GnosisConsensusBuilder,
         EthereumEngineValidatorBuilder,
     >;
-    
+
     type AddOns = GnosisAddOns;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
@@ -127,7 +135,6 @@ where
     fn add_ons(&self) -> Self::AddOns {
         GnosisAddOns::default()
     }
-    
 }
 
 /// A regular Gnosis evm and executor builder.

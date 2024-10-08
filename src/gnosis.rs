@@ -145,7 +145,9 @@ where
         Err(e) => {
             evm.context.evm.env = previous_env;
             return Err(BlockExecutionError::from(
-                GnosisBlockExecutionError::CustomErrorMessage { message: format!("block rewards contract system call error: {}", e).into(), }
+                GnosisBlockExecutionError::CustomErrorMessage {
+                    message: format!("block rewards contract system call error: {}", e).into(),
+                },
             ));
         }
     };
@@ -165,22 +167,22 @@ where
         }
         ExecutionResult::Halt { reason, .. } => {
             return Err(BlockExecutionError::from(
-                GnosisBlockExecutionError::CustomErrorMessage { message: format!("block rewards contract system call halt {:?}", reason).into(), }
+                GnosisBlockExecutionError::CustomErrorMessage {
+                    message: format!("block rewards contract system call halt {:?}", reason).into(),
+                },
             ));
         }
     };
 
     let result = rewardCall::abi_decode_returns(output_bytes.as_ref(), true).map_err(|e| {
-        BlockExecutionError::from(
-            GnosisBlockExecutionError::CustomErrorMessage { 
-                message: format!(
-                    "error parsing block rewards contract system call return {:?}: {}",
-                    hex::encode(output_bytes),
-                    e
-                )
-                .into(),
-             }
-        )
+        BlockExecutionError::from(GnosisBlockExecutionError::CustomErrorMessage {
+            message: format!(
+                "error parsing block rewards contract system call return {:?}: {}",
+                hex::encode(output_bytes),
+                e
+            )
+            .into(),
+        })
     })?;
 
     // Clean-up post system tx context

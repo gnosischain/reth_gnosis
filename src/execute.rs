@@ -226,7 +226,8 @@ where
         let env = self.evm_env_for_block(&block.header, total_difficulty);
         let output = {
             let evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
-            self.executor.execute_state_transitions(block, evm, state_hook)
+            self.executor
+                .execute_state_transitions(block, evm, state_hook)
         }?;
 
         // 3. apply post execution changes
@@ -331,7 +332,9 @@ where
             // BlockValidationError::WithdrawalRequestsContractCall {
             //     message: "block has no withdrawals field".to_owned().into(),
             // }
-            GnosisBlockExecutionError::CustomErrorMessage { message: "block has no withdrawals field".to_owned() }
+            GnosisBlockExecutionError::CustomErrorMessage {
+                message: "block has no withdrawals field".to_owned(),
+            },
         )?;
         apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, &mut evm)?;
     }
@@ -426,17 +429,28 @@ where
     where
         F: OnStateHook,
     {
-        let BlockExecutionInput { block, total_difficulty } = input;
-        let EthExecuteOutput { receipts, requests, gas_used } = self
-            .execute_without_verification_with_state_hook(
-                block,
-                total_difficulty,
-                Some(state_hook),
-            )?;
+        let BlockExecutionInput {
+            block,
+            total_difficulty,
+        } = input;
+        let EthExecuteOutput {
+            receipts,
+            requests,
+            gas_used,
+        } = self.execute_without_verification_with_state_hook(
+            block,
+            total_difficulty,
+            Some(state_hook),
+        )?;
 
         // NOTE: we need to merge keep the reverts for the bundle retention
         self.state.merge_transitions(BundleRetention::Reverts);
-        Ok(BlockExecutionOutput { state: self.state.take_bundle(), receipts, requests, gas_used })
+        Ok(BlockExecutionOutput {
+            state: self.state.take_bundle(),
+            receipts,
+            requests,
+            gas_used,
+        })
     }
 }
 

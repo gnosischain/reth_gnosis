@@ -3,10 +3,7 @@
 use reth::{
     primitives::{BlockWithSenders, Receipt, Request},
     providers::ProviderError,
-    revm::{
-        primitives::ResultAndState, Database,
-        DatabaseCommit, Evm, State,
-    },
+    revm::{primitives::ResultAndState, Database, DatabaseCommit, Evm, State},
 };
 use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -69,14 +66,17 @@ where
             // must be no greater than the block’s gasLimit.
             let block_available_gas = block.header.gas_limit - cumulative_gas_used;
             if transaction.gas_limit() > block_available_gas {
-                return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
-                    transaction_gas_limit: transaction.gas_limit(),
-                    block_available_gas,
-                }
-                .into())
+                return Err(
+                    BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                        transaction_gas_limit: transaction.gas_limit(),
+                        block_available_gas,
+                    }
+                    .into(),
+                );
             }
 
-            self.evm_config.fill_tx_env(evm.tx_mut(), transaction, *sender);
+            self.evm_config
+                .fill_tx_env(evm.tx_mut(), transaction, *sender);
 
             // Execute transaction.
             let result_and_state = evm.transact().map_err(move |err| {
@@ -110,10 +110,12 @@ where
             );
         }
 
-        let requests = if self.chain_spec.is_prague_active_at_timestamp(block.timestamp) {
+        let requests = if self
+            .chain_spec
+            .is_prague_active_at_timestamp(block.timestamp)
+        {
             // Collect all EIP-6110 deposits
-            let deposit_requests =
-                parse_deposits_from_receipts(&self.chain_spec, &receipts)?;
+            let deposit_requests = parse_deposits_from_receipts(&self.chain_spec, &receipts)?;
 
             let post_execution_requests = system_caller.apply_post_execution_changes(&mut evm)?;
 
@@ -122,6 +124,10 @@ where
             vec![]
         };
 
-        Ok(EthExecuteOutput { receipts, requests, gas_used: cumulative_gas_used })
+        Ok(EthExecuteOutput {
+            receipts,
+            requests,
+            gas_used: cumulative_gas_used,
+        })
     }
 }

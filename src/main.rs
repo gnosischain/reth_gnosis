@@ -1,4 +1,4 @@
-use clap::{Parser, Args};
+use clap::{Args, Parser};
 use reth::{chainspec::EthereumChainSpecParser, cli::Cli};
 use reth_gnosis::GnosisNode;
 

@@ -11,7 +11,10 @@ use reth_chainspec::ChainSpec;
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_after_merge};
 use revm::handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet;
-use revm_primitives::{Address, AnalysisKind, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv, Env, HandlerCfg, TxKind, U256};
+use revm_primitives::{
+    Address, AnalysisKind, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv, Env, HandlerCfg, TxKind,
+    U256,
+};
 use std::sync::Arc;
 
 /// Reward beneficiary with gas fee.
@@ -65,7 +68,10 @@ pub struct GnosisEvmConfig {
 impl GnosisEvmConfig {
     /// Creates a new [`OptimismEvmConfig`] with the given chain spec.
     pub const fn new(collector_address: Address, chain_spec: Arc<ChainSpec>) -> Self {
-        Self { collector_address, chain_spec }
+        Self {
+            collector_address,
+            chain_spec,
+        }
     }
 
     /// Returns the chain spec associated with this configuration.
@@ -182,7 +188,11 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
         cfg_env.handler_cfg.spec_id = spec_id;
     }
 
-    fn next_cfg_and_block_env(&self,parent: &Self::Header,attributes:reth_evm::NextBlockEnvAttributes,) -> (CfgEnvWithHandlerCfg,revm_primitives::BlockEnv) {
+    fn next_cfg_and_block_env(
+        &self,
+        parent: &Self::Header,
+        attributes: reth_evm::NextBlockEnvAttributes,
+    ) -> (CfgEnvWithHandlerCfg, revm_primitives::BlockEnv) {
         // configure evm env based on parent block
         let cfg = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
 
@@ -214,7 +224,8 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
             basefee: U256::from(
                 parent
                     .next_block_base_fee(
-                        self.chain_spec.base_fee_params_at_timestamp(attributes.timestamp),
+                        self.chain_spec
+                            .base_fee_params_at_timestamp(attributes.timestamp),
                     )
                     .unwrap_or_default(),
             ),

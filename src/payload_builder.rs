@@ -5,12 +5,11 @@ use reth::{
     api::{FullNodeTypes, NodeTypesWithEngine},
     builder::{components::PayloadServiceBuilder, BuilderContext, PayloadBuilderConfig},
     payload::{
-        EthBuiltPayload, EthPayloadBuilderAttributes, PayloadBuilderError, PayloadBuilderHandle, PayloadBuilderService
+        EthBuiltPayload, EthPayloadBuilderAttributes, PayloadBuilderError, PayloadBuilderHandle,
+        PayloadBuilderService,
     },
     primitives::{
-        constants::{
-            eip4844::MAX_DATA_GAS_PER_BLOCK, BEACON_NONCE,
-        },
+        constants::{eip4844::MAX_DATA_GAS_PER_BLOCK, BEACON_NONCE},
         proofs::{self, calculate_requests_root},
         Block, Header, Receipt, EMPTY_OMMER_ROOT_HASH,
     },
@@ -20,25 +19,25 @@ use reth::{
 use reth_basic_payload_builder::{
     commit_withdrawals, is_better_payload, BasicPayloadJobGenerator,
     BasicPayloadJobGeneratorConfig, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
-    WithdrawalsOutcome
+    WithdrawalsOutcome,
 };
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_errors::RethError;
-use reth_evm::{
-    system_calls::SystemCaller,
-    ConfigureEvm, ConfigureEvmEnv, NextBlockEnvAttributes,
-};
+use reth_evm::{system_calls::SystemCaller, ConfigureEvm, ConfigureEvmEnv, NextBlockEnvAttributes};
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::EthEngineTypes;
 use reth_primitives::BlockBody;
-use reth_provider::{CanonStateSubscriptions, ChainSpecProvider, ExecutionOutcome, StateProviderFactory};
-use revm::{db::states::bundle_state::BundleRetention, DatabaseCommit, State};
-use revm_primitives::{
-    calc_excess_blob_gas, Address, BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, InvalidTransaction, ResultAndState, U256
+use reth_provider::{
+    CanonStateSubscriptions, ChainSpecProvider, ExecutionOutcome, StateProviderFactory,
 };
 use reth_trie::HashedPostState;
-use tracing::{warn, debug, trace};
+use revm::{db::states::bundle_state::BundleRetention, DatabaseCommit, State};
+use revm_primitives::{
+    calc_excess_blob_gas, Address, BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg,
+    InvalidTransaction, ResultAndState, U256,
+};
+use tracing::{debug, trace, warn};
 
 use crate::{evm_config::GnosisEvmConfig, execute::gnosis_post_block_system_calls};
 
@@ -61,9 +60,7 @@ impl GnosisPayloadServiceBuilder {
 
 impl<Node, Pool> PayloadServiceBuilder<Node, Pool> for GnosisPayloadServiceBuilder
 where
-    Node: FullNodeTypes<
-        Types: NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>,
-    >,
+    Node: FullNodeTypes<Types: NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>>,
     Pool: TransactionPool + Unpin + 'static,
 {
     async fn spawn_payload_service(
@@ -91,7 +88,10 @@ where
             .ok_or(eyre!("no eip1559collector field"))?;
         let collector_address: Address = serde_json::from_value(collector_address.clone())?;
 
-        let payload_builder = GnosisPayloadBuilder::new(GnosisEvmConfig::new(collector_address, chain_spec), block_rewards_contract);
+        let payload_builder = GnosisPayloadBuilder::new(
+            GnosisEvmConfig::new(collector_address, chain_spec),
+            block_rewards_contract,
+        );
         let conf = ctx.payload_builder_config();
 
         let payload_job_config = BasicPayloadJobGeneratorConfig::default()
@@ -155,7 +155,8 @@ where
             suggested_fee_recipient: config.attributes.suggested_fee_recipient,
             prev_randao: config.attributes.prev_randao,
         };
-        self.evm_config.next_cfg_and_block_env(parent, next_attributes)
+        self.evm_config
+            .next_cfg_and_block_env(parent, next_attributes)
     }
 }
 
@@ -174,7 +175,13 @@ where
         args: BuildArguments<Pool, Client, EthPayloadBuilderAttributes, EthBuiltPayload>,
     ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError> {
         let (cfg_env, block_env) = self.cfg_and_block_env(&args.config, &args.config.parent_block);
-        default_ethereum_payload(self.evm_config.clone(), args, cfg_env, block_env, self.block_rewards_contract)
+        default_ethereum_payload(
+            self.evm_config.clone(),
+            args,
+            cfg_env,
+            block_env,
+            self.block_rewards_contract,
+        )
     }
 
     fn build_empty_payload(
@@ -191,9 +198,15 @@ where
             best_payload: None,
         };
         let (cfg_env, block_env) = self.cfg_and_block_env(&args.config, &args.config.parent_block);
-        default_ethereum_payload(self.evm_config.clone(), args, cfg_env, block_env, self.block_rewards_contract)?
-            .into_payload()
-            .ok_or_else(|| PayloadBuilderError::MissingPayload)
+        default_ethereum_payload(
+            self.evm_config.clone(),
+            args,
+            cfg_env,
+            block_env,
+            self.block_rewards_contract,
+        )?
+        .into_payload()
+        .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
 }
 
@@ -218,14 +231,26 @@ where
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec = ChainSpec>,
     Pool: TransactionPool,
 {
-
-    let BuildArguments { client, pool, mut cached_reads, config, cancel, best_payload } = args;
+    let BuildArguments {
+        client,
+        pool,
+        mut cached_reads,
+        config,
+        cancel,
+        best_payload,
+    } = args;
     let chain_spec = client.chain_spec();
     let state_provider = client.state_by_block_hash(config.parent_block.hash())?;
     let state = StateProviderDatabase::new(state_provider);
-    let mut db =
-        State::builder().with_database_ref(cached_reads.as_db(state)).with_bundle_update().build();
-    let PayloadConfig { parent_block, extra_data, attributes } = config;
+    let mut db = State::builder()
+        .with_database_ref(cached_reads.as_db(state))
+        .with_bundle_update()
+        .build();
+    let PayloadConfig {
+        parent_block,
+        extra_data,
+        attributes,
+    } = config;
 
     debug!(target: "payload_builder", id=%attributes.id, parent_hash = ?parent_block.hash(), parent_number = parent_block.number, "building new payload");
     let mut cumulative_gas_used = 0;
@@ -238,7 +263,9 @@ where
 
     let mut best_txs = pool.best_transactions_with_attributes(BestTransactionsAttributes::new(
         base_fee,
-        initialized_block_env.get_blob_gasprice().map(|gasprice| gasprice as u64),
+        initialized_block_env
+            .get_blob_gasprice()
+            .map(|gasprice| gasprice as u64),
     ));
 
     let mut total_fees = U256::ZERO;
@@ -249,21 +276,21 @@ where
 
     // apply eip-4788 pre block contract call
     system_caller
-    .pre_block_beacon_root_contract_call(
-        &mut db,
-        &initialized_cfg,
-        &initialized_block_env,
-        attributes.parent_beacon_block_root,
-    )
-    .map_err(|err| {
-        warn!(target: "payload_builder",
-            parent_hash=%parent_block.hash(),
-            %err,
-            "failed to apply beacon root contract call for payload"
-        );
-        PayloadBuilderError::Internal(err.into())
-    })?;
-    
+        .pre_block_beacon_root_contract_call(
+            &mut db,
+            &initialized_cfg,
+            &initialized_block_env,
+            attributes.parent_beacon_block_root,
+        )
+        .map_err(|err| {
+            warn!(target: "payload_builder",
+                parent_hash=%parent_block.hash(),
+                %err,
+                "failed to apply beacon root contract call for payload"
+            );
+            PayloadBuilderError::Internal(err.into())
+        })?;
+
     // apply eip-2935 blockhashes update
     system_caller.pre_block_blockhashes_contract_call(
         &mut db,
@@ -284,12 +311,12 @@ where
             // which also removes all dependent transaction from the iterator before we can
             // continue
             best_txs.mark_invalid(&pool_tx);
-            continue
+            continue;
         }
 
         // check if the job was cancelled, if so we can exit early
         if cancel.is_cancelled() {
-            return Ok(BuildOutcome::Cancelled)
+            return Ok(BuildOutcome::Cancelled);
         }
 
         // convert tx to a signed transaction
@@ -306,7 +333,7 @@ where
                 // for regular transactions above.
                 trace!(target: "payload_builder", tx=?tx.hash, ?sum_blob_gas_used, ?tx_blob_gas, "skipping blob transaction because it would exceed the max data gas per block");
                 best_txs.mark_invalid(&pool_tx);
-                continue
+                continue;
             }
         }
 
@@ -334,11 +361,11 @@ where
                             best_txs.mark_invalid(&pool_tx);
                         }
 
-                        continue
+                        continue;
                     }
                     err => {
                         // this is an error that we should treat as fatal for this attempt
-                        return Err(PayloadBuilderError::EvmExecutionError(err))
+                        return Err(PayloadBuilderError::EvmExecutionError(err));
                     }
                 }
             }
@@ -388,7 +415,10 @@ where
     // check if we have a better block
     if !is_better_payload(best_payload.as_ref(), total_fees) {
         // can skip building the block
-        return Ok(BuildOutcome::Aborted { fees: total_fees, cached_reads })
+        return Ok(BuildOutcome::Aborted {
+            fees: total_fees,
+            cached_reads,
+        });
     }
 
     // calculate the requests and the requests root
@@ -412,7 +442,12 @@ where
             )
             .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
 
-        let requests = [deposit_requests, withdrawal_requests, consolidation_requests].concat();
+        let requests = [
+            deposit_requests,
+            withdrawal_requests,
+            consolidation_requests,
+        ]
+        .concat();
         let requests_root = calculate_requests_root(&requests);
         (Some(requests.into()), Some(requests_root))
     } else {
@@ -443,8 +478,15 @@ where
     .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
     // GNOSIS SPECIFIC >
 
-    let WithdrawalsOutcome { withdrawals_root, withdrawals } =
-        commit_withdrawals(&mut db, &chain_spec, attributes.timestamp, attributes.withdrawals)?;
+    let WithdrawalsOutcome {
+        withdrawals_root,
+        withdrawals,
+    } = commit_withdrawals(
+        &mut db,
+        &chain_spec,
+        attributes.timestamp,
+        attributes.withdrawals,
+    )?;
 
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
     // and 4788 contract call
@@ -456,21 +498,27 @@ where
         block_number,
         vec![requests.clone().unwrap_or_default()],
     );
-    let receipts_root =
-        execution_outcome.receipts_root_slow(block_number).expect("Number is in range");
-    let logs_bloom = execution_outcome.block_logs_bloom(block_number).expect("Number is in range");
+    let receipts_root = execution_outcome
+        .receipts_root_slow(block_number)
+        .expect("Number is in range");
+    let logs_bloom = execution_outcome
+        .block_logs_bloom(block_number)
+        .expect("Number is in range");
 
     // calculate the state root
     let hashed_state = HashedPostState::from_bundle_state(&execution_outcome.state().state);
     let (state_root, trie_output) = {
         let state_provider = db.database.0.inner.borrow_mut();
-        state_provider.db.state_root_with_updates(hashed_state.clone()).inspect_err(|err| {
-            warn!(target: "payload_builder",
-                parent_hash=%parent_block.hash(),
-                %err,
-                "failed to calculate state root for payload"
-            );
-        })?
+        state_provider
+            .db
+            .state_root_with_updates(hashed_state.clone())
+            .inspect_err(|err| {
+                warn!(target: "payload_builder",
+                    parent_hash=%parent_block.hash(),
+                    %err,
+                    "failed to calculate state root for payload"
+                );
+            })?
     };
 
     // create the block header
@@ -485,13 +533,20 @@ where
     if chain_spec.is_cancun_active_at_timestamp(attributes.timestamp) {
         // grab the blob sidecars from the executed txs
         blob_sidecars = pool.get_all_blobs_exact(
-            executed_txs.iter().filter(|tx| tx.is_eip4844()).map(|tx| tx.hash).collect(),
+            executed_txs
+                .iter()
+                .filter(|tx| tx.is_eip4844())
+                .map(|tx| tx.hash)
+                .collect(),
         )?;
 
         excess_blob_gas = if chain_spec.is_cancun_active_at_timestamp(parent_block.timestamp) {
             let parent_excess_blob_gas = parent_block.excess_blob_gas.unwrap_or_default();
             let parent_blob_gas_used = parent_block.blob_gas_used.unwrap_or_default();
-            Some(calc_excess_blob_gas(parent_excess_blob_gas, parent_blob_gas_used))
+            Some(calc_excess_blob_gas(
+                parent_excess_blob_gas,
+                parent_blob_gas_used,
+            ))
         } else {
             // for the first post-fork block, both parent.blob_gas_used and
             // parent.excess_blob_gas are evaluated as 0
@@ -528,7 +583,12 @@ where
     // seal the block
     let block = Block {
         header,
-        body: BlockBody { transactions: executed_txs, ommers: vec![], withdrawals, requests },
+        body: BlockBody {
+            transactions: executed_txs,
+            ommers: vec![],
+            withdrawals,
+            requests,
+        },
     };
 
     let sealed_block = block.seal_slow();
@@ -548,131 +608,132 @@ where
     // extend the payload with the blob sidecars from the executed txs
     payload.extend_sidecars(blob_sidecars);
 
-    Ok(BuildOutcome::Better { payload, cached_reads })
+    Ok(BuildOutcome::Better {
+        payload,
+        cached_reads,
+    })
 
+    // // apply eip-4788 pre block contract call
+    // sys_caller.pre_block_beacon_root_contract_call(
+    //     &mut db,
+    //     // &self.evm_config,
+    //     // &chain_spec,
+    //     &initialized_cfg,
+    //     &initialized_block_env,
+    //     block_number,
+    //     attributes.timestamp,
+    //     attributes.parent_beacon_block_root,
+    // )
+    // .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
 
-        // // apply eip-4788 pre block contract call
-        // sys_caller.pre_block_beacon_root_contract_call(
-        //     &mut db,
-        //     // &self.evm_config,
-        //     // &chain_spec,
-        //     &initialized_cfg,
-        //     &initialized_block_env,
-        //     block_number,
-        //     attributes.timestamp,
-        //     attributes.parent_beacon_block_root,
-        // )
-        // .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
+    // apply eip-2935 blockhashes update
+    // apply_blockhashes_update(
+    //     &mut db,
+    //     &chain_spec,
+    //     initialized_block_env.timestamp.to::<u64>(),
+    //     block_number,
+    //     parent_block.hash(),
+    // )
+    // .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
 
-        // apply eip-2935 blockhashes update
-        // apply_blockhashes_update(
-        //     &mut db,
-        //     &chain_spec,
-        //     initialized_block_env.timestamp.to::<u64>(),
-        //     block_number,
-        //     parent_block.hash(),
-        // )
-        // .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
+    // let WithdrawalsOutcome {
+    //     withdrawals_root,
+    //     withdrawals,
+    // } = commit_withdrawals(
+    //     &mut db,
+    //     &chain_spec,
+    //     attributes.timestamp,
+    //     attributes.withdrawals.clone(),
+    // )?;
 
-        // let WithdrawalsOutcome {
-        //     withdrawals_root,
-        //     withdrawals,
-        // } = commit_withdrawals(
-        //     &mut db,
-        //     &chain_spec,
-        //     attributes.timestamp,
-        //     attributes.withdrawals.clone(),
-        // )?;
+    // // merge all transitions into bundle state, this would apply the withdrawal balance
+    // // changes and 4788 contract call
+    // db.merge_transitions(BundleRetention::PlainState);
 
-        // // merge all transitions into bundle state, this would apply the withdrawal balance
-        // // changes and 4788 contract call
-        // db.merge_transitions(BundleRetention::PlainState);
+    // // calculate the state root
+    // let bundle_state = db.take_bundle();
+    // let state_root = db.database.state_root(&bundle_state)?;
 
-        // // calculate the state root
-        // let bundle_state = db.take_bundle();
-        // let state_root = db.database.state_root(&bundle_state)?;
+    // let mut excess_blob_gas = None;
+    // let mut blob_gas_used = None;
 
-        // let mut excess_blob_gas = None;
-        // let mut blob_gas_used = None;
+    // if chain_spec.is_cancun_active_at_timestamp(attributes.timestamp) {
+    //     excess_blob_gas = if chain_spec.is_cancun_active_at_timestamp(parent_block.timestamp) {
+    //         let parent_excess_blob_gas = parent_block.excess_blob_gas.unwrap_or_default();
+    //         let parent_blob_gas_used = parent_block.blob_gas_used.unwrap_or_default();
+    //         Some(calculate_excess_blob_gas(
+    //             parent_excess_blob_gas,
+    //             parent_blob_gas_used,
+    //         ))
+    //     } else {
+    //         // for the first post-fork block, both parent.blob_gas_used and
+    //         // parent.excess_blob_gas are evaluated as 0
+    //         Some(calculate_excess_blob_gas(0, 0))
+    //     };
 
-        // if chain_spec.is_cancun_active_at_timestamp(attributes.timestamp) {
-        //     excess_blob_gas = if chain_spec.is_cancun_active_at_timestamp(parent_block.timestamp) {
-        //         let parent_excess_blob_gas = parent_block.excess_blob_gas.unwrap_or_default();
-        //         let parent_blob_gas_used = parent_block.blob_gas_used.unwrap_or_default();
-        //         Some(calculate_excess_blob_gas(
-        //             parent_excess_blob_gas,
-        //             parent_blob_gas_used,
-        //         ))
-        //     } else {
-        //         // for the first post-fork block, both parent.blob_gas_used and
-        //         // parent.excess_blob_gas are evaluated as 0
-        //         Some(calculate_excess_blob_gas(0, 0))
-        //     };
+    //     blob_gas_used = Some(0);
+    // }
 
-        //     blob_gas_used = Some(0);
-        // }
+    // // Calculate the requests and the requests root.
+    // let (requests, requests_root) = if chain_spec
+    //     .is_prague_active_at_timestamp(attributes.timestamp)
+    // {
+    //     // We do not calculate the EIP-6110 deposit requests because there are no
+    //     // transactions in an empty payload.
+    //     let withdrawal_requests = system_caller.post_block_withdrawal_requests_contract_call::<EvmConfig, _>(
+    //         &self.evm_config,
+    //         &mut db,
+    //         &initialized_cfg,
+    //         &initialized_block_env,
+    //     )
+    //     .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
 
-        // // Calculate the requests and the requests root.
-        // let (requests, requests_root) = if chain_spec
-        //     .is_prague_active_at_timestamp(attributes.timestamp)
-        // {
-        //     // We do not calculate the EIP-6110 deposit requests because there are no
-        //     // transactions in an empty payload.
-        //     let withdrawal_requests = system_caller.post_block_withdrawal_requests_contract_call::<EvmConfig, _>(
-        //         &self.evm_config,
-        //         &mut db,
-        //         &initialized_cfg,
-        //         &initialized_block_env,
-        //     )
-        //     .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
+    //     let requests = withdrawal_requests;
+    //     let requests_root = calculate_requests_root(&requests);
+    //     (Some(requests.into()), Some(requests_root))
+    // } else {
+    //     (None, None)
+    // };
 
-        //     let requests = withdrawal_requests;
-        //     let requests_root = calculate_requests_root(&requests);
-        //     (Some(requests.into()), Some(requests_root))
-        // } else {
-        //     (None, None)
-        // };
+    // let header = Header {
+    //     parent_hash: parent_block.hash(),
+    //     ommers_hash: EMPTY_OMMER_ROOT_HASH,
+    //     beneficiary: initialized_block_env.coinbase,
+    //     state_root,
+    //     transactions_root: EMPTY_TRANSACTIONS,
+    //     withdrawals_root,
+    //     receipts_root: EMPTY_RECEIPTS,
+    //     logs_bloom: Default::default(),
+    //     timestamp: attributes.timestamp,
+    //     mix_hash: attributes.prev_randao,
+    //     nonce: BEACON_NONCE,
+    //     base_fee_per_gas: Some(base_fee),
+    //     number: parent_block.number + 1,
+    //     gas_limit: block_gas_limit,
+    //     difficulty: U256::ZERO,
+    //     gas_used: 0,
+    //     extra_data,
+    //     blob_gas_used,
+    //     excess_blob_gas,
+    //     parent_beacon_block_root: attributes.parent_beacon_block_root,
+    //     requests_root,
+    // };
 
-        // let header = Header {
-        //     parent_hash: parent_block.hash(),
-        //     ommers_hash: EMPTY_OMMER_ROOT_HASH,
-        //     beneficiary: initialized_block_env.coinbase,
-        //     state_root,
-        //     transactions_root: EMPTY_TRANSACTIONS,
-        //     withdrawals_root,
-        //     receipts_root: EMPTY_RECEIPTS,
-        //     logs_bloom: Default::default(),
-        //     timestamp: attributes.timestamp,
-        //     mix_hash: attributes.prev_randao,
-        //     nonce: BEACON_NONCE,
-        //     base_fee_per_gas: Some(base_fee),
-        //     number: parent_block.number + 1,
-        //     gas_limit: block_gas_limit,
-        //     difficulty: U256::ZERO,
-        //     gas_used: 0,
-        //     extra_data,
-        //     blob_gas_used,
-        //     excess_blob_gas,
-        //     parent_beacon_block_root: attributes.parent_beacon_block_root,
-        //     requests_root,
-        // };
+    // let block = Block {
+    //     header,
+    //     body: vec![],
+    //     ommers: vec![],
+    //     withdrawals,
+    //     requests,
+    // };
+    // let sealed_block = block.seal_slow();
 
-        // let block = Block {
-        //     header,
-        //     body: vec![],
-        //     ommers: vec![],
-        //     withdrawals,
-        //     requests,
-        // };
-        // let sealed_block = block.seal_slow();
-
-        // Ok(EthBuiltPayload::new(
-        //     attributes.payload_id(),
-        //     sealed_block,
-        //     U256::ZERO,
-        // ))
-    }
-
+    // Ok(EthBuiltPayload::new(
+    //     attributes.payload_id(),
+    //     sealed_block,
+    //     U256::ZERO,
+    // ))
+}
 
 // #[inline]
 // pub fn default_ethereum_payload_builder<EvmConfig, Pool, Client>(
