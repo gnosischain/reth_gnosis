@@ -58,7 +58,7 @@ where
         .deposit_contract
         .as_ref()
         .ok_or(BlockValidationError::DepositRequestDecode(
-            "deposit_contract not set".to_owned().into(),
+            "deposit_contract not set".to_owned(),
         ))?
         .address;
 
@@ -88,7 +88,7 @@ where
             evm.context.evm.env = previous_env;
             return Err(BlockExecutionError::Validation(
                 BlockValidationError::WithdrawalRequestsContractCall {
-                    message: format!("withdrawal contract system call revert: {}", e).into(),
+                    message: format!("withdrawal contract system call revert: {}", e),
                 },
             ));
         }
@@ -146,7 +146,7 @@ where
             evm.context.evm.env = previous_env;
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call error: {}", e).into(),
+                    message: format!("block rewards contract system call error: {}", e),
                 },
             ));
         }
@@ -161,14 +161,14 @@ where
         ExecutionResult::Revert { output, .. } => {
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call revert {}", output).into(),
+                    message: format!("block rewards contract system call revert {}", output),
                 },
             ));
         }
         ExecutionResult::Halt { reason, .. } => {
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call halt {:?}", reason).into(),
+                    message: format!("block rewards contract system call halt {:?}", reason),
                 },
             ));
         }
@@ -180,8 +180,7 @@ where
                 "error parsing block rewards contract system call return {:?}: {}",
                 hex::encode(output_bytes),
                 e
-            )
-            .into(),
+            ),
         })
     })?;
 
