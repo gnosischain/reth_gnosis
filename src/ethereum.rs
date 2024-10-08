@@ -13,7 +13,6 @@ use reth_evm::{
 };
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_primitives::Header;
-use revm_primitives::EVMError;
 use std::{fmt::Display, sync::Arc};
 
 /// Helper type for the output of executing a block.

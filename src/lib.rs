@@ -2,7 +2,7 @@ use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
 use execute::GnosisExecutorProvider;
 use eyre::eyre;
-use gnosis::SYSTEM_ADDRESS;
+// use gnosis::SYSTEM_ADDRESS;
 use payload_builder::GnosisPayloadServiceBuilder;
 use reth::{
     api::{FullNodeComponents, NodeAddOns},
@@ -14,14 +14,11 @@ use reth::{
         BuilderContext, Node,
     },
     network::NetworkHandle,
-    payload::EthBuiltPayload,
     rpc::eth::EthApi,
 };
 use reth_chainspec::ChainSpec;
-use reth_engine_primitives::{EngineValidator, PayloadTypes};
-use reth_ethereum_engine_primitives::{
-    EthPayloadAttributes, EthPayloadBuilderAttributes, EthereumEngineValidator,
-};
+use reth_engine_primitives::EngineValidator;
+use reth_ethereum_engine_primitives::EthereumEngineValidator;
 use reth_node_ethereum::{
     node::{EthereumEngineValidatorBuilder, EthereumNetworkBuilder, EthereumPoolBuilder},
     EthEngineTypes, EthereumNode,
