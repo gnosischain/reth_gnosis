@@ -1,6 +1,6 @@
 use clap::{Args, Parser};
 use reth::{chainspec::EthereumChainSpecParser, cli::Cli};
-use reth_gnosis::GnosisNode;
+use reth_gnosis::{GnosisArgs, GnosisNode};
 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
@@ -20,11 +20,13 @@ fn main() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
 
-    if let Err(err) = Cli::<EthereumChainSpecParser, NoArgs>::parse().run(|builder, _| async move {
-        let handle = builder.node(GnosisNode::new()).launch().await?;
+    if let Err(err) =
+        Cli::<EthereumChainSpecParser, GnosisArgs>::parse().run(|builder, _| async move {
+            let handle = builder.node(GnosisNode::new()).launch().await?;
 
-        handle.node_exit_future.await
-    }) {
+            handle.node_exit_future.await
+        })
+    {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
