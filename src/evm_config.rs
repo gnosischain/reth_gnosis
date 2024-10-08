@@ -1,5 +1,5 @@
 use reth::{
-    primitives::{transaction::FillTxEnv, Address, Head, Header, TransactionSigned, U256},
+    primitives::{transaction::FillTxEnv, Head, Header, TransactionSigned},
     revm::{
         inspector_handle_register,
         interpreter::Gas,
@@ -9,9 +9,9 @@ use reth::{
 };
 use reth_chainspec::ChainSpec;
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv};
-use reth_evm_ethereum::revm_spec;
+use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_after_merge};
 use revm::handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet;
-use revm_primitives::{AnalysisKind, Bytes, Env, TxKind};
+use revm_primitives::{Address, AnalysisKind, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv, Env, HandlerCfg, TxKind, U256};
 use std::sync::Arc;
 
 /// Reward beneficiary with gas fee.
@@ -39,11 +39,12 @@ pub fn mint_basefee_to_collector_address<EXT, DB: Database>(
     let base_fee = context.evm.env.block.basefee;
     let gas_used = U256::from(gas.spent() - gas.refunded() as u64);
 
-    let (collector_account, _) = context
+    let collector_account = context
         .evm
         .inner
         .journaled_state
-        .load_account(collector_address, &mut context.evm.inner.db)?;
+        .load_account(collector_address, &mut context.evm.inner.db)?
+        .data;
 
     collector_account.mark_touch();
     collector_account.info.balance = collector_account
@@ -55,15 +56,28 @@ pub fn mint_basefee_to_collector_address<EXT, DB: Database>(
 }
 
 /// Custom EVM configuration
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct GnosisEvmConfig {
     pub collector_address: Address,
+    chain_spec: Arc<ChainSpec>,
+}
+
+impl GnosisEvmConfig {
+    /// Creates a new [`OptimismEvmConfig`] with the given chain spec.
+    pub const fn new(collector_address: Address, chain_spec: Arc<ChainSpec>) -> Self {
+        Self { collector_address, chain_spec }
+    }
+
+    /// Returns the chain spec associated with this configuration.
+    pub fn chain_spec(&self) -> &ChainSpec {
+        &self.chain_spec
+    }
 }
 
 impl ConfigureEvm for GnosisEvmConfig {
     type DefaultExternalContext<'a> = ();
 
-    fn evm<'a, DB: Database + 'a>(&self, db: DB) -> Evm<'a, Self::DefaultExternalContext<'a>, DB> {
+    fn evm<DB: Database>(&self, db: DB) -> Evm<'_, Self::DefaultExternalContext<'_>, DB> {
         let collector_address = self.collector_address;
         EvmBuilder::default()
             .with_db(db)
@@ -77,9 +91,9 @@ impl ConfigureEvm for GnosisEvmConfig {
             .build()
     }
 
-    fn evm_with_inspector<'a, DB, I>(&self, db: DB, inspector: I) -> Evm<'a, I, DB>
+    fn evm_with_inspector<DB, I>(&self, db: DB, inspector: I) -> Evm<'_, I, DB>
     where
-        DB: Database + 'a,
+        DB: Database,
         I: GetInspector<DB>,
     {
         let collector_address = self.collector_address;
@@ -96,9 +110,13 @@ impl ConfigureEvm for GnosisEvmConfig {
             .append_handler_register(inspector_handle_register)
             .build()
     }
+
+    fn default_external_context<'a>(&self) -> Self::DefaultExternalContext<'a> {}
 }
 
 impl ConfigureEvmEnv for GnosisEvmConfig {
+    type Header = Header;
+
     fn fill_tx_env(&self, tx_env: &mut TxEnv, transaction: &TransactionSigned, sender: Address) {
         transaction.fill_tx_env(tx_env, sender);
     }
@@ -143,12 +161,12 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
     fn fill_cfg_env(
         &self,
         cfg_env: &mut CfgEnvWithHandlerCfg,
-        chain_spec: &ChainSpec,
+        // chain_spec: &ChainSpec,
         header: &Header,
         total_difficulty: U256,
     ) {
         let spec_id = revm_spec(
-            chain_spec,
+            self.chain_spec(),
             &Head {
                 number: header.number,
                 timestamp: header.timestamp,
@@ -158,9 +176,60 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
             },
         );
 
-        cfg_env.chain_id = chain_spec.chain().id();
+        cfg_env.chain_id = self.chain_spec().chain().id();
         cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Analyse;
 
         cfg_env.handler_cfg.spec_id = spec_id;
+    }
+
+    fn next_cfg_and_block_env(&self,parent: &Self::Header,attributes:reth_evm::NextBlockEnvAttributes,) -> (CfgEnvWithHandlerCfg,revm_primitives::BlockEnv) {
+        // configure evm env based on parent block
+        let cfg = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
+
+        // ensure we're not missing any timestamp based hardforks
+        let spec_id = revm_spec_by_timestamp_after_merge(&self.chain_spec, attributes.timestamp);
+
+        // if the parent block did not have excess blob gas (i.e. it was pre-cancun), but it is
+        // cancun now, we need to set the excess blob gas to the default value
+        let blob_excess_gas_and_price = parent
+            .next_block_excess_blob_gas()
+            .or_else(|| {
+                if spec_id.is_enabled_in(SpecId::CANCUN) {
+                    // default excess blob gas is zero
+                    Some(0)
+                } else {
+                    None
+                }
+            })
+            .map(BlobExcessGasAndPrice::new);
+
+        let block_env = BlockEnv {
+            number: U256::from(parent.number + 1),
+            coinbase: attributes.suggested_fee_recipient,
+            timestamp: U256::from(attributes.timestamp),
+            difficulty: U256::ZERO,
+            prevrandao: Some(attributes.prev_randao),
+            gas_limit: U256::from(parent.gas_limit),
+            // calculate basefee based on parent block's gas usage
+            basefee: U256::from(
+                parent
+                    .next_block_base_fee(
+                        self.chain_spec.base_fee_params_at_timestamp(attributes.timestamp),
+                    )
+                    .unwrap_or_default(),
+            ),
+            // calculate excess gas based on parent block's blob gas usage
+            blob_excess_gas_and_price,
+        };
+
+        let cfg_with_handler_cfg;
+        {
+            cfg_with_handler_cfg = CfgEnvWithHandlerCfg {
+                cfg_env: cfg,
+                handler_cfg: HandlerCfg { spec_id },
+            };
+        }
+
+        (cfg_with_handler_cfg, block_env)
     }
 }

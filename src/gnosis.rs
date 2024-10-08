@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
+use crate::errors::GnosisBlockExecutionError;
+use alloy_primitives::{address, Address, U256};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use reth::{
-    primitives::{address, Address, Withdrawal, U256},
+    primitives::Withdrawal,
     revm::{
         interpreter::Host,
         primitives::{ExecutionResult, Output, ResultAndState},
@@ -11,6 +13,7 @@ use reth::{
     },
 };
 use reth_chainspec::ChainSpec;
+use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
@@ -54,7 +57,7 @@ where
     let withdrawal_contract_address = chain_spec
         .deposit_contract
         .as_ref()
-        .ok_or(BlockExecutionError::Other(
+        .ok_or(BlockValidationError::DepositRequestDecode(
             "deposit_contract not set".to_owned().into(),
         ))?
         .address;
@@ -83,8 +86,10 @@ where
         Ok(res) => res.state,
         Err(e) => {
             evm.context.evm.env = previous_env;
-            return Err(BlockExecutionError::Other(
-                format!("withdrawal contract system call revert: {}", e).into(),
+            return Err(BlockExecutionError::Validation(
+                BlockValidationError::WithdrawalRequestsContractCall {
+                    message: format!("withdrawal contract system call revert: {}", e).into(),
+                },
             ));
         }
     };
@@ -139,8 +144,8 @@ where
         Ok(res) => res,
         Err(e) => {
             evm.context.evm.env = previous_env;
-            return Err(BlockExecutionError::Other(
-                format!("block rewards contract system call error: {}", e).into(),
+            return Err(BlockExecutionError::from(
+                GnosisBlockExecutionError::CustomErrorMessage { message: format!("block rewards contract system call error: {}", e).into(), }
             ));
         }
     };
@@ -152,25 +157,29 @@ where
             Output::Create(output_bytes, _) => output_bytes,
         },
         ExecutionResult::Revert { output, .. } => {
-            return Err(BlockExecutionError::Other(
-                format!("block rewards contract system call revert {}", output).into(),
+            return Err(BlockExecutionError::from(
+                GnosisBlockExecutionError::CustomErrorMessage {
+                    message: format!("block rewards contract system call revert {}", output).into(),
+                },
             ));
         }
         ExecutionResult::Halt { reason, .. } => {
-            return Err(BlockExecutionError::Other(
-                format!("block rewards contract system call halt {:?}", reason).into(),
+            return Err(BlockExecutionError::from(
+                GnosisBlockExecutionError::CustomErrorMessage { message: format!("block rewards contract system call halt {:?}", reason).into(), }
             ));
         }
     };
 
     let result = rewardCall::abi_decode_returns(output_bytes.as_ref(), true).map_err(|e| {
-        BlockExecutionError::Other(
-            format!(
-                "error parsing block rewards contract system call return {:?}: {}",
-                hex::encode(output_bytes),
-                e
-            )
-            .into(),
+        BlockExecutionError::from(
+            GnosisBlockExecutionError::CustomErrorMessage { 
+                message: format!(
+                    "error parsing block rewards contract system call return {:?}: {}",
+                    hex::encode(output_bytes),
+                    e
+                )
+                .into(),
+             }
         )
     })?;
 
