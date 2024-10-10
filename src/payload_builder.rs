@@ -45,16 +45,12 @@ use crate::{evm_config::GnosisEvmConfig, execute::gnosis_post_block_system_calls
 #[derive(Debug, Default, Clone)]
 pub struct GnosisPayloadServiceBuilder {
     // The EVM configuration to use for the payload builder.
-    // pub evm_config: EVM,
-    // block_rewards_contract: Address,
 }
 
 impl GnosisPayloadServiceBuilder {
     /// Create a new instance with the given evm config.
     pub const fn new() -> Self {
-        Self {
-            // block_rewards_contract,
-        }
+        Self {}
     }
 }
 
@@ -105,7 +101,6 @@ where
             pool,
             ctx.task_executor().clone(),
             payload_job_config,
-            // ctx.chain_spec(),
             payload_builder,
         );
         let (payload_service, payload_builder) =
@@ -455,15 +450,6 @@ where
     };
 
     // < GNOSIS SPECIFIC
-    // Compute the withdrawals root independent of how they are applied
-    // let withdrawals_root = if !chain_spec.is_shanghai_active_at_timestamp(attributes.timestamp) {
-    //     None
-    // } else if attributes.withdrawals.is_empty() {
-    //     Some(EMPTY_WITHDRAWALS)
-    // } else {
-    //     Some(proofs::calculate_withdrawals_root(&attributes.withdrawals))
-    // };
-
     gnosis_post_block_system_calls(
         &chain_spec,
         &evm_config,

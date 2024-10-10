@@ -105,7 +105,6 @@ where
         GnosisBatchExecutor {
             executor,
             batch_record: BlockBatchRecord::default(),
-            // stats: BlockExecutorStats::default(),
         }
     }
 }
@@ -174,7 +173,6 @@ where
         self.executor.evm_config.fill_cfg_and_block_env(
             &mut cfg,
             &mut block_env,
-            // self.chain_spec(),
             header,
             total_difficulty,
         );
@@ -268,7 +266,6 @@ where
         self.executor.evm_config.fill_cfg_and_block_env(
             &mut cfg,
             &mut block_env,
-            // self.chain_spec(),
             &block.header,
             total_difficulty,
         );

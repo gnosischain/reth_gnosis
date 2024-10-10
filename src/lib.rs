@@ -70,7 +70,6 @@ impl GnosisNode {
         Node: FullNodeTypes<
             Types: NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>,
         >,
-        // EthereumEngineValidatorBuilder: EngineValidatorBuilder<Node>
     {
         EthereumNode::components::<Node>()
             .node_types::<Node>()
@@ -80,10 +79,6 @@ impl GnosisNode {
             .executor(GnosisExecutorBuilder::default())
             .consensus(GnosisConsensusBuilder::default())
             .engine_validator(EthereumEngineValidatorBuilder::default())
-
-        // ComponentsBuilder::default()
-        //     .node_types::<Node>()
-        //     .pool(EthereumPoolBuilder::default())
     }
 }
 

@@ -167,7 +167,6 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
     fn fill_cfg_env(
         &self,
         cfg_env: &mut CfgEnvWithHandlerCfg,
-        // chain_spec: &ChainSpec,
         header: &Header,
         total_difficulty: U256,
     ) {
