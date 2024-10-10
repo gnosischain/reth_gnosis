@@ -207,7 +207,7 @@ where
     /// Execute a single block and apply the state changes to the internal state.
     ///
     /// Returns the receipts of the transactions in the block, the total gas used and the list of
-    /// EIP-7685 [requests](Request).
+    /// EIP-7685.
     ///
     /// Returns an error if execution fails.
     fn execute_without_verification_with_state_hook<F>(

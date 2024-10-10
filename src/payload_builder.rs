@@ -1,4 +1,4 @@
-use std::{io::Write, sync::Arc};
+use std::sync::Arc;
 
 use eyre::eyre;
 use reth::{
@@ -17,7 +17,9 @@ use reth::{
     transaction_pool::{noop::NoopTransactionPool, BestTransactionsAttributes, TransactionPool},
 };
 use reth_basic_payload_builder::{
-    commit_withdrawals, is_better_payload, BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder, PayloadConfig, WithdrawalsOutcome
+    commit_withdrawals, is_better_payload, BasicPayloadJobGenerator,
+    BasicPayloadJobGeneratorConfig, BuildArguments, BuildOutcome, MissingPayloadBehaviour,
+    PayloadBuilder, PayloadConfig, WithdrawalsOutcome,
 };
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::{ChainSpec, EthereumHardforks};
@@ -183,10 +185,10 @@ where
     }
 
     fn on_missing_payload(
-            &self,
-            _args: BuildArguments<Pool, Client, Self::Attributes, Self::BuiltPayload>,
-        ) -> reth_basic_payload_builder::MissingPayloadBehaviour<Self::BuiltPayload> {
-            MissingPayloadBehaviour::AwaitInProgress
+        &self,
+        _args: BuildArguments<Pool, Client, Self::Attributes, Self::BuiltPayload>,
+    ) -> reth_basic_payload_builder::MissingPayloadBehaviour<Self::BuiltPayload> {
+        MissingPayloadBehaviour::AwaitInProgress
     }
 
     fn build_empty_payload(
@@ -514,7 +516,7 @@ where
     let hashed_state = HashedPostState::from_bundle_state(&execution_outcome.state().state);
 
     // store everything in a file
-    let HashedPostState {accounts, storages} = hashed_state.clone();
+    let HashedPostState { accounts, storages } = hashed_state.clone();
     // let mut file = std::fs::File::create("/Users/debjit/Drawer/gnosis/my_reth_gnosis/state1.txt").unwrap();
     dbg!("dbgprint hashed state accounts: {:?}", accounts);
     dbg!("dbgprint hashed state storages: {:?}", storages);

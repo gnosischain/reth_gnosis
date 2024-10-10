@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write};
+use std::collections::HashMap;
 
 use crate::errors::GnosisBlockExecutionError;
 use alloy_primitives::{address, Address, U256};
@@ -15,7 +15,7 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
-use revm_primitives::{Account, AccountInfo, AccountStatus, B256};
+use revm_primitives::{Account, AccountInfo, AccountStatus};
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
@@ -193,7 +193,7 @@ where
         let account = Account {
             info: AccountInfo::default(),
             storage: Default::default(),
-            status: AccountStatus::Touched | AccountStatus::Created
+            status: AccountStatus::Touched | AccountStatus::Created,
         };
         state.insert(SYSTEM_ADDRESS, account);
     } else {
