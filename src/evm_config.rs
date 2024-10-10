@@ -66,7 +66,7 @@ pub struct GnosisEvmConfig {
 }
 
 impl GnosisEvmConfig {
-    /// Creates a new [`OptimismEvmConfig`] with the given chain spec.
+    /// Creates a new [`GnosisEvmConfig`] with the given chain spec.
     pub const fn new(collector_address: Address, chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             collector_address,
