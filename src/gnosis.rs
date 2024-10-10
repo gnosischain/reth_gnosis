@@ -187,31 +187,9 @@ where
     })?;
 
     // Clean-up post system tx context
-    // state.remove(&SYSTEM_ADDRESS);
-    // let account_info1 =
-    //     AccountInfo { nonce: 0, balance: U256::from(0), code_hash: B256::ZERO, code: None };
-    // state.insert(SYSTEM_ADDRESS, Account {
-    //     info: account_info1,
-    //     storage: Default::default(),
-    //     status: Default::default(),
-    // });
-    // let account = state.get(&SYSTEM_ADDRESS).unwrap().to_owned();
-    // let account_info = AccountInfo {
-    //     balance: U256::from(0),
-    //     nonce: 0,
-    //     code_hash: account.info.code_hash,
-    //     code: account.info.code,
-    // };
-    // let account = Account {
-    //     info: account_info,
-    //     storage: account.storage,
-    //     status: account.status,
-    //     // status: AccountStatus::Touched,
-    // };
-    // state.insert(SYSTEM_ADDRESS, account);
-
     dbg!("block no: {:?}", evm.block().number);
     if evm.block().number == U256::from(1) {
+        // Populate system account on first block
         let account = Account {
             info: AccountInfo::default(),
             storage: Default::default(),
@@ -219,10 +197,9 @@ where
         };
         state.insert(SYSTEM_ADDRESS, account);
     } else {
+        // Conditionally clear the system address account to prevent being removed
         state.remove(&SYSTEM_ADDRESS);
     }
-
-    
     state.remove(&evm.block().coinbase);
     dbg!("rewards dbgprint: {:?}", state.clone());
     evm.context.evm.db.commit(state);
@@ -241,8 +218,6 @@ where
         dbg!("reward yegevf: {:?}", amount);
         balance_increments.insert(*address, amount.to::<u128>());
     }
-
-    // let accounts = evm.context.evm.db.
 
     Ok(balance_increments)
 }
