@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
+use crate::errors::GnosisBlockExecutionError;
+use alloy_primitives::{address, Address, U256};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use reth::{
-    primitives::{address, Address, Withdrawal, U256},
+    primitives::Withdrawal,
     revm::{
         interpreter::Host,
         primitives::{ExecutionResult, Output, ResultAndState},
@@ -11,7 +13,9 @@ use reth::{
     },
 };
 use reth_chainspec::ChainSpec;
+use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
+use revm_primitives::{Account, AccountInfo, AccountStatus};
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
@@ -54,8 +58,8 @@ where
     let withdrawal_contract_address = chain_spec
         .deposit_contract
         .as_ref()
-        .ok_or(BlockExecutionError::Other(
-            "deposit_contract not set".to_owned().into(),
+        .ok_or(BlockValidationError::DepositRequestDecode(
+            "deposit_contract not set".to_owned(),
         ))?
         .address;
 
@@ -83,8 +87,10 @@ where
         Ok(res) => res.state,
         Err(e) => {
             evm.context.evm.env = previous_env;
-            return Err(BlockExecutionError::Other(
-                format!("withdrawal contract system call revert: {}", e).into(),
+            return Err(BlockExecutionError::Validation(
+                BlockValidationError::WithdrawalRequestsContractCall {
+                    message: format!("withdrawal contract system call revert: {}", e),
+                },
             ));
         }
     };
@@ -94,6 +100,7 @@ where
     // Clean-up post system tx context
     state.remove(&SYSTEM_ADDRESS);
     state.remove(&evm.block().coinbase);
+    dbg!("withdrawls dbgprint: {:?}", state.clone());
     evm.context.evm.db.commit(state);
     // re-set the previous env
     evm.context.evm.env = previous_env;
@@ -139,8 +146,10 @@ where
         Ok(res) => res,
         Err(e) => {
             evm.context.evm.env = previous_env;
-            return Err(BlockExecutionError::Other(
-                format!("block rewards contract system call error: {}", e).into(),
+            return Err(BlockExecutionError::from(
+                GnosisBlockExecutionError::CustomErrorMessage {
+                    message: format!("block rewards contract system call error: {}", e),
+                },
             ));
         }
     };
@@ -152,43 +161,61 @@ where
             Output::Create(output_bytes, _) => output_bytes,
         },
         ExecutionResult::Revert { output, .. } => {
-            return Err(BlockExecutionError::Other(
-                format!("block rewards contract system call revert {}", output).into(),
+            return Err(BlockExecutionError::from(
+                GnosisBlockExecutionError::CustomErrorMessage {
+                    message: format!("block rewards contract system call revert {}", output),
+                },
             ));
         }
         ExecutionResult::Halt { reason, .. } => {
-            return Err(BlockExecutionError::Other(
-                format!("block rewards contract system call halt {:?}", reason).into(),
+            return Err(BlockExecutionError::from(
+                GnosisBlockExecutionError::CustomErrorMessage {
+                    message: format!("block rewards contract system call halt {:?}", reason),
+                },
             ));
         }
     };
 
     let result = rewardCall::abi_decode_returns(output_bytes.as_ref(), true).map_err(|e| {
-        BlockExecutionError::Other(
-            format!(
+        BlockExecutionError::from(GnosisBlockExecutionError::CustomErrorMessage {
+            message: format!(
                 "error parsing block rewards contract system call return {:?}: {}",
                 hex::encode(output_bytes),
                 e
-            )
-            .into(),
-        )
+            ),
+        })
     })?;
 
     // Clean-up post system tx context
-    state.remove(&SYSTEM_ADDRESS);
+    dbg!("block no: {:?}", evm.block().number);
+    if evm.block().number == U256::from(1) {
+        // Populate system account on first block
+        let account = Account {
+            info: AccountInfo::default(),
+            storage: Default::default(),
+            status: AccountStatus::Touched | AccountStatus::Created,
+        };
+        state.insert(SYSTEM_ADDRESS, account);
+    } else {
+        // Conditionally clear the system address account to prevent being removed
+        state.remove(&SYSTEM_ADDRESS);
+    }
     state.remove(&evm.block().coinbase);
+    dbg!("rewards dbgprint: {:?}", state.clone());
     evm.context.evm.db.commit(state);
     // re-set the previous env
     evm.context.evm.env = previous_env;
 
     // TODO: How to get function return call from evm.transact()?
     let mut balance_increments = HashMap::new();
+    dbg!("yegevf length: {:?}", result.rewardsNative.len());
     for (address, amount) in result
         .receiversNative
         .iter()
         .zip(result.rewardsNative.iter())
     {
         // TODO: .to panics if the return value is too large
+        dbg!("reward yegevf: {:?}", amount);
         balance_increments.insert(*address, amount.to::<u128>());
     }
 

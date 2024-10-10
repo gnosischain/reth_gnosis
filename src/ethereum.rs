@@ -3,22 +3,16 @@
 use reth::{
     primitives::{BlockWithSenders, Receipt, Request},
     providers::ProviderError,
-    revm::{
-        primitives::ResultAndState, state_change::apply_blockhashes_update, Database,
-        DatabaseCommit, Evm, State,
-    },
+    revm::{primitives::ResultAndState, Database, DatabaseCommit, Evm, State},
 };
 use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_evm::{
     execute::{BlockExecutionError, BlockValidationError},
-    system_calls::{
-        apply_beacon_root_contract_call, apply_consolidation_requests_contract_call,
-        apply_withdrawal_requests_contract_call,
-    },
+    system_calls::{OnStateHook, SystemCaller},
     ConfigureEvm,
 };
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
-use revm_primitives::EVMError;
+use reth_primitives::Header;
 use std::{fmt::Display, sync::Arc};
 
 /// Helper type for the output of executing a block.
@@ -40,44 +34,35 @@ pub struct EthEvmExecutor<EvmConfig> {
 
 impl<EvmConfig> EthEvmExecutor<EvmConfig>
 where
-    EvmConfig: ConfigureEvm,
+    EvmConfig: ConfigureEvm<Header = Header>,
 {
     /// Executes the transactions in the block and returns the receipts of the transactions in the
     /// block, the total gas used and the list of EIP-7685 [requests](Request).
     ///
     /// This applies the pre-execution and post-execution changes that require an [EVM](Evm), and
     /// executes the transactions.
-    pub fn execute_state_transitions<Ext, DB>(
+    pub fn execute_state_transitions<Ext, DB, F>(
         &self,
         block: &BlockWithSenders,
         mut evm: Evm<'_, Ext, &mut State<DB>>,
+        state_hook: Option<F>,
     ) -> Result<EthExecuteOutput, BlockExecutionError>
     where
-        DB: Database<Error: Into<ProviderError> + Display>,
+        DB: Database,
+        DB::Error: Into<ProviderError> + Display,
+        F: OnStateHook,
     {
-        // apply pre execution changes
-        apply_beacon_root_contract_call(
-            &self.evm_config,
-            &self.chain_spec,
-            block.timestamp,
-            block.number,
-            block.parent_beacon_block_root,
-            &mut evm,
-        )?;
-        apply_blockhashes_update(
-            evm.db_mut(),
-            &self.chain_spec,
-            block.timestamp,
-            block.number,
-            block.parent_hash,
-        )?;
+        let mut system_caller =
+            SystemCaller::new(&self.evm_config, &self.chain_spec).with_state_hook(state_hook);
+
+        system_caller.apply_pre_execution_changes(block, &mut evm)?;
 
         // execute transactions
         let mut cumulative_gas_used = 0;
-        let mut receipts = Vec::with_capacity(block.body.len());
+        let mut receipts = Vec::with_capacity(block.body.transactions.len());
         for (sender, transaction) in block.transactions_with_sender() {
-            // The sum of the transaction‚Äôs gas limit, Tg, and the gas utilized in this block prior,
-            // must be no greater than the block‚Äôs gasLimit.
+            // The sum of the transaction’s gas limit, Tg, and the gas utilized in this block prior,
+            // must be no greater than the block’s gasLimit.
             let block_available_gas = block.header.gas_limit - cumulative_gas_used;
             if transaction.gas_limit() > block_available_gas {
                 return Err(
@@ -93,20 +78,16 @@ where
                 .fill_tx_env(evm.tx_mut(), transaction, *sender);
 
             // Execute transaction.
-            let ResultAndState { result, state } = evm.transact().map_err(move |err| {
-                let new_err = match err {
-                    EVMError::Transaction(e) => EVMError::Transaction(e),
-                    EVMError::Header(e) => EVMError::Header(e),
-                    EVMError::Database(e) => EVMError::Database(e.into()),
-                    EVMError::Custom(e) => EVMError::Custom(e),
-                    EVMError::Precompile(e) => EVMError::Precompile(e),
-                };
+            let result_and_state = evm.transact().map_err(move |err| {
+                let new_err = err.map_db_err(|e| e.into());
                 // Ensure hash is calculated for error log, if not already done
                 BlockValidationError::EVM {
                     hash: transaction.recalculate_hash(),
                     error: Box::new(new_err),
                 }
             })?;
+            system_caller.on_state(&result_and_state);
+            let ResultAndState { result, state } = result_and_state;
             evm.db_mut().commit(state);
 
             // append gas used
@@ -135,20 +116,9 @@ where
             // Collect all EIP-6110 deposits
             let deposit_requests = parse_deposits_from_receipts(&self.chain_spec, &receipts)?;
 
-            // Collect all EIP-7685 requests
-            let withdrawal_requests =
-                apply_withdrawal_requests_contract_call(&self.evm_config, &mut evm)?;
+            let post_execution_requests = system_caller.apply_post_execution_changes(&mut evm)?;
 
-            // Collect all EIP-7251 requests
-            let consolidation_requests =
-                apply_consolidation_requests_contract_call(&self.evm_config, &mut evm)?;
-
-            [
-                deposit_requests,
-                withdrawal_requests,
-                consolidation_requests,
-            ]
-            .concat()
+            [deposit_requests, post_execution_requests].concat()
         } else {
             vec![]
         };
