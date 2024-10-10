@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Write};
 
 use crate::errors::GnosisBlockExecutionError;
 use alloy_primitives::{address, Address, U256};
@@ -15,6 +15,7 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
+use revm_primitives::{Account, AccountInfo, AccountStatus, B256};
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
@@ -99,6 +100,7 @@ where
     // Clean-up post system tx context
     state.remove(&SYSTEM_ADDRESS);
     state.remove(&evm.block().coinbase);
+    dbg!("withdrawls dbgprint: {:?}", state.clone());
     evm.context.evm.db.commit(state);
     // re-set the previous env
     evm.context.evm.env = previous_env;
@@ -185,22 +187,62 @@ where
     })?;
 
     // Clean-up post system tx context
-    state.remove(&SYSTEM_ADDRESS);
+    // state.remove(&SYSTEM_ADDRESS);
+    // let account_info1 =
+    //     AccountInfo { nonce: 0, balance: U256::from(0), code_hash: B256::ZERO, code: None };
+    // state.insert(SYSTEM_ADDRESS, Account {
+    //     info: account_info1,
+    //     storage: Default::default(),
+    //     status: Default::default(),
+    // });
+    // let account = state.get(&SYSTEM_ADDRESS).unwrap().to_owned();
+    // let account_info = AccountInfo {
+    //     balance: U256::from(0),
+    //     nonce: 0,
+    //     code_hash: account.info.code_hash,
+    //     code: account.info.code,
+    // };
+    // let account = Account {
+    //     info: account_info,
+    //     storage: account.storage,
+    //     status: account.status,
+    //     // status: AccountStatus::Touched,
+    // };
+    // state.insert(SYSTEM_ADDRESS, account);
+
+    dbg!("block no: {:?}", evm.block().number);
+    if evm.block().number == U256::from(1) {
+        let account = Account {
+            info: AccountInfo::default(),
+            storage: Default::default(),
+            status: AccountStatus::Touched | AccountStatus::Created
+        };
+        state.insert(SYSTEM_ADDRESS, account);
+    } else {
+        state.remove(&SYSTEM_ADDRESS);
+    }
+
+    
     state.remove(&evm.block().coinbase);
+    dbg!("rewards dbgprint: {:?}", state.clone());
     evm.context.evm.db.commit(state);
     // re-set the previous env
     evm.context.evm.env = previous_env;
 
     // TODO: How to get function return call from evm.transact()?
     let mut balance_increments = HashMap::new();
+    dbg!("yegevf length: {:?}", result.rewardsNative.len());
     for (address, amount) in result
         .receiversNative
         .iter()
         .zip(result.rewardsNative.iter())
     {
         // TODO: .to panics if the return value is too large
+        dbg!("reward yegevf: {:?}", amount);
         balance_increments.insert(*address, amount.to::<u128>());
     }
+
+    // let accounts = evm.context.evm.db.
 
     Ok(balance_increments)
 }

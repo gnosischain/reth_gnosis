@@ -19,8 +19,8 @@ mod general_state_tests {
     // general_state_test!(st_args_zero_one_balance, stArgsZeroOneBalance);
     general_state_test!(st_attack, stAttackTest);
     // general_state_test!(st_bad_opcode, stBadOpcode);
-    // general_state_test!(st_bugs, stBugs);
-    // general_state_test!(st_call_codes, stCallCodes);
+    general_state_test!(st_bugs, stBugs);
+    general_state_test!(st_call_codes, stCallCodes);
     // general_state_test!(st_call_create_call_code, stCallCreateCallCodeTest);
     // general_state_test!(
     //     st_call_delegate_codes_call_code_homestead,
@@ -35,7 +35,7 @@ mod general_state_tests {
     // general_state_test!(st_delegate_call_test_homestead, stDelegatecallTestHomestead);
     // general_state_test!(st_eip150_gas_prices, stEIP150singleCodeGasPrices);
     // general_state_test!(st_eip150, stEIP150Specific);
-    // general_state_test!(st_eip158, stEIP158Specific);
+    general_state_test!(st_eip158, stEIP158Specific);
     // general_state_test!(st_eip1559, stEIP1559);
     // general_state_test!(st_eip2930, stEIP2930);
     // general_state_test!(st_eip3607, stEIP3607);
