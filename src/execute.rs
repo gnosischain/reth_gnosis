@@ -322,17 +322,9 @@ where
     // - Call block rewards contract for bridged xDAI mint
 
     if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
-        // let withdrawals = withdrawals.ok_or(BlockExecutionError::other::<BlockExecutionError::Internal>::(
-        //     "block has no withdrawals field".to_owned().into(),
-        // ))?;
-        let withdrawals = withdrawals.ok_or(
-            // BlockValidationError::WithdrawalRequestsContractCall {
-            //     message: "block has no withdrawals field".to_owned().into(),
-            // }
-            GnosisBlockExecutionError::CustomErrorMessage {
-                message: "block has no withdrawals field".to_owned(),
-            },
-        )?;
+        let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
+            message: "block has no withdrawals field".to_owned(),
+        })?;
         apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, &mut evm)?;
     }
 
@@ -461,7 +453,6 @@ pub struct GnosisBatchExecutor<EvmConfig, DB> {
     executor: GnosisBlockExecutor<EvmConfig, DB>,
     /// Keeps track of the batch and record receipts based on the configured prune mode
     batch_record: BlockBatchRecord,
-    // stats: BlockExecutorStats,
 }
 
 // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
@@ -523,8 +514,6 @@ where
 
     // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
     fn finalize(mut self) -> Self::Output {
-        // self.stats.log_debug();
-
         ExecutionOutcome::new(
             self.executor.state.take_bundle(),
             self.batch_record.take_receipts(),

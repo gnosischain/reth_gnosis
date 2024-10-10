@@ -57,9 +57,9 @@ where
     let withdrawal_contract_address = chain_spec
         .deposit_contract
         .as_ref()
-        .ok_or(BlockValidationError::DepositRequestDecode(
-            "deposit_contract not set".to_owned(),
-        ))?
+        .ok_or(GnosisBlockExecutionError::CustomErrorMessage {
+            message: "deposit_contract not set".to_owned(),
+        })?
         .address;
 
     // TODO: Only do the call post-merge
