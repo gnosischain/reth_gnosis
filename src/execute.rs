@@ -1,14 +1,15 @@
+use crate::errors::GnosisBlockExecutionError;
 use crate::ethereum::{EthEvmExecutor, EthExecuteOutput};
 use crate::gnosis::{apply_block_rewards_contract_call, apply_withdrawals_contract_call};
+use alloy_primitives::{Address, BlockNumber, U256};
 use eyre::eyre;
 use reth::primitives::Withdrawals;
 use reth::providers::ExecutionOutcome;
 use reth::{
     api::ConfigureEvm,
-    primitives::{Address, BlockNumber, BlockWithSenders, Header, Receipt, Receipts, U256},
     providers::ProviderError,
     revm::{
-        batch::{BlockBatchRecord, BlockExecutorStats},
+        batch::BlockBatchRecord,
         db::states::bundle_state::BundleRetention,
         primitives::{BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg},
         Database, State,
@@ -20,6 +21,8 @@ use reth_evm::execute::{
     BatchExecutor, BlockExecutionError, BlockExecutionInput, BlockExecutionOutput,
     BlockExecutorProvider, BlockValidationError, Executor,
 };
+use reth_evm::system_calls::{NoopHook, OnStateHook};
+use reth_primitives::{BlockWithSenders, Header, Receipt, Receipts};
 use reth_prune_types::PruneModes;
 use revm::Evm;
 use std::fmt::Display;
@@ -44,7 +47,7 @@ impl<EvmConfig: Clone> GnosisExecutorProvider<EvmConfig> {
             .ok_or(eyre!("blockRewardsContract not defined"))?;
         let block_rewards_contract: Address =
             serde_json::from_value(block_rewards_contract.clone())
-                .map_err(|e| BlockExecutionError::Other(Box::new(e)))?;
+                .map_err(|e| BlockExecutionError::other(Box::new(e)))?;
 
         Ok(Self {
             chain_spec,
@@ -80,7 +83,7 @@ where
 // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthExecutorProvider
 impl<EvmConfig: Clone> BlockExecutorProvider for GnosisExecutorProvider<EvmConfig>
 where
-    EvmConfig: ConfigureEvm,
+    EvmConfig: ConfigureEvm<Header = Header>,
 {
     type Executor<DB: Database<Error: Into<ProviderError> + Display>> =
         GnosisBlockExecutor<EvmConfig, DB>;
@@ -102,7 +105,6 @@ where
         GnosisBatchExecutor {
             executor,
             batch_record: BlockBatchRecord::default(),
-            stats: BlockExecutorStats::default(),
         }
     }
 }
@@ -157,7 +159,7 @@ impl<EvmConfig, DB> GnosisBlockExecutor<EvmConfig, DB> {
 // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBlockExecutor
 impl<EvmConfig, DB> GnosisBlockExecutor<EvmConfig, DB>
 where
-    EvmConfig: ConfigureEvm,
+    EvmConfig: ConfigureEvm<Header = Header>,
     DB: Database<Error: Into<ProviderError> + Display>,
 {
     /// Configures a new evm configuration and block environment for the given block.
@@ -171,7 +173,6 @@ where
         self.executor.evm_config.fill_cfg_and_block_env(
             &mut cfg,
             &mut block_env,
-            self.chain_spec(),
             header,
             total_difficulty,
         );
@@ -191,7 +192,40 @@ where
         let env = self.evm_env_for_block(&block.header, total_difficulty);
         let output = {
             let evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
-            self.executor.execute_state_transitions(block, evm)
+            self.executor
+                .execute_state_transitions(block, evm, None::<NoopHook>)
+        }?;
+
+        // 3. apply post execution changes
+        self.post_execution(block, total_difficulty)?;
+
+        Ok(output)
+    }
+
+    /// Execute a single block and apply the state changes to the internal state.
+    ///
+    /// Returns the receipts of the transactions in the block, the total gas used and the list of
+    /// EIP-7685.
+    ///
+    /// Returns an error if execution fails.
+    fn execute_without_verification_with_state_hook<F>(
+        &mut self,
+        block: &BlockWithSenders,
+        total_difficulty: U256,
+        state_hook: Option<F>,
+    ) -> Result<EthExecuteOutput, BlockExecutionError>
+    where
+        F: OnStateHook,
+    {
+        // 1. prepare state on new block
+        self.on_new_block(&block.header);
+
+        // 2. configure the evm and execute
+        let env = self.evm_env_for_block(&block.header, total_difficulty);
+        let output = {
+            let evm = self.executor.evm_config.evm_with_env(&mut self.state, env);
+            self.executor
+                .execute_state_transitions(block, evm, state_hook)
         }?;
 
         // 3. apply post execution changes
@@ -232,7 +266,6 @@ where
         self.executor.evm_config.fill_cfg_and_block_env(
             &mut cfg,
             &mut block_env,
-            self.chain_spec(),
             &block.header,
             total_difficulty,
         );
@@ -245,7 +278,7 @@ where
             &block_env,
             self.block_rewards_contract,
             block.timestamp,
-            block.withdrawals.as_ref(),
+            block.body.withdrawals.as_ref(),
             block.beneficiary,
         )?;
 
@@ -289,9 +322,9 @@ where
     // - Call block rewards contract for bridged xDAI mint
 
     if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
-        let withdrawals = withdrawals.ok_or(BlockExecutionError::Other(
-            "block has no withdrawals field".to_owned().into(),
-        ))?;
+        let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
+            message: "block has no withdrawals field".to_owned(),
+        })?;
         apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, &mut evm)?;
     }
 
@@ -316,7 +349,7 @@ where
 // Trait required by BlockExecutorProvider associated type Executor
 impl<EvmConfig, DB> Executor<DB> for GnosisBlockExecutor<EvmConfig, DB>
 where
-    EvmConfig: ConfigureEvm,
+    EvmConfig: ConfigureEvm<Header = Header>,
     DB: Database<Error: Into<ProviderError> + Display>,
 {
     type Input<'a> = BlockExecutionInput<'a, BlockWithSenders>;
@@ -346,6 +379,68 @@ where
             gas_used,
         })
     }
+
+    fn execute_with_state_witness<F>(
+        mut self,
+        input: Self::Input<'_>,
+        mut witness: F,
+    ) -> Result<Self::Output, Self::Error>
+    where
+        F: FnMut(&State<DB>),
+    {
+        let BlockExecutionInput {
+            block,
+            total_difficulty,
+        } = input;
+        let EthExecuteOutput {
+            receipts,
+            requests: _,
+            gas_used,
+        } = self.execute_without_verification(block, total_difficulty)?;
+
+        // NOTE: we need to merge keep the reverts for the bundle retention
+        self.state.merge_transitions(BundleRetention::Reverts);
+        witness(&self.state);
+
+        Ok(BlockExecutionOutput {
+            state: self.state.take_bundle(),
+            receipts,
+            requests: vec![],
+            gas_used,
+        })
+    }
+
+    fn execute_with_state_hook<F>(
+        mut self,
+        input: Self::Input<'_>,
+        state_hook: F,
+    ) -> Result<Self::Output, Self::Error>
+    where
+        F: OnStateHook,
+    {
+        let BlockExecutionInput {
+            block,
+            total_difficulty,
+        } = input;
+        let EthExecuteOutput {
+            receipts,
+            requests,
+            gas_used,
+        } = self.execute_without_verification_with_state_hook(
+            block,
+            total_difficulty,
+            Some(state_hook),
+        )?;
+
+        // NOTE: we need to merge keep the reverts for the bundle retention
+        self.state.merge_transitions(BundleRetention::Reverts);
+        Ok(BlockExecutionOutput {
+            state: self.state.take_bundle(),
+            receipts,
+            requests,
+            gas_used,
+        })
+    }
 }
 
 /// An executor for a batch of blocks.
@@ -358,7 +453,6 @@ pub struct GnosisBatchExecutor<EvmConfig, DB> {
     executor: GnosisBlockExecutor<EvmConfig, DB>,
     /// Keeps track of the batch and record receipts based on the configured prune mode
     batch_record: BlockBatchRecord,
-    stats: BlockExecutorStats,
 }
 
 // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
@@ -378,7 +472,7 @@ impl<EvmConfig, DB> GnosisBatchExecutor<EvmConfig, DB> {
 // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
 impl<EvmConfig, DB> BatchExecutor<DB> for GnosisBatchExecutor<EvmConfig, DB>
 where
-    EvmConfig: ConfigureEvm,
+    EvmConfig: ConfigureEvm<Header = Header>,
     DB: Database<Error: Into<ProviderError> + Display>,
 {
     type Input<'a> = BlockExecutionInput<'a, BlockWithSenders>;
@@ -420,8 +514,6 @@ where
 
     // [Gnosis/fork] Copy paste code from crates/ethereum/evm/src/execute.rs::EthBatchExecutor
     fn finalize(mut self) -> Self::Output {
-        self.stats.log_debug();
-
         ExecutionOutcome::new(
             self.executor.state.take_bundle(),
             self.batch_record.take_receipts(),
