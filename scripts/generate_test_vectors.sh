@@ -26,7 +26,7 @@ check_nethermind_availability() {
     sleep 2
   done
   echo "Nethermind is available"
-  return 0
+  # return 0
 }
 
 # Wait for Nethermind to become available
