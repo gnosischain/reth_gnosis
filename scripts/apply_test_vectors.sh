@@ -69,7 +69,7 @@ function apply_block_file() {
 
   PAYLOAD_STATUS=$(echo $RESPONSE | jq --raw-output '.result.payloadStatus.status')
   # If the status is not "VALID", exit the script with a non-zero code to make CI fail
-  if [ "$STATUS" != "VALID" ]; then
+  if [ "$PAYLOAD_STATUS" != "VALID" ]; then
     echo "Error: Payload status is $STATUS, failing CI."
     exit 1
   fi
