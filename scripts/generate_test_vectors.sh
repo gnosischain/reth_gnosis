@@ -29,43 +29,23 @@ check_nethermind_availability() {
   # return 0
 }
 
-echo "Waiting for Nethermind to become available..."
-
 # Wait for Nethermind to become available
 while ! check_nethermind_availability; do
   sleep 2
 done
 
-echo "Nethermind is available"
-
 BLOCK_COUNTER=0
-MAX_RETRIES=3
 
 function make_block() {
   ((BLOCK_COUNTER++))
-  RETRIES=0
 
-  while [ $RETRIES -lt $MAX_RETRIES ]; do
-    HEAD_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
-      --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", false],"id":1}' \
-      http://localhost:8545)
+  HEAD_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", false],"id":1}' \
+    http://localhost:8545)
 
-    # Extract block hash and proceed if it's valid
-    HEAD_BLOCK_HASH=$(echo $HEAD_BLOCK | jq --raw-output '.result.hash')
-    if [ "$HEAD_BLOCK_HASH" != "null" ]; then
-      echo "HEAD_BLOCK_HASH=$HEAD_BLOCK_HASH"
-      break
-    fi
-
-    echo "Failed to get head block, retrying... ($RETRIES/$MAX_RETRIES)"
-    RETRIES=$((RETRIES + 1))
-    sleep 2
-  done
-
-  if [ $RETRIES -ge $MAX_RETRIES ]; then
-    echo "Failed to retrieve head block after $MAX_RETRIES attempts, exiting."
-    exit 1
-  fi
+  # --raw-output remove the double quotes
+  HEAD_BLOCK_HASH=$(echo $HEAD_BLOCK | jq --raw-output '.result.hash')
+  echo HEAD_BLOCK_HASH=$HEAD_BLOCK_HASH
 
   # The ASCII representation of `2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a`
   JWT_SECRET="********************************"
@@ -177,7 +157,6 @@ N=5
 
 for ((i = 1; i <= N; i++)); do
   echo "Making block $i"
-  sleep 2
   make_block
 done
 
