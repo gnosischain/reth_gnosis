@@ -4,6 +4,8 @@
 #
 # reth genesis from https://github.com/ethpandaops/ethereum-genesis-generator/blob/a4b6733ea9d47b2b2ec497f5212f0265b83fb601/apps/el-gen/genesis_geth.py#L34
 
+# if TMPDIR is empty, use /tmp
+TMPDIR=${TMPDIR:-/tmp}
 DATA_DIR=$TMPDIR/reth_test
 # Ensure no data from previous tests
 rm -rf $DATA_DIR
