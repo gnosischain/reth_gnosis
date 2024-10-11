@@ -29,10 +29,14 @@ check_nethermind_availability() {
   # return 0
 }
 
+echo "Waiting for Nethermind to become available..."
+
 # Wait for Nethermind to become available
 while ! check_nethermind_availability; do
   sleep 2
 done
+
+echo "Nethermind is available"
 
 BLOCK_COUNTER=0
 
@@ -156,6 +160,7 @@ function make_block() {
 N=5
 
 for ((i = 1; i <= N; i++)); do
+  echo "Making block $i"
   make_block
 done
 
