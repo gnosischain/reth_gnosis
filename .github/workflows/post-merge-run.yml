@@ -39,6 +39,8 @@ jobs:
       # - name: Generate vectors
       #   run: bash ./scripts/generate_test_vectors_nethermind.sh
       # Test vectors against nethermind
+      - name: Install jwt and add to path
+        run: cargo install jwt-cli && export PATH=$HOME/.cargo/bin:$PATH
       - name: Apply vectors to Nethermind
         run: bash ./scripts/apply_test_vectors_nethermind.sh
       # Test vectors against Reth
