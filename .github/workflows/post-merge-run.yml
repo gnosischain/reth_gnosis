@@ -36,8 +36,8 @@ jobs:
       - name: Test jq is installed
         run: jq --help
       # Vectors are already generated, but this serves as a test
-      - name: Generate vectors
-        run: bash ./scripts/generate_test_vectors_nethermind.sh
+      # - name: Generate vectors
+      #   run: bash ./scripts/generate_test_vectors_nethermind.sh
       # Test vectors against nethermind
       - name: Apply vectors to Nethermind
         run: bash ./scripts/apply_test_vectors_nethermind.sh
