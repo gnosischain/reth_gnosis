@@ -17,11 +17,21 @@ mkdir -p $OUT_DIR
 
 
 # Retry the curl command until it succeeds
-until curl -X POST -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0", false],"id":1}' \
-  http://localhost:8545; do
+# Function to check if Nethermind is available
+check_nethermind_availability() {
+  until curl -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0", false],"id":1}' \
+    http://localhost:8545; do
     echo "Retrying..."
     sleep 2
+  done
+  echo "Nethermind is available"
+  return 0
+}
+
+# Wait for Nethermind to become available
+while ! check_nethermind_availability; do
+  sleep 2
 done
 
 BLOCK_COUNTER=0
