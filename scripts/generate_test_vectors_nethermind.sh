@@ -24,5 +24,4 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Generate test vectors
 $DIR/generate_test_vectors.sh

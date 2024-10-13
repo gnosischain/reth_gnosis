@@ -117,7 +117,6 @@ function make_block() {
   echo $BLOCK | jq '.' > $OUT_DIR/block_$BLOCK_NUMBER_HEX.json
 
   # send the new block as payload
-
   RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: Bearer $JWT_TOKEN" \
     --data "{
