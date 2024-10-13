@@ -23,12 +23,16 @@ until curl -X POST -H "Content-Type: application/json" \
     sleep 2
 done
 
+echo "Nethermind is available"
+
 BLOCK_COUNTER=0
 
 # function make_block() {
 
 # increment block counter
 ((BLOCK_COUNTER++))
+
+echo "Making block $BLOCK_COUNTER"
 
 HEAD_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
   --data "{
