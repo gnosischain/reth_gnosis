@@ -31,8 +31,17 @@ BLOCK_COUNTER=0
 ((BLOCK_COUNTER++))
 
 HEAD_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", false],"id":1}' \
-  http://localhost:8545)
+  --data "{
+    \"jsonrpc\":\"2.0\",
+    \"method\":\"eth_getBlockByNumber\",
+    \"params\":[
+      \"latest\",
+      false
+    ],
+    \"id\":1
+  }" \
+  http://localhost:8545 \
+)
 
 # --raw-output remove the double quotes
 HEAD_BLOCK_HASH=$(echo $HEAD_BLOCK | jq --raw-output '.result.hash')
