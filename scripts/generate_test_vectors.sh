@@ -25,12 +25,12 @@ done
 
 echo "Nethermind is available"
 
-BLOCK_COUNTER=0
+declare -i BLOCK_COUNTER=0
 
-# function make_block() {
+function make_block() {
 
 # increment block counter
-((BLOCK_COUNTER++))
+BLOCK_COUNTER=$((BLOCK_COUNTER + 1))
 
 echo "Making block $BLOCK_COUNTER"
 
@@ -154,13 +154,13 @@ RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
 )
 echo engine_forkchoiceUpdatedV1 set new block as head RESPONSE $RESPONSE
 
-# }
+}
 
 # Number of times to call make_block
-# N=5
+N=5
 
-# for ((i = 1; i <= N; i++)); do
-#   echo "Making block $i"
-#   make_block
-# done
+for ((i = 1; i <= N; i++)); do
+  echo "Making block $i"
+  make_block
+done
 
