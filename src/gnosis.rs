@@ -195,6 +195,7 @@ where
         should_create = true;
     }
 
+    // system account call is only in rewards function because it will be called in every block
     // Clean-up post system tx context
     if should_create {
         // Populate system account on first block
