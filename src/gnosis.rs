@@ -193,8 +193,8 @@ where
         }
     } else {
         should_create = true;
-    }    
-    
+    }
+
     // Clean-up post system tx context
     if should_create {
         // Populate system account on first block
@@ -208,7 +208,7 @@ where
         // Conditionally clear the system address account to prevent being removed
         state.remove(&SYSTEM_ADDRESS);
     }
-    
+
     state.remove(&evm.block().coinbase);
     evm.context.evm.db.commit(state);
     // re-set the previous env
