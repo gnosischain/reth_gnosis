@@ -15,6 +15,7 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
+use revm_primitives::{Account, AccountInfo, AccountStatus};
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
@@ -184,8 +185,31 @@ where
         })
     })?;
 
+    // figure out if we should create the system account
+    let mut should_create = false;
+    if let Some(system_account) = state.get(&SYSTEM_ADDRESS) {
+        if system_account.status == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) {
+            should_create = true;
+        }
+    } else {
+        should_create = true;
+    }
+
+    // system account call is only in rewards function because it will be called in every block
     // Clean-up post system tx context
-    state.remove(&SYSTEM_ADDRESS);
+    if should_create {
+        // Populate system account on first block
+        let account = Account {
+            info: AccountInfo::default(),
+            storage: Default::default(),
+            status: AccountStatus::Touched | AccountStatus::Created,
+        };
+        state.insert(SYSTEM_ADDRESS, account);
+    } else {
+        // Conditionally clear the system address account to prevent being removed
+        state.remove(&SYSTEM_ADDRESS);
+    }
+
     state.remove(&evm.block().coinbase);
     evm.context.evm.db.commit(state);
     // re-set the previous env
