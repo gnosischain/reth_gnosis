@@ -24,14 +24,28 @@ until curl -X POST -H "Content-Type: application/json" \
     sleep 2
 done
 
-BLOCK_COUNTER=0
+echo "Nethermind is available"
+
+declare -i BLOCK_COUNTER=0
 
 function make_block() {
-  ((BLOCK_COUNTER++))
+  # increment block counter
+  BLOCK_COUNTER=$((BLOCK_COUNTER + 1))
+
+  echo "Making block $BLOCK_COUNTER"
 
   HEAD_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
-    --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", false],"id":1}' \
-    http://localhost:8545)
+    --data "{
+      \"jsonrpc\":\"2.0\",
+      \"method\":\"eth_getBlockByNumber\",
+      \"params\":[
+        \"latest\",
+        false
+      ],
+      \"id\":1
+    }" \
+    http://localhost:8545 \
+  )
 
   # --raw-output remove the double quotes
   HEAD_BLOCK_HASH=$(echo $HEAD_BLOCK | jq --raw-output '.result.hash')
@@ -146,6 +160,7 @@ function make_block() {
 N=5
 
 for ((i = 1; i <= N; i++)); do
+  echo "Making block $i"
   make_block
 done
 

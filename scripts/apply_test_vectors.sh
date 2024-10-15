@@ -66,6 +66,15 @@ function apply_block_file() {
     http://localhost:8546 \
   )
   echo engine_forkchoiceUpdatedV1 set new block as head RESPONSE $RESPONSE
+
+
+  PAYLOAD_STATUS=$(echo $RESPONSE | jq --raw-output '.result.payloadStatus.status')
+  echo PAYLOAD_STATUS: $PAYLOAD_STATUS
+  # If the status is not "VALID", exit the script with a non-zero code to make CI fail
+  if [ "$PAYLOAD_STATUS" != "VALID" ]; then
+    echo "Error: Payload status is $PAYLOAD_STATUS, failing CI."
+    exit 1
+  fi
 }
 
 
