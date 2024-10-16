@@ -24,7 +24,7 @@ until curl -X POST -H "Content-Type: application/json" \
     sleep 2
 done
 
-echo "Nethermind is available"
+echo "EL is available"
 
 declare -i BLOCK_COUNTER=0
 
@@ -160,7 +160,6 @@ function make_block() {
 N=5
 
 for ((i = 1; i <= N; i++)); do
-  echo "Making block $i"
   make_block
 done
 
