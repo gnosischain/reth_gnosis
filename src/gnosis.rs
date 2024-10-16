@@ -185,23 +185,27 @@ where
         })
     })?;
 
-    // figure out if we should create the system account
+    // in gnosis aura, system account needs to be included in the state and not removed (despite EIP-158/161, even if empty)
+    // here we have a generalized check if system account is in state, or needs to be created
+
+    // keeping this generalized, instead of only in block 1
+    // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
     let should_create = state.get(&SYSTEM_ADDRESS).map_or(true, |system_account| {
+        // true if account not in state (either None, or Touched | LoadedAsNotExisting)
         system_account.status == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
     });
 
-    // system account call is only in rewards function because it will be called in every block
-    // Clean-up post system tx context
+    // this check needs to be there in every call, so instead of making it into a function which is called from post_execution, we can just include it in the rewards function
     if should_create {
-        // Populate system account on first block
         let account = Account {
             info: AccountInfo::default(),
             storage: Default::default(),
+            // we force the account to be created by changing the status
             status: AccountStatus::Touched | AccountStatus::Created,
         };
         state.insert(SYSTEM_ADDRESS, account);
     } else {
-        // Conditionally clear the system address account to prevent it from being removed
+        // clear the system address account from state transitions, else EIP-158/161 (impl in revm) removes it from state
         state.remove(&SYSTEM_ADDRESS);
     }
 
