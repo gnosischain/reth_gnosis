@@ -35,6 +35,8 @@ jobs:
           brew install docker-buildx
       - name: Test jq is installed
         run: jq --help
+      - name: Install jwt and add to path
+        run: cargo install jwt-cli && export PATH=$HOME/.cargo/bin:$PATH
       # Vectors are already generated, but this serves as a test
       - name: Generate vectors
         run: bash ./scripts/generate_test_vectors_nethermind.sh
