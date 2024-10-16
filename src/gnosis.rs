@@ -186,14 +186,9 @@ where
     })?;
 
     // figure out if we should create the system account
-    let mut should_create = false;
-    if let Some(system_account) = state.get(&SYSTEM_ADDRESS) {
-        if system_account.status == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) {
-            should_create = true;
-        }
-    } else {
-        should_create = true;
-    }
+    let should_create = state.get(&SYSTEM_ADDRESS).map_or(true, |system_account| {
+        system_account.status == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
+    });
 
     // system account call is only in rewards function because it will be called in every block
     // Clean-up post system tx context
@@ -206,7 +201,7 @@ where
         };
         state.insert(SYSTEM_ADDRESS, account);
     } else {
-        // Conditionally clear the system address account to prevent being removed
+        // Conditionally clear the system address account to prevent it from being removed
         state.remove(&SYSTEM_ADDRESS);
     }
 
