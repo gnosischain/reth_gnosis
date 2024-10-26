@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use alloy_consensus::EMPTY_OMMER_ROOT_HASH;
+use alloy_eips::merge::BEACON_NONCE;
 use eyre::eyre;
 use reth::{
     api::{FullNodeTypes, NodeTypesWithEngine},
@@ -9,9 +11,9 @@ use reth::{
         PayloadBuilderService,
     },
     primitives::{
-        constants::{eip4844::MAX_DATA_GAS_PER_BLOCK, BEACON_NONCE},
+        constants::eip4844::MAX_DATA_GAS_PER_BLOCK,
         proofs::{self, calculate_requests_root},
-        Block, Header, Receipt, EMPTY_OMMER_ROOT_HASH,
+        Block, Header, Receipt,
     },
     revm::database::StateProviderDatabase,
     transaction_pool::{noop::NoopTransactionPool, BestTransactionsAttributes, TransactionPool},
@@ -29,10 +31,10 @@ use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::EthEngineTypes;
 use reth_primitives::BlockBody;
 use reth_provider::{
-    CanonStateSubscriptions, ChainSpecProvider, ExecutionOutcome, StateProviderFactory,
+    ChainSpecProvider, ExecutionOutcome, StateProviderFactory,
 };
 use reth_trie::HashedPostState;
-use revm::{db::states::bundle_state::BundleRetention, DatabaseCommit, State};
+use revm::{db::states::bundle_state::BundleRetention, State};
 use revm_primitives::{
     calc_excess_blob_gas, Address, BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg,
     InvalidTransaction, ResultAndState, U256,

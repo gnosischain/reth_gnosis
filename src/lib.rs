@@ -5,13 +5,12 @@ use eyre::eyre;
 // use gnosis::SYSTEM_ADDRESS;
 use payload_builder::GnosisPayloadServiceBuilder;
 use reth::{
-    api::{FullNodeComponents, NodeAddOns},
+    api::FullNodeComponents,
     builder::{
-        components::{
-            ComponentsBuilder, ConsensusBuilder, EngineValidatorBuilder, ExecutorBuilder,
-        },
+        components::{ComponentsBuilder, ConsensusBuilder, ExecutorBuilder},
         node::{FullNodeTypes, NodeTypes, NodeTypesWithEngine},
-        BuilderContext, Node,
+        rpc::{EngineValidatorBuilder, RpcAddOns},
+        AddOnsContext, BuilderContext, Node, NodeAdapter, NodeComponentsBuilder, NodeTypesWithDB,
     },
     network::NetworkHandle,
     rpc::eth::EthApi,
@@ -20,7 +19,7 @@ use reth_chainspec::ChainSpec;
 use reth_engine_primitives::EngineValidator;
 use reth_ethereum_engine_primitives::EthereumEngineValidator;
 use reth_node_ethereum::{
-    node::{EthereumEngineValidatorBuilder, EthereumNetworkBuilder, EthereumPoolBuilder},
+    node::{EthereumNetworkBuilder, EthereumPoolBuilder},
     EthEngineTypes, EthereumNode,
 };
 use std::sync::Arc;
@@ -64,7 +63,6 @@ impl GnosisNode {
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
         GnosisConsensusBuilder,
-        EthereumEngineValidatorBuilder,
     >
     where
         Node: FullNodeTypes<
@@ -78,7 +76,6 @@ impl GnosisNode {
             .network(EthereumNetworkBuilder::default())
             .executor(GnosisExecutorBuilder::default())
             .consensus(GnosisConsensusBuilder::default())
-            .engine_validator(EthereumEngineValidatorBuilder::default())
     }
 }
 
@@ -92,18 +89,21 @@ impl NodeTypesWithEngine for GnosisNode {
     type Engine = EthEngineTypes;
 }
 
-/// Add-ons w.r.t. l1 ethereum.
-#[derive(Debug, Clone, Default)]
-#[non_exhaustive]
-pub struct GnosisAddOns;
-
-impl<N: FullNodeComponents> NodeAddOns<N> for GnosisAddOns {
-    type EthApi = EthApi<N::Provider, N::Pool, NetworkHandle, N::Evm>;
-}
+/// Add-ons w.r.t. gnosis
+pub type GnosisAddOns<N> = RpcAddOns<
+    N,
+    EthApi<
+        <N as FullNodeTypes>::Provider,
+        <N as FullNodeComponents>::Pool,
+        NetworkHandle,
+        <N as FullNodeComponents>::Evm,
+    >,
+    GnosisEngineValidatorBuilder,
+>;
 
 impl<Types, N> Node<N> for GnosisNode
 where
-    Types: NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>,
+    Types: NodeTypesWithDB + NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>,
     N: FullNodeTypes<Types = Types>,
 {
     type ComponentsBuilder = ComponentsBuilder<
@@ -113,10 +113,11 @@ where
         EthereumNetworkBuilder,
         GnosisExecutorBuilder,
         GnosisConsensusBuilder,
-        EthereumEngineValidatorBuilder,
     >;
 
-    type AddOns = GnosisAddOns;
+    type AddOns = GnosisAddOns<
+        NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
+    >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         let Self { args } = self;
@@ -196,12 +197,12 @@ pub struct GnosisEngineValidatorBuilder;
 impl<Node, Types> EngineValidatorBuilder<Node> for GnosisEngineValidatorBuilder
 where
     Types: NodeTypesWithEngine<ChainSpec = ChainSpec>,
-    Node: FullNodeTypes<Types = Types>,
+    Node: FullNodeComponents<Types = Types>,
     EthereumEngineValidator: EngineValidator<Types::Engine>,
 {
     type Validator = EthereumEngineValidator;
 
-    async fn build_validator(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Validator> {
-        Ok(EthereumEngineValidator::new(ctx.chain_spec()))
+    async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
+        Ok(EthereumEngineValidator::new(ctx.config.chain.clone()))
     }
 }
