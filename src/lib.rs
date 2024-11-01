@@ -1,8 +1,7 @@
+use crate::execute::GnosisExecutionStrategyFactory;
 use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
-use execute::GnosisExecutorProvider;
 use eyre::eyre;
-// use gnosis::SYSTEM_ADDRESS;
 use payload_builder::GnosisPayloadServiceBuilder;
 use reth::{
     api::FullNodeComponents,
@@ -10,7 +9,7 @@ use reth::{
         components::{ComponentsBuilder, ConsensusBuilder, ExecutorBuilder},
         node::{FullNodeTypes, NodeTypes, NodeTypesWithEngine},
         rpc::{EngineValidatorBuilder, RpcAddOns},
-        AddOnsContext, BuilderContext, Node, NodeAdapter, NodeComponentsBuilder, NodeTypesWithDB,
+        AddOnsContext, BuilderContext, Node, NodeAdapter, NodeComponentsBuilder,
     },
     network::NetworkHandle,
     rpc::eth::EthApi,
@@ -18,6 +17,7 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_engine_primitives::EngineValidator;
 use reth_ethereum_engine_primitives::EthereumEngineValidator;
+use reth_evm::execute::BasicBlockExecutorProvider;
 use reth_node_ethereum::{
     node::{EthereumNetworkBuilder, EthereumPoolBuilder},
     EthEngineTypes, EthereumNode,
@@ -26,7 +26,6 @@ use std::sync::Arc;
 
 mod consensus;
 mod errors;
-mod ethereum;
 mod evm_config;
 mod execute;
 mod gnosis;
@@ -101,10 +100,9 @@ pub type GnosisAddOns<N> = RpcAddOns<
     GnosisEngineValidatorBuilder,
 >;
 
-impl<Types, N> Node<N> for GnosisNode
+impl<N> Node<N> for GnosisNode
 where
-    Types: NodeTypesWithDB + NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>,
-    N: FullNodeTypes<Types = Types>,
+    N: FullNodeTypes<Types: NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>>,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
@@ -141,7 +139,7 @@ where
     // Must implement ConfigureEvm;
     type EVM = GnosisEvmConfig;
     // Must implement BlockExecutorProvider;
-    type Executor = GnosisExecutorProvider<Self::EVM>;
+    type Executor = BasicBlockExecutorProvider<GnosisExecutionStrategyFactory>;
 
     async fn build_evm(
         self,
@@ -161,7 +159,9 @@ where
             serde_json::from_value(collector_address.clone())?,
             chain_spec.clone(),
         );
-        let executor = GnosisExecutorProvider::new(chain_spec, evm_config.clone())?;
+        let strategy_factory =
+            GnosisExecutionStrategyFactory::new(ctx.chain_spec(), evm_config.clone())?;
+        let executor = BasicBlockExecutorProvider::new(strategy_factory);
 
         Ok((evm_config, executor))
     }

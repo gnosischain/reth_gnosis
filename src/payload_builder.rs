@@ -1,28 +1,28 @@
 use std::sync::Arc;
 
 use alloy_consensus::EMPTY_OMMER_ROOT_HASH;
+use alloy_eips::eip7685::Requests;
 use alloy_eips::merge::BEACON_NONCE;
 use eyre::eyre;
+use reth::builder::PayloadBuilderError;
 use reth::{
     api::{FullNodeTypes, NodeTypesWithEngine},
     builder::{components::PayloadServiceBuilder, BuilderContext, PayloadBuilderConfig},
     payload::{
-        EthBuiltPayload, EthPayloadBuilderAttributes, PayloadBuilderError, PayloadBuilderHandle,
-        PayloadBuilderService,
+        EthBuiltPayload, EthPayloadBuilderAttributes, PayloadBuilderHandle, PayloadBuilderService,
     },
-    primitives::{
-        constants::eip4844::MAX_DATA_GAS_PER_BLOCK,
-        proofs::{self, calculate_requests_root},
-        Block, Header, Receipt,
-    },
+    primitives::{constants::eip4844::MAX_DATA_GAS_PER_BLOCK, proofs, Block, Header, Receipt},
     revm::database::StateProviderDatabase,
-    transaction_pool::{noop::NoopTransactionPool, BestTransactionsAttributes, TransactionPool},
+    transaction_pool::{
+        noop::NoopTransactionPool, BestTransactions, BestTransactionsAttributes, TransactionPool,
+    },
 };
 use reth_basic_payload_builder::{
     commit_withdrawals, is_better_payload, BasicPayloadJobGenerator,
     BasicPayloadJobGeneratorConfig, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
     WithdrawalsOutcome,
 };
+use reth_chain_state::CanonStateSubscriptions;
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_errors::RethError;
@@ -30,18 +30,16 @@ use reth_evm::{system_calls::SystemCaller, ConfigureEvm, ConfigureEvmEnv, NextBl
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::EthEngineTypes;
 use reth_primitives::BlockBody;
-use reth_provider::{
-    ChainSpecProvider, ExecutionOutcome, StateProviderFactory,
-};
+use reth_provider::{ChainSpecProvider, ExecutionOutcome, StateProviderFactory};
 use reth_trie::HashedPostState;
-use revm::{db::states::bundle_state::BundleRetention, State};
+use revm::{db::states::bundle_state::BundleRetention, DatabaseCommit, State};
 use revm_primitives::{
     calc_excess_blob_gas, Address, BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg,
     InvalidTransaction, ResultAndState, U256,
 };
 use tracing::{debug, trace, warn};
 
-use crate::{evm_config::GnosisEvmConfig, execute::gnosis_post_block_system_calls};
+use crate::{evm_config::GnosisEvmConfig, gnosis::apply_post_block_system_calls};
 
 /// A basic Gnosis payload service builder
 #[derive(Debug, Default, Clone)]
@@ -59,6 +57,8 @@ impl GnosisPayloadServiceBuilder {
 impl<Node, Pool> PayloadServiceBuilder<Node, Pool> for GnosisPayloadServiceBuilder
 where
     Node: FullNodeTypes<Types: NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>>,
+    <Node as FullNodeTypes>::Provider: reth_provider::StateProviderFactory
+        + reth_provider::ChainSpecProvider<ChainSpec = ChainSpec>,
     Pool: TransactionPool + Unpin + 'static,
 {
     async fn spawn_payload_service(
@@ -269,7 +269,7 @@ where
 
     let block_number = initialized_block_env.number.to::<u64>();
 
-    let mut system_caller = SystemCaller::new(&evm_config, chain_spec.clone());
+    let mut system_caller = SystemCaller::new((&evm_config).clone(), chain_spec.clone());
 
     // apply eip-4788 pre block contract call
     system_caller
@@ -337,7 +337,7 @@ where
         let env = EnvWithHandlerCfg::new_with_cfg_env(
             initialized_cfg.clone(),
             initialized_block_env.clone(),
-            evm_config.tx_env(&tx),
+            evm_config.tx_env(tx.as_signed(), tx.signer()),
         );
 
         // Configure the environment for the block.
@@ -419,9 +419,7 @@ where
     }
 
     // calculate the requests and the requests root
-    let (requests, requests_root) = if chain_spec
-        .is_prague_active_at_timestamp(attributes.timestamp)
-    {
+    let requests = if chain_spec.is_prague_active_at_timestamp(attributes.timestamp) {
         let deposit_requests = parse_deposits_from_receipts(&chain_spec, receipts.iter().flatten())
             .map_err(|err| PayloadBuilderError::Internal(RethError::Execution(err.into())))?;
         let withdrawal_requests = system_caller
@@ -439,20 +437,17 @@ where
             )
             .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
 
-        let requests = [
+        Some(Requests::new(vec![
             deposit_requests,
             withdrawal_requests,
             consolidation_requests,
-        ]
-        .concat();
-        let requests_root = calculate_requests_root(&requests);
-        (Some(requests.into()), Some(requests_root))
+        ]))
     } else {
-        (None, None)
+        None
     };
 
     // < GNOSIS SPECIFIC
-    gnosis_post_block_system_calls(
+    apply_post_block_system_calls(
         &chain_spec,
         &evm_config,
         &mut db,
@@ -480,6 +475,7 @@ where
     // and 4788 contract call
     db.merge_transitions(BundleRetention::Reverts);
 
+    let requests_hash = requests.as_ref().map(|requests| requests.requests_hash());
     let execution_outcome = ExecutionOutcome::new(
         db.take_bundle(),
         vec![receipts.clone()].into(),
@@ -565,7 +561,7 @@ where
         parent_beacon_block_root: attributes.parent_beacon_block_root,
         blob_gas_used: blob_gas_used.map(Into::into),
         excess_blob_gas: excess_blob_gas.map(Into::into),
-        requests_root,
+        requests_hash,
     };
 
     // seal the block
@@ -575,7 +571,6 @@ where
             transactions: executed_txs,
             ommers: vec![],
             withdrawals,
-            requests,
         },
     };
 
@@ -590,7 +585,6 @@ where
         hashed_state: Arc::new(hashed_state),
         trie: Arc::new(trie_output),
     };
-
     let mut payload = EthBuiltPayload::new(attributes.id, sealed_block, total_fees, Some(executed));
 
     // extend the payload with the blob sidecars from the executed txs
