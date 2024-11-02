@@ -1,14 +1,12 @@
 extern crate alloc;
 use crate::evm_config::GnosisEvmConfig;
 
-use crate::errors::GnosisBlockExecutionError;
-use crate::gnosis::{apply_block_rewards_contract_call, apply_withdrawals_contract_call};
+use crate::gnosis::apply_post_block_system_calls;
 use alloc::{boxed::Box, sync::Arc};
 use alloy_consensus::Transaction as _;
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::Address;
 use core::fmt::Display;
-use eyre::eyre;
 use reth_chainspec::ChainSpec;
 use reth_chainspec::EthereumHardforks;
 use reth_evm::{
@@ -46,27 +44,14 @@ use revm_primitives::{
 pub struct GnosisExecutionStrategyFactory<EvmConfig = GnosisEvmConfig> {
     chain_spec: Arc<ChainSpec>,
     evm_config: EvmConfig,
-    /// AuRa BlockRewards contract address for its system call
-    block_rewards_contract: Address,
 }
 
 impl<EvmConfig> GnosisExecutionStrategyFactory<EvmConfig> {
     // Create a new executor strategy factory
     pub fn new(chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> eyre::Result<Self> {
-        let block_rewards_contract = chain_spec
-            .genesis()
-            .config
-            .extra_fields
-            .get("blockRewardsContract")
-            .ok_or(eyre!("blockRewardsContract not defined"))?;
-        let block_rewards_contract: Address =
-            serde_json::from_value(block_rewards_contract.clone())
-                .map_err(|e| BlockExecutionError::other(Box::new(e)))?;
-
         Ok(Self {
             chain_spec,
             evm_config,
-            block_rewards_contract,
         })
     }
 }
@@ -88,12 +73,7 @@ where
             .with_bundle_update()
             .without_state_clear()
             .build();
-        GnosisExecutionStrategy::new(
-            state,
-            self.chain_spec.clone(),
-            self.evm_config.clone(),
-            self.block_rewards_contract.clone(),
-        )
+        GnosisExecutionStrategy::new(state, self.chain_spec.clone(), self.evm_config.clone())
     }
 }
 
@@ -119,13 +99,17 @@ impl<DB, EvmConfig> GnosisExecutionStrategy<DB, EvmConfig>
 where
     EvmConfig: Clone,
 {
-    pub fn new(
-        state: State<DB>,
-        chain_spec: Arc<ChainSpec>,
-        evm_config: EvmConfig,
-        block_rewards_contract: Address,
-    ) -> Self {
+    pub fn new(state: State<DB>, chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> Self {
         let system_caller = SystemCaller::new(evm_config.clone(), (*chain_spec).clone());
+        let block_rewards_contract = chain_spec
+            .genesis()
+            .config
+            .extra_fields
+            .get("blockRewardsContract")
+            .expect("blockRewardsContract not defined")
+            .clone();
+        let block_rewards_contract: Address = serde_json::from_value(block_rewards_contract)
+            .expect("blockRewardsContract not an address");
         Self {
             state,
             chain_spec,
@@ -250,15 +234,20 @@ where
         total_difficulty: U256,
         receipts: &[Receipt],
     ) -> Result<Requests, Self::Error> {
-        let chain_spec = self.chain_spec.clone();
-        let mut cfg = CfgEnvWithHandlerCfg::new(Default::default(), Default::default());
-        let mut block_env = BlockEnv::default();
-        self.evm_config.fill_cfg_and_block_env(
-            &mut cfg,
-            &mut block_env,
-            &block.header,
-            total_difficulty,
-        );
+        let cfg = CfgEnvWithHandlerCfg::new(Default::default(), Default::default());
+        let block_env = BlockEnv::default();
+
+        apply_post_block_system_calls::<EvmConfig, DB>(
+            &self.chain_spec,
+            &self.evm_config,
+            &mut self.state,
+            &cfg,
+            &block_env,
+            self.block_rewards_contract,
+            block.timestamp,
+            block.body.withdrawals.as_ref(),
+            block.beneficiary,
+        )?;
 
         let env = self.evm_env_for_block(&block.header, total_difficulty);
         let mut evm = self.evm_config.evm_with_env(&mut self.state, env);
@@ -276,30 +265,6 @@ where
         } else {
             Requests::default()
         };
-
-        if chain_spec.is_shanghai_active_at_timestamp(block.timestamp) {
-            let withdrawals = block.body.withdrawals.as_ref().ok_or(
-                GnosisBlockExecutionError::CustomErrorMessage {
-                    message: "block has no withdrawals field".to_owned(),
-                },
-            )?;
-            apply_withdrawals_contract_call(&self.evm_config, &chain_spec, withdrawals, &mut evm)?;
-        }
-
-        let balance_increments = apply_block_rewards_contract_call(
-            &self.evm_config,
-            self.block_rewards_contract,
-            block.timestamp,
-            block.beneficiary,
-            &mut evm,
-        )?;
-
-        drop(evm);
-
-        // increment balances
-        self.state
-            .increment_balances(balance_increments)
-            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
 
         Ok(requests)
     }

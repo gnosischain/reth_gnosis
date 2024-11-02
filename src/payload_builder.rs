@@ -1,28 +1,27 @@
 use std::sync::Arc;
 
 use alloy_consensus::EMPTY_OMMER_ROOT_HASH;
-use alloy_eips::eip7685::Requests;
-use alloy_eips::merge::BEACON_NONCE;
+use alloy_eips::{eip4844::MAX_DATA_GAS_PER_BLOCK, eip7685::Requests, merge::BEACON_NONCE};
 use eyre::eyre;
-use reth::builder::PayloadBuilderError;
 use reth::{
     api::{FullNodeTypes, NodeTypesWithEngine},
     builder::{components::PayloadServiceBuilder, BuilderContext, PayloadBuilderConfig},
     payload::{
-        EthBuiltPayload, EthPayloadBuilderAttributes, PayloadBuilderHandle, PayloadBuilderService,
+        EthBuiltPayload, EthPayloadBuilderAttributes, PayloadBuilderError, PayloadBuilderHandle,
+        PayloadBuilderService,
     },
-    primitives::{constants::eip4844::MAX_DATA_GAS_PER_BLOCK, proofs, Block, Header, Receipt},
+    primitives::{
+        proofs::{self},
+        Block, Header, Receipt,
+    },
     revm::database::StateProviderDatabase,
-    transaction_pool::{
-        noop::NoopTransactionPool, BestTransactions, BestTransactionsAttributes, TransactionPool,
-    },
+    transaction_pool::{noop::NoopTransactionPool, BestTransactionsAttributes, TransactionPool},
 };
 use reth_basic_payload_builder::{
     commit_withdrawals, is_better_payload, BasicPayloadJobGenerator,
     BasicPayloadJobGeneratorConfig, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
     WithdrawalsOutcome,
 };
-use reth_chain_state::CanonStateSubscriptions;
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_errors::RethError;
@@ -30,7 +29,9 @@ use reth_evm::{system_calls::SystemCaller, ConfigureEvm, ConfigureEvmEnv, NextBl
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::EthEngineTypes;
 use reth_primitives::BlockBody;
-use reth_provider::{ChainSpecProvider, ExecutionOutcome, StateProviderFactory};
+use reth_provider::{
+    CanonStateSubscriptions, ChainSpecProvider, ExecutionOutcome, StateProviderFactory,
+};
 use reth_trie::HashedPostState;
 use revm::{db::states::bundle_state::BundleRetention, DatabaseCommit, State};
 use revm_primitives::{
@@ -146,7 +147,7 @@ where
         &self,
         config: &PayloadConfig<EthPayloadBuilderAttributes>,
         parent: &Header,
-    ) -> (CfgEnvWithHandlerCfg, BlockEnv) {
+    ) -> Result<(CfgEnvWithHandlerCfg, BlockEnv), EvmConfig::Error> {
         let next_attributes = NextBlockEnvAttributes {
             timestamp: config.attributes.timestamp,
             suggested_fee_recipient: config.attributes.suggested_fee_recipient,
@@ -171,7 +172,9 @@ where
         &self,
         args: BuildArguments<Pool, Client, EthPayloadBuilderAttributes, EthBuiltPayload>,
     ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError> {
-        let (cfg_env, block_env) = self.cfg_and_block_env(&args.config, &args.config.parent_block);
+        let (cfg_env, block_env) = self
+            .cfg_and_block_env(&args.config, &args.config.parent_header)
+            .map_err(PayloadBuilderError::other)?;
         default_ethereum_payload(
             self.evm_config.clone(),
             args,
@@ -194,7 +197,9 @@ where
             cancel: Default::default(),
             best_payload: None,
         };
-        let (cfg_env, block_env) = self.cfg_and_block_env(&args.config, &args.config.parent_block);
+        let (cfg_env, block_env) = self
+            .cfg_and_block_env(&args.config, &args.config.parent_header)
+            .map_err(PayloadBuilderError::other)?;
         default_ethereum_payload(
             self.evm_config.clone(),
             args,
@@ -237,19 +242,19 @@ where
         best_payload,
     } = args;
     let chain_spec = client.chain_spec();
-    let state_provider = client.state_by_block_hash(config.parent_block.hash())?;
+    let state_provider = client.state_by_block_hash(config.parent_header.hash())?;
     let state = StateProviderDatabase::new(state_provider);
     let mut db = State::builder()
         .with_database_ref(cached_reads.as_db(state))
         .with_bundle_update()
         .build();
     let PayloadConfig {
-        parent_block,
+        parent_header,
         extra_data,
         attributes,
     } = config;
 
-    debug!(target: "payload_builder", id=%attributes.id, parent_hash = ?parent_block.hash(), parent_number = parent_block.number, "building new payload");
+    debug!(target: "payload_builder", id=%attributes.id, parent_hash = ?parent_header.hash(), parent_number = parent_header.number, "building new payload");
     let mut cumulative_gas_used = 0;
     let mut sum_blob_gas_used = 0;
     let block_gas_limit: u64 = initialized_block_env.gas_limit.to::<u64>();
@@ -269,7 +274,7 @@ where
 
     let block_number = initialized_block_env.number.to::<u64>();
 
-    let mut system_caller = SystemCaller::new((&evm_config).clone(), chain_spec.clone());
+    let mut system_caller = SystemCaller::new(evm_config.clone(), chain_spec.clone());
 
     // apply eip-4788 pre block contract call
     system_caller
@@ -281,7 +286,7 @@ where
         )
         .map_err(|err| {
             warn!(target: "payload_builder",
-                parent_hash=%parent_block.hash(),
+                parent_hash=%parent_header.hash(),
                 %err,
                 "failed to apply beacon root contract call for payload"
             );
@@ -293,10 +298,10 @@ where
         &mut db,
         &initialized_cfg,
         &initialized_block_env,
-        parent_block.hash(),
+        parent_header.hash(),
     )
     .map_err(|err| {
-        warn!(target: "payload_builder", parent_hash=%parent_block.hash(), %err, "failed to update blockhashes for payload");
+        warn!(target: "payload_builder", parent_hash=%parent_header.hash(), %err, "failed to update blockhashes for payload");
         PayloadBuilderError::Internal(err.into())
     })?;
 
@@ -498,7 +503,7 @@ where
             .state_root_with_updates(hashed_state.clone())
             .inspect_err(|err| {
                 warn!(target: "payload_builder",
-                    parent_hash=%parent_block.hash(),
+                    parent_hash=%parent_header.hash(),
                     %err,
                     "failed to calculate state root for payload"
                 );
@@ -524,9 +529,9 @@ where
                 .collect(),
         )?;
 
-        excess_blob_gas = if chain_spec.is_cancun_active_at_timestamp(parent_block.timestamp) {
-            let parent_excess_blob_gas = parent_block.excess_blob_gas.unwrap_or_default();
-            let parent_blob_gas_used = parent_block.blob_gas_used.unwrap_or_default();
+        excess_blob_gas = if chain_spec.is_cancun_active_at_timestamp(parent_header.timestamp) {
+            let parent_excess_blob_gas = parent_header.excess_blob_gas.unwrap_or_default();
+            let parent_blob_gas_used = parent_header.blob_gas_used.unwrap_or_default();
             Some(calc_excess_blob_gas(
                 parent_excess_blob_gas,
                 parent_blob_gas_used,
@@ -541,7 +546,7 @@ where
     }
 
     let header = Header {
-        parent_hash: parent_block.hash(),
+        parent_hash: parent_header.hash(),
         ommers_hash: EMPTY_OMMER_ROOT_HASH,
         beneficiary: initialized_block_env.coinbase,
         state_root,
@@ -553,7 +558,7 @@ where
         mix_hash: attributes.prev_randao,
         nonce: BEACON_NONCE.into(),
         base_fee_per_gas: Some(base_fee),
-        number: parent_block.number + 1,
+        number: parent_header.number + 1,
         gas_limit: block_gas_limit,
         difficulty: U256::ZERO,
         gas_used: cumulative_gas_used,
@@ -585,10 +590,16 @@ where
         hashed_state: Arc::new(hashed_state),
         trie: Arc::new(trie_output),
     };
-    let mut payload = EthBuiltPayload::new(attributes.id, sealed_block, total_fees, Some(executed));
+    let mut payload = EthBuiltPayload::new(
+        attributes.id,
+        sealed_block,
+        total_fees,
+        Some(executed),
+        requests,
+    );
 
     // extend the payload with the blob sidecars from the executed txs
-    payload.extend_sidecars(blob_sidecars);
+    payload.extend_sidecars(blob_sidecars.into_iter().map(Arc::unwrap_or_clone));
 
     Ok(BuildOutcome::Better {
         payload,

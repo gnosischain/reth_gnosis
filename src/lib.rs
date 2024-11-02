@@ -1,27 +1,27 @@
-use crate::execute::GnosisExecutionStrategyFactory;
 use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
+use execute::GnosisExecutionStrategyFactory;
 use eyre::eyre;
 use payload_builder::GnosisPayloadServiceBuilder;
 use reth::{
-    api::FullNodeComponents,
+    api::{AddOnsContext, FullNodeComponents},
     builder::{
         components::{ComponentsBuilder, ConsensusBuilder, ExecutorBuilder},
         node::{FullNodeTypes, NodeTypes, NodeTypesWithEngine},
         rpc::{EngineValidatorBuilder, RpcAddOns},
-        AddOnsContext, BuilderContext, Node, NodeAdapter, NodeComponentsBuilder,
+        BuilderContext, Node, NodeAdapter, NodeComponentsBuilder,
     },
     network::NetworkHandle,
-    rpc::eth::EthApi,
 };
 use reth_chainspec::ChainSpec;
 use reth_engine_primitives::EngineValidator;
 use reth_ethereum_engine_primitives::EthereumEngineValidator;
-use reth_evm::execute::BasicBlockExecutorProvider;
 use reth_node_ethereum::{
     node::{EthereumNetworkBuilder, EthereumPoolBuilder},
-    EthEngineTypes, EthereumNode,
+    BasicBlockExecutorProvider, EthEngineTypes, EthereumNode,
 };
+use reth_rpc::EthApi;
+use reth_trie_db::MerklePatriciaTrie;
 use std::sync::Arc;
 
 mod consensus;
@@ -82,6 +82,7 @@ impl GnosisNode {
 impl NodeTypes for GnosisNode {
     type Primitives = ();
     type ChainSpec = ChainSpec;
+    type StateCommitment = MerklePatriciaTrie;
 }
 
 impl NodeTypesWithEngine for GnosisNode {
