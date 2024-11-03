@@ -9,13 +9,19 @@ use reth::{
     revm::{
         interpreter::Host,
         primitives::{ExecutionResult, Output, ResultAndState},
-        Database, DatabaseCommit, Evm,
+        Database, DatabaseCommit, Evm, State,
     },
 };
 use reth_chainspec::ChainSpec;
+use reth_chainspec::EthereumHardforks;
 use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
-use revm_primitives::{Account, AccountInfo, AccountStatus};
+use reth_primitives::Withdrawals;
+use reth_provider::ProviderError;
+use revm_primitives::{
+    Account, AccountInfo, AccountStatus, BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg,
+};
+use std::fmt::Display;
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
@@ -226,4 +232,66 @@ where
     }
 
     Ok(balance_increments)
+}
+
+// TODO: this can be simplified by using the existing apply_post_execution_changes
+// which does all of the same things
+//
+// [Gnosis/fork:DIFF]: Upstream code in EthBlockExecutor computes balance changes for:
+// - Pre-merge omer and block rewards
+// - Beacon withdrawal mints
+// - DAO hardfork drain balances
+//
+// Gnosis post-block system calls:
+// - Do NOT credit withdrawals as native token mint
+// - Call into deposit contract with withdrawal data
+// - Call block rewards contract for bridged xDAI mint
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_post_block_system_calls<EvmConfig, DB>(
+    chain_spec: &ChainSpec,
+    evm_config: &EvmConfig,
+    db: &mut State<DB>,
+    initialized_cfg: &CfgEnvWithHandlerCfg,
+    initialized_block_env: &BlockEnv,
+    block_rewards_contract: Address,
+    block_timestamp: u64,
+    withdrawals: Option<&Withdrawals>,
+    coinbase: Address,
+) -> Result<(), BlockExecutionError>
+where
+    EvmConfig: ConfigureEvm,
+    DB: Database<Error: Into<ProviderError> + Display>,
+{
+    let mut evm = Evm::builder()
+        .with_db(db)
+        .with_env_with_handler_cfg(EnvWithHandlerCfg::new_with_cfg_env(
+            initialized_cfg.clone(),
+            initialized_block_env.clone(),
+            Default::default(),
+        ))
+        .build();
+
+    if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
+        let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
+            message: "block has no withdrawals field".to_owned(),
+        })?;
+        apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, &mut evm)?;
+    }
+
+    let balance_increments = apply_block_rewards_contract_call(
+        evm_config,
+        block_rewards_contract,
+        block_timestamp,
+        coinbase,
+        &mut evm,
+    )?;
+
+    // increment balances
+    evm.context
+        .evm
+        .db
+        .increment_balances(balance_increments)
+        .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
+
+    Ok(())
 }

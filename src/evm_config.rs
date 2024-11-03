@@ -1,21 +1,22 @@
-use reth::{
-    primitives::{transaction::FillTxEnv, Head, Header, TransactionSigned},
-    revm::{
-        inspector_handle_register,
-        interpreter::Gas,
-        primitives::{spec_to_generic, CfgEnvWithHandlerCfg, EVMError, Spec, SpecId, TxEnv},
-        Context, Database, Evm, EvmBuilder, GetInspector,
-    },
-};
+use alloy_primitives::{Address, U256};
+use reth::revm::{inspector_handle_register, Database, GetInspector};
+use reth::revm::{Evm, EvmBuilder};
 use reth_chainspec::ChainSpec;
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_after_merge};
-use revm::handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet;
-use revm_primitives::{
-    Address, AnalysisKind, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv, Env, HandlerCfg, TxKind,
-    U256,
+use reth_primitives::{
+    revm_primitives::{AnalysisKind, CfgEnvWithHandlerCfg, TxEnv},
+    transaction::FillTxEnv,
+    Head, Header, TransactionSigned,
 };
-use std::sync::Arc;
+use revm::{
+    handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet, interpreter::Gas, Context,
+};
+use revm_primitives::{
+    spec_to_generic, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv, EVMError, Env, HandlerCfg,
+    Spec, SpecId, TxKind,
+};
+use std::{convert::Infallible, sync::Arc};
 
 /// Reward beneficiary with gas fee.
 #[inline]
@@ -122,6 +123,7 @@ impl ConfigureEvm for GnosisEvmConfig {
 
 impl ConfigureEvmEnv for GnosisEvmConfig {
     type Header = Header;
+    type Error = Infallible;
 
     fn fill_tx_env(&self, tx_env: &mut TxEnv, transaction: &TransactionSigned, sender: Address) {
         transaction.fill_tx_env(tx_env, sender);
@@ -191,7 +193,7 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
         &self,
         parent: &Self::Header,
         attributes: reth_evm::NextBlockEnvAttributes,
-    ) -> (CfgEnvWithHandlerCfg, revm_primitives::BlockEnv) {
+    ) -> Result<(CfgEnvWithHandlerCfg, BlockEnv), Self::Error> {
         // configure evm env based on parent block
         let cfg = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
 
@@ -240,6 +242,6 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
             };
         }
 
-        (cfg_with_handler_cfg, block_env)
+        Ok((cfg_with_handler_cfg, block_env))
     }
 }
