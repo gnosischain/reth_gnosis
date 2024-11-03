@@ -18,6 +18,7 @@ use reth_evm::{
     ConfigureEvm,
 };
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
+use reth_node_ethereum::BasicBlockExecutorProvider;
 use reth_primitives::{BlockWithSenders, Header, Receipt};
 use revm::State;
 use revm_primitives::{
@@ -275,5 +276,28 @@ where
 
     fn state_mut(&mut self) -> &mut State<DB> {
         &mut self.state
+    }
+}
+
+/// Helper type with backwards compatible methods to obtain executor providers.
+#[derive(Debug, Clone)]
+pub struct GnosisExecutorProvider;
+
+impl GnosisExecutorProvider {
+    /// Creates a new default gnosis executor strategy factory.
+    pub fn gnosis(
+        chain_spec: Arc<ChainSpec>,
+    ) -> BasicBlockExecutorProvider<GnosisExecutionStrategyFactory> {
+        let collector_address = chain_spec
+            .genesis()
+            .config
+            .extra_fields
+            .get("eip1559collector")
+            .unwrap();
+        let collector_address: Address = serde_json::from_value(collector_address.clone()).unwrap();
+        let evm_config = GnosisEvmConfig::new(collector_address, chain_spec.clone());
+        BasicBlockExecutorProvider::new(
+            GnosisExecutionStrategyFactory::new(chain_spec, evm_config).unwrap(),
+        )
     }
 }
