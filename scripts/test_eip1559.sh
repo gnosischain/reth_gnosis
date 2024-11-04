@@ -4,15 +4,15 @@ set -e
 # Script's directory
 DIR="$(dirname "$0")"
 
-ps aux | grep reth | grep -v grep | awk '{print $2}' | xargs kill
-sleep 5
+sleep 3
 
-$DIR/run_reth.sh &
+"$DIR/run_reth.sh" $DIR/genesis_alloc_eip1559.json &
 BG_PID=$!
 
 # Set the trap to call cleanup if an error occurs
 cleanup() {
   echo "Stopping node process (PID: $BG_PID)..."
+  ps aux | grep "reth node" | grep -v grep | awk '{print $2}' | xargs kill
   kill $BG_PID 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -96,6 +96,12 @@ echo eth_sendRawTransaction RESPONSE $RESPONSE
 TX1HASH=$(echo $RESPONSE | jq --raw-output '.result')
 echo TX1HASH=$TX1HASH
 
+# exit if the transaction is not sent
+if [ "$TX1HASH" == "null" ]; then
+  echo "Transaction not sent"
+  exit 1
+fi
+
 RESPONSE=$()
 
 RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
@@ -106,6 +112,11 @@ RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
 echo eth_sendRawTransaction RESPONSE $RESPONSE
 TX2HASH=$(echo $RESPONSE | jq --raw-output '.result')
 echo TX2HASH=$TX2HASH
+
+if [ "$TX2HASH" == "null" ]; then
+  echo "Transaction not sent"
+  exit 1
+fi
 
 # sleep for 1 sec
 sleep 1

@@ -10,6 +10,7 @@ BG_PID=$!
 # Set the trap to call cleanup if an error occurs
 cleanup() {
   echo "Stopping node process (PID: $BG_PID)..."
+  ps aux | grep "reth node" | grep -v grep | awk '{print $2}' | xargs kill
   kill $BG_PID 2>/dev/null || true
 }
 trap cleanup EXIT
