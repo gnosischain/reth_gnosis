@@ -46,5 +46,8 @@ jobs:
       # Test vectors against Reth
       - name: Apply vectors to Reth
         run: bash ./scripts/apply_test_vectors_reth.sh
+      # Manual sanity checks
+      - name: Run EIP-1559 sanity checks
+        run: bash ./scripts/test_eip1559.sh
 
 
