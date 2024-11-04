@@ -4,6 +4,9 @@ set -e
 # Script's directory
 DIR="$(dirname "$0")"
 
+ps aux | grep reth | grep -v grep | awk '{print $2}' | xargs kill
+sleep 5
+
 $DIR/run_reth.sh &
 BG_PID=$!
 
