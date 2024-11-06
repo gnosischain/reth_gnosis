@@ -18,7 +18,7 @@ use reth::{
     transaction_pool::{noop::NoopTransactionPool, BestTransactionsAttributes, TransactionPool},
 };
 use reth_basic_payload_builder::{
-    commit_withdrawals, is_better_payload, BasicPayloadJobGenerator,
+    is_better_payload, BasicPayloadJobGenerator,
     BasicPayloadJobGeneratorConfig, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
     WithdrawalsOutcome,
 };
@@ -423,34 +423,6 @@ where
         });
     }
 
-    // calculate the requests and the requests root
-    let requests = if chain_spec.is_prague_active_at_timestamp(attributes.timestamp) {
-        let deposit_requests = parse_deposits_from_receipts(&chain_spec, receipts.iter().flatten())
-            .map_err(|err| PayloadBuilderError::Internal(RethError::Execution(err.into())))?;
-        let withdrawal_requests = system_caller
-            .post_block_withdrawal_requests_contract_call(
-                &mut db,
-                &initialized_cfg,
-                &initialized_block_env,
-            )
-            .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
-        let consolidation_requests = system_caller
-            .post_block_consolidation_requests_contract_call(
-                &mut db,
-                &initialized_cfg,
-                &initialized_block_env,
-            )
-            .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
-
-        Some(Requests::new(vec![
-            deposit_requests,
-            withdrawal_requests,
-            consolidation_requests,
-        ]))
-    } else {
-        None
-    };
-
     // < GNOSIS SPECIFIC
     apply_post_block_system_calls(
         &chain_spec,
@@ -466,15 +438,36 @@ where
     .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
     // GNOSIS SPECIFIC >
 
+    // calculate the requests and the requests root
+    let requests = if chain_spec.is_prague_active_at_timestamp(attributes.timestamp) {
+        let deposit_requests = parse_deposits_from_receipts(&chain_spec, receipts.iter().flatten())
+            .map_err(|err| PayloadBuilderError::Internal(RethError::Execution(err.into())))?;
+
+        println!("debjit debug (payload) requests (building): {:?}", Requests::new(vec![
+            deposit_requests.clone(),
+        ]));
+
+        Some(Requests::new(vec![deposit_requests]))
+    } else {
+        None
+    };
+
     let WithdrawalsOutcome {
         withdrawals_root,
         withdrawals,
-    } = commit_withdrawals(
-        &mut db,
-        &chain_spec,
-        attributes.timestamp,
-        attributes.withdrawals,
-    )?;
+    } = if !chain_spec.is_shanghai_active_at_timestamp(attributes.timestamp) {
+            WithdrawalsOutcome::pre_shanghai()
+        } else if attributes.withdrawals.is_empty() {
+            WithdrawalsOutcome::empty()
+        } else  {
+            let withdrawals_root = proofs::calculate_withdrawals_root(&attributes.withdrawals);
+
+            // calculate withdrawals root
+            WithdrawalsOutcome {
+                withdrawals: Some(attributes.withdrawals),
+                withdrawals_root: Some(withdrawals_root),
+            }
+        };
 
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
     // and 4788 contract call
@@ -580,7 +573,6 @@ where
     };
 
     let sealed_block = block.seal_slow();
-    debug!(target: "payload_builder", ?sealed_block, "sealed built block");
 
     // create the executed block data
     let executed = ExecutedBlock {

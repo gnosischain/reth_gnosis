@@ -231,7 +231,7 @@ where
     fn apply_post_execution_changes(
         &mut self,
         block: &BlockWithSenders,
-        total_difficulty: U256,
+        _total_difficulty: U256,
         receipts: &[Receipt],
     ) -> Result<Requests, Self::Error> {
         let cfg = CfgEnvWithHandlerCfg::new(Default::default(), Default::default());
@@ -249,9 +249,6 @@ where
             block.beneficiary,
         )?;
 
-        let env = self.evm_env_for_block(&block.header, total_difficulty);
-        let mut evm = self.evm_config.evm_with_env(&mut self.state, env);
-
         let requests = if self
             .chain_spec
             .is_prague_active_at_timestamp(block.timestamp)
@@ -259,8 +256,7 @@ where
             // Collect all EIP-6110 deposits
             let deposit_requests = parse_deposits_from_receipts(&self.chain_spec, receipts)?;
 
-            let mut requests = Requests::new(vec![deposit_requests]);
-            requests.extend(self.system_caller.apply_post_execution_changes(&mut evm)?);
+            let requests = Requests::new(vec![deposit_requests]);
             requests
         } else {
             Requests::default()
