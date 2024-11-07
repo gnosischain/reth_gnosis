@@ -14,16 +14,13 @@ rm -rf $DATA_DIR
 # Script's directory
 DIR="$(dirname "$0")"
 
-# Use the provided argument as the chain file or default to `chiado_genesis_alloc.json`
-CHAIN_FILE=${1:-"$DIR/chiado_genesis_alloc.json"}
-
 echo "Using chain file: $CHAIN_FILE"
 
 # $PWD/target/release/reth \
 cargo run -- \
   node \
   -vvvv \
-  --chain=$CHAIN_FILE \
+  --chain=$DIR/chiado_genesis_alloc.json \
   --datadir=$DATA_DIR \
   --http \
   --http.port=8545 \

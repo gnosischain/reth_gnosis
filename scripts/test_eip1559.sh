@@ -6,7 +6,7 @@ DIR="$(dirname "$0")"
 
 sleep 3
 
-"$DIR/run_reth.sh" $DIR/genesis_alloc_eip1559.json &
+"$DIR/run_reth.sh" &
 BG_PID=$!
 
 # Set the trap to call cleanup if an error occurs
@@ -87,9 +87,22 @@ echo PAYLOAD_ID=$PAYLOAD_ID
 
 echo "Sending transaction on block $BLOCK_COUNTER"
 
+# sending RLP encoded form of:
+# transaction = {
+#     'from': "0x38e3E7Aca6762E296F659Fcb4E460a3A621dcD3D",
+#     'to': "0xb42a8c62f3278AFc9343A8FcCD5232CBe8aA5117",
+#     'value': 1100000000,
+#     'nonce': 0,
+#     'gas': 200000,
+#     'maxFeePerGas': 2500000000,
+#     'maxPriorityFeePerGas': 2500000000,
+#     'chainId': 10200
+# }
+# signed using pvt key: 0x000038e28d32db8e509354d6b359eb58646e84bc942e3c79f470b08ebc976e1c
+
 RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: Bearer $JWT_TOKEN" \
-    --data '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["0x02f86e8227d8808456b989c08456b989cb825208940ccdd4caf542282a020ea455abe0edfe968763228203e880c080a02f932486d36949a6f15a08d019f8a276d2717eeef872df2b5a1d0f2dc425dd3ca079cb1247e7510c1fd8191089a66d581b0eaae586e3c1060ac02fb2793f20e69e"],"id":1}' \
+    --data '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["02f8718227d880849502f900849502f90083030d4094b42a8c62f3278afc9343a8fccd5232cbe8aa5117844190ab0080c080a098913733bc37a052351fadc62ec860dc341c9f1c6876801097b42514604c7657a05d8529fba214e8562803529af696cdca2f8d5545ca05f1bd2328ef9c175f57d9"],"id":1}' \
     http://localhost:8546 \
 )
 echo eth_sendRawTransaction RESPONSE $RESPONSE
@@ -102,11 +115,22 @@ if [ "$TX1HASH" == "null" ]; then
   exit 1
 fi
 
-RESPONSE=$()
+# sending RLP encoded form of:
+# transaction = {
+#     'from': "0x38e3E7Aca6762E296F659Fcb4E460a3A621dcD3D",
+#     'to': "0xc390cC49a32736a58733Cf46bE42f734dD4f53cb",
+#     'value': 1000000000,
+#     'nonce': 1,
+#     'gas': 200000,
+#     'maxFeePerGas': 2000000000,
+#     'maxPriorityFeePerGas': 1000000000,
+#     'chainId': 10200
+# }
+# signed using pvt key: 0x000038e28d32db8e509354d6b359eb58646e84bc942e3c79f470b08ebc976e1c
 
 RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: Bearer $JWT_TOKEN" \
-    --data '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["0x02f8718227d880843b9aca00847735940083030d4094c390cc49a32736a58733cf46be42f734dd4f53cb843b9aca0080c080a0a4f4d99483deb86d07f82d3d0a993eaef52bfb64aeeaf7bd847b1e2131a2d265a05443ba597754edad76f5eebec21863289bde25f665aa7e912f904e1f2b91c89b"],"id":2}' \
+    --data '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["02f8708227d801849502f900849502f90083030d4094b42a8c62f3278afc9343a8fccd5232cbe8aa5117844190ab0080c0809fe483006f558948cb15b00a3f17c706f2c6ae084c131fca3a84042b23be3f51a05c550f5d70d8c6deb405250cb75e68d5c7daee4e7c202d841df0338b9fcd0838"],"id":2}' \
     http://localhost:8546 \
 )
 echo eth_sendRawTransaction RESPONSE $RESPONSE
