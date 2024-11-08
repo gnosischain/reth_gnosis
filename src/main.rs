@@ -9,6 +9,7 @@ use reth_gnosis::{
     GnosisNode,
 };
 use reth_node_ethereum::BasicBlockExecutorProvider;
+use tracing::{error, info};
 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
@@ -33,7 +34,7 @@ fn main() {
 
     match cli.command {
         Commands::Import(command) => {
-            dbg!("Importing with custom cli");
+            info!(target: "reth::cli", "Importing with custom cli");
             let runner = CliRunner::default();
             let res = runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(
                 |chain_spec| -> BasicBlockExecutorProvider<GnosisExecutionStrategyFactory> {
@@ -41,7 +42,7 @@ fn main() {
                 },
             ));
             if let Err(err) = res {
-                eprintln!("Error: {err:?}");
+                error!(target: "reth::cli", "Error: {err:?}");
                 std::process::exit(1);
             }
         }
@@ -49,7 +50,7 @@ fn main() {
             let runner = CliRunner::default();
             let res = runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>());
             if let Err(err) = res {
-                eprintln!("Error: {err:?}");
+                error!(target: "reth::cli", "Error: {err:?}");
                 std::process::exit(1);
             }
         }
@@ -59,7 +60,7 @@ fn main() {
 
                 handle.node_exit_future.await
             }) {
-                eprintln!("Error: {err:?}");
+                error!(target: "reth::cli", "Error: {err:?}");
                 std::process::exit(1);
             }
         }
