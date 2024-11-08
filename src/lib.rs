@@ -27,7 +27,7 @@ use std::sync::Arc;
 mod consensus;
 mod errors;
 mod evm_config;
-mod execute;
+pub mod execute;
 mod gnosis;
 mod payload_builder;
 
