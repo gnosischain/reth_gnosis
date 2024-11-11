@@ -49,5 +49,7 @@ jobs:
       # Manual sanity checks
       - name: Run EIP-1559 sanity checks
         run: bash ./scripts/test_eip1559.sh
+      - name: Run EIP-4895 sanity checks
+        run: bash ./scripts/test_withdrawals_eip4895.sh
 
 
