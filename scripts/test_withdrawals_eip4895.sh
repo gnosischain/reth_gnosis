@@ -11,8 +11,12 @@ DIR="$(dirname "$0")"
 BG_PID=$!
 
 # Set the trap to call cleanup if an error occurs
+# Define cleanup function
 cleanup() {
-  ps aux | grep "reth node" | grep -v grep | awk '{print $2}' | xargs kill
+  # Kill the reth process if it is running
+  pkill -f "reth node" || true
+  
+  # Remove Docker container safely if it exists
   docker rm -f neth-vec-gen 2>/dev/null || true
 }
 
