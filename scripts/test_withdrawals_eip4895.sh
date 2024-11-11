@@ -12,9 +12,7 @@ BG_PID=$!
 
 # Set the trap to call cleanup if an error occurs
 cleanup() {
-  echo "Stopping node process (PID: $BG_PID)..."
   ps aux | grep "reth node" | grep -v grep | awk '{print $2}' | xargs kill
-  kill $BG_PID 2>/dev/null || true
   docker rm -f neth-vec-gen 2>/dev/null || true
 }
 
@@ -476,3 +474,5 @@ if [ "$WITHDRAWALS_ROOT_RETH" != "$WITHDRAWALS_ROOT_NETHERMIND" ]; then
 fi
 
 echo "Withdrawals root from reth and nethermind are equal"
+
+docker rm -f neth-vec-gen 2>/dev/null || true
