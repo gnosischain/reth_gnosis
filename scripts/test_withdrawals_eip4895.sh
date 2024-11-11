@@ -476,3 +476,4 @@ fi
 echo "Withdrawals root from reth and nethermind are equal"
 
 docker rm -f neth-vec-gen 2>/dev/null || true
+exit 0
