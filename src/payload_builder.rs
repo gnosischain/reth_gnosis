@@ -18,9 +18,8 @@ use reth::{
     transaction_pool::{noop::NoopTransactionPool, BestTransactionsAttributes, TransactionPool},
 };
 use reth_basic_payload_builder::{
-    is_better_payload, BasicPayloadJobGenerator,
-    BasicPayloadJobGeneratorConfig, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
-    WithdrawalsOutcome,
+    is_better_payload, BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig, BuildArguments,
+    BuildOutcome, PayloadBuilder, PayloadConfig, WithdrawalsOutcome,
 };
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::{ChainSpec, EthereumHardforks};
@@ -443,9 +442,10 @@ where
         let deposit_requests = parse_deposits_from_receipts(&chain_spec, receipts.iter().flatten())
             .map_err(|err| PayloadBuilderError::Internal(RethError::Execution(err.into())))?;
 
-        println!("debjit debug (payload) requests (building): {:?}", Requests::new(vec![
-            deposit_requests.clone(),
-        ]));
+        println!(
+            "debjit debug (payload) requests (building): {:?}",
+            Requests::new(vec![deposit_requests.clone(),])
+        );
 
         Some(Requests::new(vec![deposit_requests]))
     } else {
@@ -456,18 +456,18 @@ where
         withdrawals_root,
         withdrawals,
     } = if !chain_spec.is_shanghai_active_at_timestamp(attributes.timestamp) {
-            WithdrawalsOutcome::pre_shanghai()
-        } else if attributes.withdrawals.is_empty() {
-            WithdrawalsOutcome::empty()
-        } else  {
-            let withdrawals_root = proofs::calculate_withdrawals_root(&attributes.withdrawals);
+        WithdrawalsOutcome::pre_shanghai()
+    } else if attributes.withdrawals.is_empty() {
+        WithdrawalsOutcome::empty()
+    } else {
+        let withdrawals_root = proofs::calculate_withdrawals_root(&attributes.withdrawals);
 
-            // calculate withdrawals root
-            WithdrawalsOutcome {
-                withdrawals: Some(attributes.withdrawals),
-                withdrawals_root: Some(withdrawals_root),
-            }
-        };
+        // calculate withdrawals root
+        WithdrawalsOutcome {
+            withdrawals: Some(attributes.withdrawals),
+            withdrawals_root: Some(withdrawals_root),
+        }
+    };
 
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
     // and 4788 contract call
