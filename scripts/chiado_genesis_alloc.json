@@ -1,6 +1,9 @@
 {
   "config": {
     "chainId": 10200,
+    "depositContractAddress":
+    "0x566b8783a28a46dc8d88ebf712303938985e121e",
+
     "consensus": "aura",
     "homesteadBlock": 0,
     "eip150Block": 0,
