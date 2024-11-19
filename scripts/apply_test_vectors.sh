@@ -6,9 +6,10 @@ set -e
 # Script's directory
 DIR="$(dirname "$0")"
 
-OUT_DIR=$DIR/blocks
+BLOCKS_FOLDER=${1:-blocks}
+OUT_DIR=$DIR/$BLOCKS_FOLDER
 
-N=5
+N=${2:-5}
 
 # Retry the curl command until it succeeds
 until curl -X POST -H "Content-Type: application/json" \

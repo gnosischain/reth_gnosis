@@ -11,6 +11,8 @@ BG_PID=$!
 cleanup() {
   echo "Stopping node process (PID: $BG_PID)..."
   kill $BG_PID 2>/dev/null || true
+
+  pkill -f "reth node" || true
 }
 trap cleanup EXIT
 

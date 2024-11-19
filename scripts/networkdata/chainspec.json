@@ -31,7 +31,7 @@
     }
   },
   "params": {
-    "networkID": 10209,
+    "networkID": 10200,
     "gasLimitBoundDivisor": "0x400",
     "maximumExtraDataSize": "0x20",
     "minGasLimit": "0x1388",
@@ -563,6 +563,10 @@
     "0x0000000000000000000000000000000000000000": {
       "nonce": "0",
       "balance": "0"
+    },
+    "0x38e3E7Aca6762E296F659Fcb4E460a3A621dcD3D": {
+      "nonce": "0",
+      "balance": "1000000000000000000000000000000"
     }
   }
 }
