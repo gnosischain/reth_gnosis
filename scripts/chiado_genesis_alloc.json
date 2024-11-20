@@ -1,6 +1,6 @@
 {
   "config": {
-    "chainId": 10200,
+    "chainId": 10209,
     "consensus": "aura",
     "homesteadBlock": 0,
     "eip150Block": 0,

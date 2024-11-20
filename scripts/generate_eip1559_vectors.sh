@@ -101,13 +101,13 @@ echo "Sending transaction on block $BLOCK_COUNTER"
 #     'gas': 200000,
 #     'maxFeePerGas': 2500000000,
 #     'maxPriorityFeePerGas': 2500000000,
-#     'chainId': 10200
+#     'chainId': 10209
 # }
 # signed using pvt key: 0x000038e28d32db8e509354d6b359eb58646e84bc942e3c79f470b08ebc976e1c
 
 RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: Bearer $JWT_TOKEN" \
-    --data '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["02f8718227d880849502f900849502f90083030d4094b42a8c62f3278afc9343a8fccd5232cbe8aa5117844190ab0080c080a098913733bc37a052351fadc62ec860dc341c9f1c6876801097b42514604c7657a05d8529fba214e8562803529af696cdca2f8d5545ca05f1bd2328ef9c175f57d9"],"id":1}' \
+    --data '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["02f8718227e180849502f900849502f90083030d4094b42a8c62f3278afc9343a8fccd5232cbe8aa5117844190ab0080c001a030d96a5f8ecd0913c26353b43ffb99bbde21ff56e01221b5f967c1c046b29932a05c7f6b32eac2748a2d2b6d34b0b93f17566cf879bdb7935a859ecf7892af0272"],"id":1}' \
     http://localhost:8546 \
 )
 echo eth_sendRawTransaction RESPONSE $RESPONSE
@@ -129,13 +129,13 @@ fi
 #     'gas': 200000,
 #     'maxFeePerGas': 2000000000,
 #     'maxPriorityFeePerGas': 1000000000,
-#     'chainId': 10200
+#     'chainId': 10209
 # }
 # signed using pvt key: 0x000038e28d32db8e509354d6b359eb58646e84bc942e3c79f470b08ebc976e1c
 
 RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: Bearer $JWT_TOKEN" \
-    --data '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["02f8718227d801843b9aca00847735940083030d4094c390cc49a32736a58733cf46be42f734dd4f53cb843b9aca0080c080a0ce361e8723595cb0824b3ed63cf2df8d93a4894cdfeb9dcc61ed6b413fc1cb4ca01625849ee2d550c2c280078590270be30745d454f2423df3beb3de1ba744e397"],"id":2}' \
+    --data '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["02f8718227e101849502f900849502f90083030d4094c390cc49a32736a58733cf46be42f734dd4f53cb844190ab0080c080a0f5eb15e18cc9da329f006e79ae53ef13ec0879857a90e0825343dca03448cbe2a05e3f7c89869b3a865c4f7760b4e5b5fd52669ecb9aec2a064f4ea0cbb68e1b2e"],"id":2}' \
     http://localhost:8546 \
 )
 echo eth_sendRawTransaction RESPONSE $RESPONSE
