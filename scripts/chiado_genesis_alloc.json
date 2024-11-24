@@ -1,6 +1,6 @@
 {
   "config": {
-    "chainId": 10200,
+    "chainId": 10209,
     "consensus": "aura",
     "homesteadBlock": 0,
     "eip150Block": 0,
@@ -414,6 +414,11 @@
     "0x0000000000000000000000000000000000000000": {
       "nonce": "0",
       "balance": "0",
+      "code": ""
+    },
+    "0x38e3E7Aca6762E296F659Fcb4E460a3A621dcD3D": {
+      "nonce": "0",
+      "balance": "1000000000000000000000000000000",
       "code": ""
     }
   }
