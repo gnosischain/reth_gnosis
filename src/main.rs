@@ -66,3 +66,5 @@ fn main() {
         }
     }
 }
+
+// ./target/debug/reth --chain ./scripts/chiado_genesis_alloc.json init-state ./state_at_26478650.jsonl --without-evm --header ./alt_header.rlp --total-difficulty 8626000110427540000000000000000000000000000000 --header-hash 3eaf85f384900ee9cf4e23f8e7584ef7f3118bcb960d3f56c62cff5ca95166f3
