@@ -1,20 +1,17 @@
+use alloy_consensus::Header;
 use alloy_primitives::{Address, U256};
 use reth::revm::{inspector_handle_register, Database, GetInspector};
 use reth::revm::{Evm, EvmBuilder};
 use reth_chainspec::ChainSpec;
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_after_merge};
-use reth_primitives::{
-    revm_primitives::{AnalysisKind, CfgEnvWithHandlerCfg, TxEnv},
-    transaction::FillTxEnv,
-    Head, Header, TransactionSigned,
-};
+use reth_primitives::{transaction::FillTxEnv, Head, TransactionSigned};
 use revm::{
     handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet, interpreter::Gas, Context,
 };
 use revm_primitives::{
-    spec_to_generic, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv, EVMError, Env, HandlerCfg,
-    Spec, SpecId, TxKind,
+    spec_to_generic, AnalysisKind, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv,
+    CfgEnvWithHandlerCfg, EVMError, Env, HandlerCfg, Spec, SpecId, TxEnv, TxKind,
 };
 use std::{convert::Infallible, sync::Arc};
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use alloy_consensus::EMPTY_OMMER_ROOT_HASH;
+use alloy_consensus::{Header, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::{eip4844::MAX_DATA_GAS_PER_BLOCK, eip7685::Requests, merge::BEACON_NONCE};
 use eyre::eyre;
 use reth::{
@@ -12,7 +12,7 @@ use reth::{
     },
     primitives::{
         proofs::{self},
-        Block, Header, Receipt,
+        Block, Receipt,
     },
     revm::database::StateProviderDatabase,
     transaction_pool::{noop::NoopTransactionPool, BestTransactionsAttributes, TransactionPool},
@@ -508,13 +508,15 @@ where
     // only determine cancun fields when active
     if chain_spec.is_cancun_active_at_timestamp(attributes.timestamp) {
         // grab the blob sidecars from the executed txs
-        blob_sidecars = pool.get_all_blobs_exact(
-            executed_txs
-                .iter()
-                .filter(|tx| tx.is_eip4844())
-                .map(|tx| tx.hash)
-                .collect(),
-        )?;
+        blob_sidecars = pool
+            .get_all_blobs_exact(
+                executed_txs
+                    .iter()
+                    .filter(|tx| tx.is_eip4844())
+                    .map(|tx| tx.hash)
+                    .collect(),
+            )
+            .map_err(PayloadBuilderError::other)?;
 
         excess_blob_gas = if chain_spec.is_cancun_active_at_timestamp(parent_header.timestamp) {
             let parent_excess_blob_gas = parent_header.excess_blob_gas.unwrap_or_default();
@@ -566,12 +568,12 @@ where
         },
     };
 
-    let sealed_block = block.seal_slow();
+    let sealed_block = Arc::new(block.seal_slow());
     debug!(target: "payload_builder", ?sealed_block, "sealed built block");
 
     // create the executed block data
     let executed = ExecutedBlock {
-        block: Arc::new(sealed_block.clone()),
+        block: sealed_block.clone(),
         senders: Arc::new(executed_senders),
         execution_output: Arc::new(execution_outcome),
         hashed_state: Arc::new(hashed_state),

@@ -3,7 +3,7 @@ use crate::evm_config::GnosisEvmConfig;
 
 use crate::gnosis::apply_post_block_system_calls;
 use alloc::{boxed::Box, sync::Arc};
-use alloy_consensus::Transaction as _;
+use alloy_consensus::{Header, Transaction as _};
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::Address;
 use core::fmt::Display;
@@ -19,7 +19,7 @@ use reth_evm::{
 };
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::BasicBlockExecutorProvider;
-use reth_primitives::{BlockWithSenders, Header, Receipt};
+use reth_primitives::{BlockWithSenders, Receipt};
 use revm::State;
 use revm_primitives::{
     db::{Database, DatabaseCommit},
@@ -101,7 +101,7 @@ where
     EvmConfig: Clone,
 {
     pub fn new(state: State<DB>, chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> Self {
-        let system_caller = SystemCaller::new(evm_config.clone(), (*chain_spec).clone());
+        let system_caller = SystemCaller::new(evm_config.clone(), chain_spec.clone());
         let block_rewards_contract = chain_spec
             .genesis()
             .config
