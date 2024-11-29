@@ -21,7 +21,7 @@
         "randomnessContractAddress": {
           "0": "0x3000000000000000000000000000000000000001"
         },
-        "withdrawalContractAddress": "0xbabe2bed00000000000000000000000000000003",
+        "withdrawalContractAddress": "0x566b8783a28a46dc8d88ebf712303938985e121e",
         "twoThirdsMajorityTransition": 0,
         "posdaoTransition": 0,
         "blockGasLimitContractTransitions": {
@@ -71,11 +71,11 @@
     "eip3855TransitionTimestamp": "0x65971a48",
     "eip3651TransitionTimestamp": "0x65971a48",
     "eip3860TransitionTimestamp": "0x65971a48",
-    "eip4844TransitionTimestamp": "0x65971a48",
-    "eip4788TransitionTimestamp": "0x65971a48",
-    "eip1153TransitionTimestamp": "0x65971a48",
-    "eip5656TransitionTimestamp": "0x65971a48",
-    "eip6780TransitionTimestamp": "0x65971a48"
+    "eip4844TransitionTimestamp": "0x965971a48",
+    "eip4788TransitionTimestamp": "0x965971a48",
+    "eip1153TransitionTimestamp": "0x965971a48",
+    "eip5656TransitionTimestamp": "0x965971a48",
+    "eip6780TransitionTimestamp": "0x965971a48"
   },
   "genesis": {
     "baseFeePerGas": "0x3b9aca00",
