@@ -55,6 +55,6 @@ jobs:
       - name: Generate EIP4895 vectors through Nethermind
         run: bash ./scripts/generate_eip4895_vectors.sh
       - name: Apply EIP4895 vectors to Reth
-        run: bash ./scripts/apply_test_vectors_reth.sh eip1559_blocks 2
+        run: bash ./scripts/apply_test_vectors_reth.sh eip4895_blocks 2
 
 
