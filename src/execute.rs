@@ -9,6 +9,9 @@ use alloy_primitives::Address;
 use core::fmt::Display;
 use reth_chainspec::ChainSpec;
 use reth_chainspec::EthereumHardforks;
+use reth_errors::ConsensusError;
+use reth_ethereum_consensus::validate_block_post_execution;
+use reth_evm::system_calls::OnStateHook;
 use reth_evm::{
     execute::{
         BlockExecutionError, BlockExecutionStrategy, BlockExecutionStrategyFactory,
@@ -19,6 +22,7 @@ use reth_evm::{
 };
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::BasicBlockExecutorProvider;
+use reth_primitives::EthPrimitives;
 use reth_primitives::{BlockWithSenders, Receipt};
 use revm::State;
 use revm_primitives::{
@@ -76,6 +80,8 @@ where
             .build();
         GnosisExecutionStrategy::new(state, self.chain_spec.clone(), self.evm_config.clone())
     }
+
+    type Primitives = EthPrimitives;
 }
 
 // Block execution strategy for Gnosis
@@ -139,12 +145,17 @@ where
     }
 }
 
-impl<DB, EvmConfig> BlockExecutionStrategy<DB> for GnosisExecutionStrategy<DB, EvmConfig>
+impl<DB, EvmConfig> BlockExecutionStrategy for GnosisExecutionStrategy<DB, EvmConfig>
 where
     DB: Database<Error: Into<ProviderError> + Display>,
     EvmConfig: ConfigureEvm<Header = alloy_consensus::Header>,
 {
+    type DB = DB;
     type Error = BlockExecutionError;
+
+    type Primitives = EthPrimitives;
+
+    fn init(&mut self, _tx_env_overrides: Box<dyn reth_evm::TxEnvOverrides>) {}
 
     fn apply_pre_execution_changes(
         &mut self,
@@ -201,7 +212,7 @@ where
                     error: Box::new(new_err),
                 }
             })?;
-            self.system_caller.on_state(&result_and_state);
+            self.system_caller.on_state(&result_and_state.state);
             let ResultAndState { result, state } = result_and_state;
             evm.db_mut().commit(state);
 
@@ -271,6 +282,19 @@ where
 
     fn state_mut(&mut self) -> &mut State<DB> {
         &mut self.state
+    }
+
+    fn with_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
+        self.system_caller.with_state_hook(hook);
+    }
+
+    fn validate_block_post_execution(
+        &self,
+        block: &BlockWithSenders,
+        receipts: &[Receipt],
+        requests: &Requests,
+    ) -> Result<(), ConsensusError> {
+        validate_block_post_execution(block, &self.chain_spec.clone(), receipts, requests)
     }
 }
 
