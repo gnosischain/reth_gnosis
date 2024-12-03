@@ -7663,6 +7663,7 @@ dependencies = [
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
+ "reth-cli",
  "reth-cli-util",
  "reth-consensus",
  "reth-db",
