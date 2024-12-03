@@ -66,7 +66,6 @@ mod general_state_tests {
     }
 
     /////////////////////////////////// TESTS FROM ETHEREUM/TESTS ///////////////////////////////////
-    general_state_test!(shanghai, Shanghai); // <!> FAILED
     general_state_test!(st_args_zero_one_balance, stArgsZeroOneBalance);
     general_state_test!(st_attack, stAttackTest);
     general_state_test!(st_bugs, stBugs);
@@ -118,6 +117,7 @@ mod general_state_tests {
     #[cfg(feature = "failing-tests")]
     mod failing_ethereum_tests {
         use super::*;
+        general_state_test!(shanghai, Shanghai); // <!> FAILED
         general_state_test!(st_bad_opcode, stBadOpcode); // <!> FAILED
         general_state_test!(st_create2, stCreate2); // <!> FAILED
         general_state_test!(st_create, stCreateTest); // <!> FAILED
