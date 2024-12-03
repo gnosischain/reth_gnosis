@@ -21,6 +21,7 @@ reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", rev = "496bf0bf715f0a1fafc198f8d72ccd71913d1a40" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", rev = "496bf0bf715f0a1fafc198f8d72ccd71913d1a40" }
 reth-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "496bf0bf715f0a1fafc198f8d72ccd71913d1a40" }
+reth-cli = { git = "https://github.com/paradigmxyz/reth", rev = "496bf0bf715f0a1fafc198f8d72ccd71913d1a40" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", rev = "496bf0bf715f0a1fafc198f8d72ccd71913d1a40" }
 # reth-auto-seal-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "496bf0bf715f0a1fafc198f8d72ccd71913d1a40" }
 reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "496bf0bf715f0a1fafc198f8d72ccd71913d1a40" }
