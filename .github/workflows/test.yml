@@ -79,6 +79,8 @@ jobs:
         run: cargo check
       - name: Test
         run: cargo test -- --test-threads=1 --nocapture
+      - name: Test specs (EELS and ethereum/tests)
+        run: cargo test --features testing
 
   docs:
     name: Docs
