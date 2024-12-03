@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 #![cfg(test)]
-#[cfg(feature = "testing")]
-
 pub mod case;
 pub mod result;
 pub mod suite;

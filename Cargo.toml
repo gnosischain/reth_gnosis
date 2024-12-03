@@ -80,4 +80,6 @@ libc = "0.2"
 [features]
 default = ["jemalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
+testing = []
+failing-tests = []
 
