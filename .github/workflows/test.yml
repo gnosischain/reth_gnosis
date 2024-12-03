@@ -79,6 +79,10 @@ jobs:
         run: cargo check
       - name: Test
         run: cargo test -- --test-threads=1 --nocapture
+      - name: Downloading ethereum/tests
+        run: git clone https://github.com/ethereum/tests ethereum-tests
+      - name: Downloading EELS fixtures released at Cancun
+        run: curl -LO https://github.com/ethereum/execution-spec-tests/releases/download/v2.1.1/fixtures.tar.gz && tar -xzf fixtures.tar.gz
       - name: Test specs (EELS and ethereum/tests)
         run: cargo test --features testing
 
