@@ -166,10 +166,6 @@ impl Case for BlockchainTestCase {
                 // Decode and insert blocks, creating a chain of blocks for the test case.
                 let last_block = case.blocks.iter().try_fold(None, |_, block| {
                     let decoded = SealedBlock::decode(&mut block.rlp.as_ref())?;
-                    dbg!(
-                        "printing block during insertion: {:?}",
-                        decoded.clone().try_seal_with_senders().unwrap()
-                    );
                     provider.insert_historical_block(
                         decoded.clone().try_seal_with_senders().unwrap(),
                     )?;
