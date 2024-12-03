@@ -2,10 +2,10 @@ use alloy_consensus::Header;
 use alloy_primitives::{Address, U256};
 use reth::revm::{inspector_handle_register, Database, GetInspector};
 use reth::revm::{Evm, EvmBuilder};
-use reth_chainspec::ChainSpec;
+use reth_chainspec::{ChainSpec, Head};
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_after_merge};
-use reth_primitives::{transaction::FillTxEnv, Head, TransactionSigned};
+use reth_primitives::{transaction::FillTxEnv, TransactionSigned};
 use revm::{
     handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet, interpreter::Gas, Context,
 };
