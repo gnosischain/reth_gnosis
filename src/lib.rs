@@ -30,6 +30,7 @@ mod evm_config;
 pub mod execute;
 mod gnosis;
 mod payload_builder;
+mod testing;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Gnosis")]
