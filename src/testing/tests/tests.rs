@@ -23,25 +23,50 @@ mod general_state_tests {
     general_state_test!(modexp, byzantium, eip198_modexp_precompile, modexp);
     general_state_test!(acl, berlin, eip2930_access_list, acl);
     general_state_test!(dup, frontier, opcodes, dup);
-    general_state_test!(call_and_callcode_gas_calculation, frontier, opcodes, call_and_callcode_gas_calculation);
+    general_state_test!(
+        call_and_callcode_gas_calculation,
+        frontier,
+        opcodes,
+        call_and_callcode_gas_calculation
+    );
     general_state_test!(chainid, istanbul, eip1344_chainid, chainid);
-    general_state_test!(dynamic_create2_selfdestruct_collision, cancun, eip6780_selfdestruct, dynamic_create2_selfdestruct_collision);
+    general_state_test!(
+        dynamic_create2_selfdestruct_collision,
+        cancun,
+        eip6780_selfdestruct,
+        dynamic_create2_selfdestruct_collision
+    );
     general_state_test!(selfdestruct, cancun, eip6780_selfdestruct, selfdestruct);
-    general_state_test!(reentrancy_selfdestruct_revert, cancun, eip6780_selfdestruct, reentrancy_selfdestruct_revert);
-    general_state_test!(warm_coinbase, shanghai, eip3651_warm_coinbase, warm_coinbase);
+    general_state_test!(
+        reentrancy_selfdestruct_revert,
+        cancun,
+        eip6780_selfdestruct,
+        reentrancy_selfdestruct_revert
+    );
+    general_state_test!(
+        warm_coinbase,
+        shanghai,
+        eip3651_warm_coinbase,
+        warm_coinbase
+    );
     general_state_test!(push0, shanghai, eip3855_push0, push0);
     general_state_test!(yul_example, homestead, yul, yul_example);
-    general_state_test!(selfdestruct_balance_bug, paris, security, selfdestruct_balance_bug);
+    general_state_test!(
+        selfdestruct_balance_bug,
+        paris,
+        security,
+        selfdestruct_balance_bug
+    );
 
     #[cfg(feature = "failing-tests")]
     mod failing_eels_tests {
         use super::*;
-        general_state_test!(withdrawals, shanghai, eip4895_withdrawals, withdrawals);  // <!> FAILED
-        general_state_test!(initcode, shanghai, eip3860_initcode, initcode);  // <!> FAILED
+        general_state_test!(withdrawals, shanghai, eip4895_withdrawals, withdrawals); // <!> FAILED
+        general_state_test!(initcode, shanghai, eip3860_initcode, initcode); // <!> FAILED
     }
-    
+
     /////////////////////////////////// TESTS FROM ETHEREUM/TESTS ///////////////////////////////////
-    general_state_test!(shanghai, Shanghai);  // <!> FAILED
+    general_state_test!(shanghai, Shanghai); // <!> FAILED
     general_state_test!(st_args_zero_one_balance, stArgsZeroOneBalance);
     general_state_test!(st_attack, stAttackTest);
     general_state_test!(st_bugs, stBugs);
@@ -51,7 +76,10 @@ mod general_state_tests {
         st_call_delegate_codes_call_code_homestead,
         stCallDelegateCodesCallCodeHomestead
     );
-    general_state_test!(st_call_delegate_codes_homestead, stCallDelegateCodesHomestead);
+    general_state_test!(
+        st_call_delegate_codes_homestead,
+        stCallDelegateCodesHomestead
+    );
     general_state_test!(st_chain_id, stChainId);
     general_state_test!(st_code_copy_test, stCodeCopyTest);
     general_state_test!(st_code_size_limit, stCodeSizeLimit);
@@ -90,20 +118,20 @@ mod general_state_tests {
     #[cfg(feature = "failing-tests")]
     mod failing_ethereum_tests {
         use super::*;
-        general_state_test!(st_bad_opcode, stBadOpcode);  // <!> FAILED
-        general_state_test!(st_create2, stCreate2);  // <!> FAILED
-        general_state_test!(st_create, stCreateTest);  // <!> FAILED
-        general_state_test!(st_eip1559, stEIP1559);  // <!> FAILED
-        general_state_test!(st_eip3607, stEIP3607);  // <!> FAILED
-        general_state_test!(st_example, stExample);  // <!> FAILED
-        general_state_test!(st_ext_codehash, stExtCodeHash);  // <!> FAILED
-        general_state_test!(st_quadratic_complexity, stQuadraticComplexityTest);  // <!> FAILED
-        general_state_test!(st_recursive_create, stRecursiveCreate);  // <!> FAILED
-        general_state_test!(st_revert, stRevertTest);  // <!> FAILED
-        general_state_test!(st_special, stSpecialTest);  // <!> FAILED
-        general_state_test!(st_sstore, stSStoreTest);  // <!> FAILED
-        general_state_test!(st_stack, stStackTests);  // <!> FAILED
-        general_state_test!(st_transaction, stTransactionTest);  // <!> FAILED
-        general_state_test!(vm_tests, VMTests);  // <!> FAILED
+        general_state_test!(st_bad_opcode, stBadOpcode); // <!> FAILED
+        general_state_test!(st_create2, stCreate2); // <!> FAILED
+        general_state_test!(st_create, stCreateTest); // <!> FAILED
+        general_state_test!(st_eip1559, stEIP1559); // <!> FAILED
+        general_state_test!(st_eip3607, stEIP3607); // <!> FAILED
+        general_state_test!(st_example, stExample); // <!> FAILED
+        general_state_test!(st_ext_codehash, stExtCodeHash); // <!> FAILED
+        general_state_test!(st_quadratic_complexity, stQuadraticComplexityTest); // <!> FAILED
+        general_state_test!(st_recursive_create, stRecursiveCreate); // <!> FAILED
+        general_state_test!(st_revert, stRevertTest); // <!> FAILED
+        general_state_test!(st_special, stSpecialTest); // <!> FAILED
+        general_state_test!(st_sstore, stSStoreTest); // <!> FAILED
+        general_state_test!(st_stack, stStackTests); // <!> FAILED
+        general_state_test!(st_transaction, stTransactionTest); // <!> FAILED
+        general_state_test!(vm_tests, VMTests); // <!> FAILED
     }
 }

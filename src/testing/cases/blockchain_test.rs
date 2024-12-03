@@ -1,20 +1,28 @@
 //! Test runners for `BlockchainTests` in <https://github.com/ethereum/tests>
 
-use crate::{execute::GnosisExecutorProvider, testing::{
-    models::{BlockchainTest, ForkSpec},
-    Case, Error, Suite,
-}};
+use crate::{
+    execute::GnosisExecutorProvider,
+    testing::{
+        models::{BlockchainTest, ForkSpec},
+        Case, Error, Suite,
+    },
+};
 use alloy_rlp::Decodable;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::parse_genesis;
 use reth_primitives::{BlockBody, SealedBlock, StaticFileSegment};
 use reth_provider::{
-    providers::StaticFileWriter, test_utils::create_test_provider_factory_with_chain_spec, BlockReader, DatabaseProviderFactory, HashingWriter, StaticFileProviderFactory, TransactionVariant
+    providers::StaticFileWriter, test_utils::create_test_provider_factory_with_chain_spec,
+    DatabaseProviderFactory, HashingWriter, StaticFileProviderFactory,
 };
 use reth_stages::{stages::ExecutionStage, ExecInput, Stage};
-use revm_primitives::Address;
-use std::{collections::BTreeMap, fs, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 /// A handler for the blockchain test suite.
 #[derive(Debug)]
@@ -52,10 +60,11 @@ impl Case for BlockchainTestCase {
                     path: path.into(),
                     error,
                 })?;
-                let test = serde_json::from_str(&s).map_err(|error| Error::CouldNotDeserialize {
-                    path: path.into(),
-                    error,
-                })?;
+                let test =
+                    serde_json::from_str(&s).map_err(|error| Error::CouldNotDeserialize {
+                        path: path.into(),
+                        error,
+                    })?;
                 test
             },
             skip: should_skip(path),
@@ -75,7 +84,9 @@ impl Case for BlockchainTestCase {
         let chainspec_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("scripts")
             .join("chiado_genesis_alloc.json");
-        let original_chain_spec: ChainSpec = parse_genesis(chainspec_path.to_str().unwrap()).unwrap().into();
+        let original_chain_spec: ChainSpec = parse_genesis(chainspec_path.to_str().unwrap())
+            .unwrap()
+            .into();
         // let chain_spec: Arc<ChainSpec> = Arc::new(chain_spec);
 
         // Iterate through test cases, filtering by the network type to exclude specific forks.
@@ -97,24 +108,37 @@ impl Case for BlockchainTestCase {
                         | ForkSpec::MergeMeterInitCode
                         | ForkSpec::MergePush0
                         | ForkSpec::Unknown
-                        | ForkSpec::Berlin
-                        | ForkSpec::London
-                        | ForkSpec::Istanbul
                 )
             })
             .par_bridge()
             .try_for_each(|case| {
                 // Create a new test database and initialize a provider for the test case.
                 let mut chain_spec: ChainSpec = case.network.clone().into();
-                chain_spec.genesis.config.extra_fields.insert(String::from("eip1559collector"), original_chain_spec.genesis.config.extra_fields.get("eip1559collector").unwrap().clone());
-                chain_spec.genesis.config.extra_fields.insert(String::from("blockRewardsContract"), original_chain_spec.genesis.config.extra_fields.get("blockRewardsContract").unwrap().clone());
+                chain_spec.genesis.config.extra_fields.insert(
+                    String::from("eip1559collector"),
+                    original_chain_spec
+                        .genesis
+                        .config
+                        .extra_fields
+                        .get("eip1559collector")
+                        .unwrap()
+                        .clone(),
+                );
+                chain_spec.genesis.config.extra_fields.insert(
+                    String::from("blockRewardsContract"),
+                    original_chain_spec
+                        .genesis
+                        .config
+                        .extra_fields
+                        .get("blockRewardsContract")
+                        .unwrap()
+                        .clone(),
+                );
                 chain_spec.deposit_contract = original_chain_spec.deposit_contract;
                 let chain_spec: Arc<ChainSpec> = Arc::new(chain_spec);
                 let provider = create_test_provider_factory_with_chain_spec(chain_spec.clone());
 
-                let provider = provider
-                    .database_provider_rw()
-                    .unwrap();
+                let provider = provider.database_provider_rw().unwrap();
 
                 // provider.
 
@@ -142,7 +166,10 @@ impl Case for BlockchainTestCase {
                 // Decode and insert blocks, creating a chain of blocks for the test case.
                 let last_block = case.blocks.iter().try_fold(None, |_, block| {
                     let decoded = SealedBlock::decode(&mut block.rlp.as_ref())?;
-                    dbg!("printing block during insertion: {:?}", decoded.clone().try_seal_with_senders().unwrap());
+                    dbg!(
+                        "printing block during insertion: {:?}",
+                        decoded.clone().try_seal_with_senders().unwrap()
+                    );
                     provider.insert_historical_block(
                         decoded.clone().try_seal_with_senders().unwrap(),
                     )?;
@@ -154,23 +181,12 @@ impl Case for BlockchainTestCase {
                     .unwrap()
                     .commit_without_sync_all()
                     .unwrap();
-                let collector_address = chain_spec
-                    .genesis()
-                    .config
-                    .extra_fields
-                    .get("eip1559collector")
-                    .ok_or(Error::Custom("no eip1559collector field".to_string()))?;
-                let collector_address: Address = serde_json::from_value(collector_address.clone()).unwrap();
+
                 let gnosis_executor_provider = GnosisExecutorProvider::gnosis(chain_spec.clone());
 
-
-                let block = provider.sealed_block_with_senders(1.into(), TransactionVariant::NoHash);
                 // Execute the execution stage using the EVM processor factory for the test case
                 // network.
-                let result = ExecutionStage::new_with_executor(
-                    gnosis_executor_provider,
-                )
-                .execute(
+                let result = ExecutionStage::new_with_executor(gnosis_executor_provider).execute(
                     &provider,
                     ExecInput {
                         target: last_block.as_ref().map(|b| b.number),
@@ -178,7 +194,9 @@ impl Case for BlockchainTestCase {
                     },
                 );
                 if let Err(e) = result {
-                    return Err(Error::Custom("error in execution stage".to_string()));
+                    return Err(Error::Custom(
+                        format!("error in execution stage {:?}", e).to_string(),
+                    ));
                 }
 
                 // Validate the post-state for the test case.
@@ -199,11 +217,9 @@ impl Case for BlockchainTestCase {
                         )?;
                     }
                     _ => {
-                        dbg!("step 10/n");
                         return Err(Error::MissingPostState);
-                    },
+                    }
                 }
-
 
                 // Drop the provider without committing to the database.
                 drop(provider);
