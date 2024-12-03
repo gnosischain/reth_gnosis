@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::errors::GnosisBlockExecutionError;
+use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_macro::sol;
@@ -155,6 +156,10 @@ where
             ));
         }
     };
+
+    if state.get(&block_rewards_contract).unwrap().info.code_hash == KECCAK_EMPTY {
+        return Ok(HashMap::new());
+    }
 
     let output_bytes = match result {
         ExecutionResult::Success { output, .. } => match output {
