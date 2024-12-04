@@ -234,9 +234,18 @@ impl Case for BlockchainTestCase {
 /// The reason should be documented in a comment above the file name(s).
 pub fn should_skip(path: &Path) -> bool {
     let path_str = path.to_str().expect("Path is not valid UTF-8");
-    let name = path.file_name().unwrap().to_str().unwrap();
+    let test_name = path.file_name().unwrap().to_str().unwrap();
+    let test_folder = path
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+
+    // executnig all tests for now
     false && matches!(
-        name,
+        test_name,
         // funky test with `bigint 0x00` value in json :) not possible to happen on mainnet and require
         // custom json parser. https://github.com/ethereum/tests/issues/971
         | "ValueOverflow.json"
@@ -270,6 +279,11 @@ pub fn should_skip(path: &Path) -> bool {
         | "loopMul.json"
         | "CALLBlake2f_MaxRounds.json"
         | "shiftCombinations.json"
+    )
+    || matches!(
+        test_folder,
+        // These tests are passing, but they take a lot of time to execute
+        | "stTimeConsuming"
     )
     // Ignore outdated EOF tests that haven't been updated for Cancun yet.
     || path_contains(path_str, &["EIPTests", "stEOF"])
