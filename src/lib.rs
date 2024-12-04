@@ -67,12 +67,6 @@ impl GnosisNode {
         GnosisConsensusBuilder,
     >
     where
-        // Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
-        // <Node::Types as NodeTypesWithEngine>::Engine: PayloadTypes<
-        //     BuiltPayload = EthBuiltPayload,
-        //     PayloadAttributes = EthPayloadAttributes,
-        //     PayloadBuilderAttributes = EthPayloadBuilderAttributes,
-        // >,
         Node: FullNodeTypes<
             Types: NodeTypesWithEngine<
                 Engine = EthEngineTypes,
