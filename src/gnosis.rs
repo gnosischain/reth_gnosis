@@ -1,22 +1,19 @@
 use std::collections::HashMap;
 
 use crate::errors::GnosisBlockExecutionError;
+use alloy_eips::eip4895::{Withdrawal, Withdrawals};
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
-use reth::{
-    primitives::Withdrawal,
-    revm::{
-        interpreter::Host,
-        primitives::{ExecutionResult, Output, ResultAndState},
-        Database, DatabaseCommit, Evm, State,
-    },
+use reth::revm::{
+    interpreter::Host,
+    primitives::{ExecutionResult, Output, ResultAndState},
+    Database, DatabaseCommit, Evm, State,
 };
 use reth_chainspec::ChainSpec;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
-use reth_primitives::Withdrawals;
 use reth_provider::ProviderError;
 use revm_primitives::{
     Account, AccountInfo, AccountStatus, BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg,

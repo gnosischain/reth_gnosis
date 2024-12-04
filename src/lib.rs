@@ -1,4 +1,4 @@
-use consensus::GnosisBeaconConsensus;
+// use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
 use execute::GnosisExecutionStrategyFactory;
 use eyre::eyre;
@@ -15,16 +15,18 @@ use reth::{
 };
 use reth_chainspec::ChainSpec;
 use reth_engine_primitives::EngineValidator;
+use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::EthereumEngineValidator;
 use reth_node_ethereum::{
     node::{EthereumNetworkBuilder, EthereumPoolBuilder},
     BasicBlockExecutorProvider, EthEngineTypes, EthereumNode,
 };
+use reth_primitives::EthPrimitives;
+use reth_provider::EthStorage;
 use reth_rpc::EthApi;
 use reth_trie_db::MerklePatriciaTrie;
 use std::sync::Arc;
 
-mod consensus;
 mod errors;
 mod evm_config;
 pub mod execute;
@@ -65,7 +67,11 @@ impl GnosisNode {
     >
     where
         Node: FullNodeTypes<
-            Types: NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>,
+            Types: NodeTypesWithEngine<
+                Engine = EthEngineTypes,
+                ChainSpec = ChainSpec,
+                Primitives = EthPrimitives,
+            >,
         >,
     {
         EthereumNode::components::<Node>()
@@ -80,9 +86,10 @@ impl GnosisNode {
 
 /// Configure the node types
 impl NodeTypes for GnosisNode {
-    type Primitives = ();
+    type Primitives = EthPrimitives;
     type ChainSpec = ChainSpec;
     type StateCommitment = MerklePatriciaTrie;
+    type Storage = EthStorage;
 }
 
 impl NodeTypesWithEngine for GnosisNode {
@@ -103,7 +110,14 @@ pub type GnosisAddOns<N> = RpcAddOns<
 
 impl<N> Node<N> for GnosisNode
 where
-    N: FullNodeTypes<Types: NodeTypesWithEngine<Engine = EthEngineTypes, ChainSpec = ChainSpec>>,
+    N: FullNodeTypes<
+        Types: NodeTypesWithEngine<
+            Engine = EthEngineTypes,
+            ChainSpec = ChainSpec,
+            Primitives = EthPrimitives,
+            Storage = EthStorage,
+        >,
+    >,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
@@ -135,7 +149,13 @@ pub struct GnosisExecutorBuilder;
 
 impl<Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec>>,
+    Node: FullNodeTypes<
+        Types: NodeTypesWithEngine<
+            Engine = EthEngineTypes,
+            ChainSpec = ChainSpec,
+            Primitives = EthPrimitives,
+        >,
+    >,
 {
     // Must implement ConfigureEvm;
     type EVM = GnosisEvmConfig;
@@ -175,18 +195,12 @@ pub struct GnosisConsensusBuilder;
 
 impl<Node> ConsensusBuilder<Node> for GnosisConsensusBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec>>,
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
 {
-    type Consensus = Arc<dyn reth_consensus::Consensus>;
+    type Consensus = Arc<dyn reth_consensus::FullConsensus>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        if ctx.is_dev() {
-            Ok(Arc::new(reth_auto_seal_consensus::AutoSealConsensus::new(
-                ctx.chain_spec(),
-            )))
-        } else {
-            Ok(Arc::new(GnosisBeaconConsensus::new(ctx.chain_spec())))
-        }
+        Ok(Arc::new(EthBeaconConsensus::new(ctx.chain_spec())))
     }
 }
 
