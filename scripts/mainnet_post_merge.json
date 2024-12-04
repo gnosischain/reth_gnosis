@@ -62,7 +62,8 @@
             },
             "withdrawalContractAddress": "0x0B98057eA310F4d31F2a452B414647007d1645d9"
         },
-        "eip1559collector": "0x6BBe78ee9e474842Dbd4AB4987b3CeFE88426A92"
+        "eip1559collector": "0x6BBe78ee9e474842Dbd4AB4987b3CeFE88426A92",
+        "depositContractAddress": "0x0B98057eA310F4d31F2a452B414647007d1645d9"
     },
     "baseFeePerGas": "0x3b9aca00",
     "difficulty": "0x01",
