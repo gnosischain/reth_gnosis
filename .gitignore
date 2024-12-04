@@ -1,3 +1,5 @@
 /target
 ethereum-tests/
 fixtures/
+*.jsonl
+*.rlp
