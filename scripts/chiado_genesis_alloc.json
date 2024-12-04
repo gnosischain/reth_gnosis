@@ -16,8 +16,8 @@
     },
     "terminalTotalDifficulty": 0,
     "terminalTotalDifficultyPassed": true,
-    "shanghaiTime": 9999999999,
-    "cancunTime": 9999999999,
+    "shanghaiTime": 1704401480,
+    "cancunTime": 9704401480,
     "minBlobGasPrice": 1000000000,
     "maxBlobGasPerBlock": 262144,
     "targetBlobGasPerBlock": 131072,
@@ -53,7 +53,7 @@
       "randomnessContractAddress": {
         "0": "0x3000000000000000000000000000000000000001"
       },
-      "withdrawalContractAddress": "0xbabe2bed00000000000000000000000000000003",
+      "withdrawalContractAddress": "0x566b8783a28a46dc8d88ebf712303938985e121e",
       "twoThirdsMajorityTransition": 0,
       "posdaoTransition": 0,
       "blockGasLimitContractTransitions": {
@@ -61,7 +61,9 @@
       },
       "registrar": "0x6000000000000000000000000000000000000000"
     },
-    "eip1559collector": "0x1559000000000000000000000000000000000000"
+    "eip1559collector": "0x1559000000000000000000000000000000000000",
+    "depositContractAddress":
+    "0x566b8783a28a46dc8d88ebf712303938985e121e"
   },
   "baseFeePerGas": "0x3b9aca00",
   "difficulty": "0x01",
