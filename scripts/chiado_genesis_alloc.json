@@ -62,8 +62,7 @@
       "registrar": "0x6000000000000000000000000000000000000000"
     },
     "eip1559collector": "0x1559000000000000000000000000000000000000",
-    "depositContractAddress":
-    "0x566b8783a28a46dc8d88ebf712303938985e121e"
+    "depositContractAddress": "0x566b8783a28a46dc8d88ebf712303938985e121e"
   },
   "baseFeePerGas": "0x3b9aca00",
   "difficulty": "0x01",
