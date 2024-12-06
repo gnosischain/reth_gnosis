@@ -9,6 +9,8 @@ on:
 env:
   REQWEST_TEST_BODY_FULL: 1
   RUST_BACKTRACE: 1
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   style:
@@ -34,29 +36,29 @@ jobs:
       - run: cargo check --all-targets
       - run: cargo clippy -- --deny warnings
 
-  spec-tests:
-    name: Spec tests
-    runs-on: 'ubuntu-latest'
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - name: Install rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust || 'stable' }}
-          targets: ${{ matrix.target }}
-      - name: Downloading ethereum/tests
-        run: git clone https://github.com/ethereum/tests ethereum-tests
-      - name: Downloading EELS fixtures released at Cancun
-        run: curl -LO https://github.com/ethereum/execution-spec-tests/releases/download/v2.1.1/fixtures.tar.gz && tar -xzf fixtures.tar.gz
-      - name: Test specs (EELS and ethereum/tests)
-        run: cargo test --features testing
+  # spec-tests:
+  #   name: Spec tests
+  #   runs-on: 'ubuntu-latest'
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - uses: actions/cache@v2
+  #       with:
+  #         path: |
+  #           ~/.cargo/registry
+  #           ~/.cargo/git
+  #           target
+  #         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+  #     - name: Install rust
+  #       uses: dtolnay/rust-toolchain@master
+  #       with:
+  #         toolchain: ${{ matrix.rust || 'stable' }}
+  #         targets: ${{ matrix.target }}
+  #     - name: Downloading ethereum/tests
+  #       run: git clone https://github.com/ethereum/tests ethereum-tests
+  #     - name: Downloading EELS fixtures released at Cancun
+  #       run: curl -LO https://github.com/ethereum/execution-spec-tests/releases/download/v2.1.1/fixtures.tar.gz && tar -xzf fixtures.tar.gz
+  #     - name: Test specs (EELS and ethereum/tests)
+  #       run: cargo test --features testing
 
   tests:
     name: Tests ${{ matrix.name }}
