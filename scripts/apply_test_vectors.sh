@@ -37,7 +37,7 @@ function apply_block_file() {
     -H "Authorization: Bearer $JWT_TOKEN" \
     --data "{
       \"jsonrpc\":\"2.0\",
-      \"method\":\"engine_newPayloadV1\",
+      \"method\":\"engine_newPayloadV2\",
       \"params\":[
         $BLOCK
       ],
@@ -45,7 +45,7 @@ function apply_block_file() {
     }" \
     http://localhost:8546 \
   )
-  echo engine_newPayloadV1 with new block RESPONSE $RESPONSE
+  echo engine_newPayloadV2 with new block RESPONSE $RESPONSE
 
   BLOCK_HASH=$(echo $BLOCK | jq --raw-output '.blockHash')
 
