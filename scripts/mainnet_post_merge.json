@@ -23,7 +23,6 @@
         "burntContract": {
             "19040000": "0x6BBe78ee9e474842Dbd4AB4987b3CeFE88426A92"
         },
-        "depositContractAddress": "0x0B98057eA310F4d31F2a452B414647007d1645d9",
         "blockRewardsContract": "0x481c034c6d9441db23Ea48De68BCAe812C5d39bA",
         "aura": {
             "stepDuration": 5,

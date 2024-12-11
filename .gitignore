@@ -3,3 +3,4 @@ ethereum-tests/
 fixtures/
 *.jsonl
 *.rlp
+syncblocks/
