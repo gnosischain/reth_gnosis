@@ -12,6 +12,7 @@ use reth_chainspec::EthereumHardforks;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::validate_block_post_execution;
 use reth_evm::system_calls::OnStateHook;
+use reth_evm::TxEnvOverrides;
 use reth_evm::{
     execute::{
         BlockExecutionError, BlockExecutionStrategy, BlockExecutionStrategyFactory,
@@ -24,7 +25,7 @@ use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::BasicBlockExecutorProvider;
 use reth_primitives::EthPrimitives;
 use reth_primitives::{BlockWithSenders, Receipt};
-use revm::State;
+use reth_revm::db::State;
 use revm_primitives::{
     db::{Database, DatabaseCommit},
     BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ResultAndState, U256,
@@ -100,6 +101,8 @@ where
     system_caller: SystemCaller<EvmConfig, ChainSpec>,
     /// BlockRewards contract address
     block_rewards_contract: Address,
+    /// Optional overrides for the transactions environment.
+    tx_env_overrides: Option<Box<dyn TxEnvOverrides>>,
 }
 
 impl<DB, EvmConfig> GnosisExecutionStrategy<DB, EvmConfig>
@@ -123,6 +126,7 @@ where
             evm_config,
             system_caller,
             block_rewards_contract,
+            tx_env_overrides: None,
         }
     }
 }
@@ -155,7 +159,9 @@ where
 
     type Primitives = EthPrimitives;
 
-    fn init(&mut self, _tx_env_overrides: Box<dyn reth_evm::TxEnvOverrides>) {}
+    fn init(&mut self, tx_env_overrides: Box<dyn TxEnvOverrides>) {
+        self.tx_env_overrides = Some(tx_env_overrides);
+    }
 
     fn apply_pre_execution_changes(
         &mut self,
@@ -180,7 +186,7 @@ where
         &mut self,
         block: &BlockWithSenders,
         total_difficulty: U256,
-    ) -> Result<ExecuteOutput, Self::Error> {
+    ) -> Result<ExecuteOutput<Receipt>, Self::Error> {
         let env = self.evm_env_for_block(&block.header, total_difficulty);
         let mut evm = self.evm_config.evm_with_env(&mut self.state, env);
 
@@ -202,6 +208,10 @@ where
 
             self.evm_config
                 .fill_tx_env(evm.tx_mut(), transaction, *sender);
+
+            if let Some(tx_env_overrides) = &mut self.tx_env_overrides {
+                tx_env_overrides.apply(evm.tx_mut());
+            }
 
             // Execute transaction.
             let result_and_state = evm.transact().map_err(move |err| {
@@ -243,23 +253,27 @@ where
     fn apply_post_execution_changes(
         &mut self,
         block: &BlockWithSenders,
-        _total_difficulty: U256,
+        total_difficulty: U256,
         receipts: &[Receipt],
     ) -> Result<Requests, Self::Error> {
-        let cfg = CfgEnvWithHandlerCfg::new(Default::default(), Default::default());
-        let block_env = BlockEnv::default();
+        let env = self.evm_env_for_block(&block.header, total_difficulty);
+        let mut evm = self.evm_config.evm_with_env(&mut self.state, env);
 
-        apply_post_block_system_calls::<EvmConfig, DB>(
+        let balance_increments = apply_post_block_system_calls(
             &self.chain_spec,
             &self.evm_config,
-            &mut self.state,
-            &cfg,
-            &block_env,
             self.block_rewards_contract,
             block.timestamp,
             block.body.withdrawals.as_ref(),
             block.beneficiary,
+            &mut evm,
         )?;
+
+        drop(evm);
+
+        self.state
+            .increment_balances(balance_increments.clone())
+            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
 
         let requests = if self
             .chain_spec

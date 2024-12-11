@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 reth = { git = "https://github.com/paradigmxyz/reth", rev = "8f61af0136e1a20119832925081c341ae89b93f0" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "8f61af0136e1a20119832925081c341ae89b93f0" }
+reth-revm = { git = "https://github.com/paradigmxyz/reth", rev = "8f61af0136e1a20119832925081c341ae89b93f0" }
 reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "8f61af0136e1a20119832925081c341ae89b93f0" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "8f61af0136e1a20119832925081c341ae89b93f0" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "8f61af0136e1a20119832925081c341ae89b93f0" }
