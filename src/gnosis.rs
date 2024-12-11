@@ -3,22 +3,23 @@ use std::collections::HashMap;
 use crate::errors::GnosisBlockExecutionError;
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use reth::revm::{
     interpreter::Host,
-    primitives::{ExecutionResult, Output, ResultAndState},
-    Database, DatabaseCommit, Evm, State,
+    primitives::{ExecutionResult, Output},
+    Evm,
 };
 use reth_chainspec::ChainSpec;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
-use reth_provider::ProviderError;
 use revm_primitives::{
-    Account, AccountInfo, AccountStatus, BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg,
+    db::{Database, DatabaseCommit},
+    ResultAndState, U256,
 };
+use revm_primitives::{Account, AccountInfo, AccountStatus};
 use std::fmt::Display;
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
@@ -249,35 +250,25 @@ where
 // - Call into deposit contract with withdrawal data
 // - Call block rewards contract for bridged xDAI mint
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_post_block_system_calls<EvmConfig, DB>(
+pub(crate) fn apply_post_block_system_calls<EvmConfig, EXT, DB>(
     chain_spec: &ChainSpec,
     evm_config: &EvmConfig,
-    db: &mut State<DB>,
-    initialized_cfg: &CfgEnvWithHandlerCfg,
-    initialized_block_env: &BlockEnv,
     block_rewards_contract: Address,
     block_timestamp: u64,
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
-) -> Result<(), BlockExecutionError>
+    evm: &mut Evm<'_, EXT, DB>,
+) -> Result<HashMap<alloy_primitives::Address, u128>, BlockExecutionError>
 where
     EvmConfig: ConfigureEvm,
-    DB: Database<Error: Into<ProviderError> + Display>,
+    DB: Database + DatabaseCommit,
+    DB::Error: Display,
 {
-    let mut evm = Evm::builder()
-        .with_db(db)
-        .with_env_with_handler_cfg(EnvWithHandlerCfg::new_with_cfg_env(
-            initialized_cfg.clone(),
-            initialized_block_env.clone(),
-            Default::default(),
-        ))
-        .build();
-
     if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
         let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
             message: "block has no withdrawals field".to_owned(),
         })?;
-        apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, &mut evm)?;
+        apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, evm)?;
     }
 
     let balance_increments = apply_block_rewards_contract_call(
@@ -285,15 +276,8 @@ where
         block_rewards_contract,
         block_timestamp,
         coinbase,
-        &mut evm,
+        evm,
     )?;
 
-    // increment balances
-    evm.context
-        .evm
-        .db
-        .increment_balances(balance_increments)
-        .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
-
-    Ok(())
+    Ok(balance_increments)
 }
