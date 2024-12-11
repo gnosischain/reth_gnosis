@@ -37,7 +37,10 @@ use reth_provider::{
     CanonStateSubscriptions, ChainSpecProvider, ExecutionOutcome, StateProviderFactory,
 };
 use reth_trie::HashedPostState;
-use revm::{db::states::bundle_state::BundleRetention, DatabaseCommit, State};
+use revm::{
+    db::{states::bundle_state::BundleRetention, State},
+    Database, DatabaseCommit, Evm,
+};
 use revm_primitives::{
     calc_excess_blob_gas, Address, BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg,
     InvalidTransaction, ResultAndState, U256,
@@ -49,6 +52,24 @@ use crate::{evm_config::GnosisEvmConfig, gnosis::apply_post_block_system_calls};
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
 >;
+
+fn initialize_evm<'a, DB>(
+    db: &'a mut DB,
+    initialized_cfg: &'a CfgEnvWithHandlerCfg,
+    initialized_block_env: &'a BlockEnv,
+) -> Evm<'a, (), &'a mut DB>
+where
+    DB: Database,
+{
+    Evm::builder()
+        .with_db(db)
+        .with_env_with_handler_cfg(EnvWithHandlerCfg::new_with_cfg_env(
+            initialized_cfg.clone(),
+            initialized_block_env.clone(),
+            Default::default(),
+        ))
+        .build()
+}
 
 /// A basic Gnosis payload service builder
 #[derive(Debug, Default, Clone)]
@@ -325,6 +346,8 @@ where
         PayloadBuilderError::Internal(err.into())
     })?;
 
+    let mut evm = initialize_evm(&mut db, &initialized_cfg, &initialized_block_env);
+
     let mut receipts = Vec::new();
     while let Some(pool_tx) = best_txs.next() {
         // ensure we still have capacity for this transaction
@@ -368,14 +391,8 @@ where
             }
         }
 
-        let env = EnvWithHandlerCfg::new_with_cfg_env(
-            initialized_cfg.clone(),
-            initialized_block_env.clone(),
-            evm_config.tx_env(tx.as_signed(), tx.signer()),
-        );
-
-        // Configure the environment for the block.
-        let mut evm = evm_config.evm_with_env(&mut db, env);
+        // Configure the environment for the tx.
+        *evm.tx_mut() = evm_config.tx_env(tx.as_signed(), tx.signer());
 
         let ResultAndState { result, state } = match evm.transact() {
             Ok(res) => res,
@@ -446,6 +463,9 @@ where
         executed_txs.push(tx.into_signed());
     }
 
+    // Release db
+    drop(evm);
+
     // check if we have a better block
     if !is_better_payload(best_payload.as_ref(), total_fees) {
         // can skip building the block
@@ -455,20 +475,35 @@ where
         });
     }
 
+    let mut evm = initialize_evm(&mut db, &initialized_cfg, &initialized_block_env);
+
     // < GNOSIS SPECIFIC
-    apply_post_block_system_calls(
+    let balance_increments = apply_post_block_system_calls(
         &chain_spec,
         &evm_config,
-        &mut db,
-        &initialized_cfg,
-        &initialized_block_env,
         block_rewards_contract,
         attributes.timestamp,
         Some(&attributes.withdrawals),
         attributes.suggested_fee_recipient,
+        &mut evm,
     )
     .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
     // GNOSIS SPECIFIC >
+
+    evm.context
+        .evm
+        .db
+        .increment_balances(balance_increments)
+        .map_err(|err| {
+            warn!(target: "payload_builder",
+                parent_hash=%parent_header.hash(),
+                %err,
+                "failed to increment balances for payload"
+            );
+            PayloadBuilderError::Internal(err.into())
+        })?;
+
+    drop(evm);
 
     // calculate the requests and the requests root
     let requests = if chain_spec.is_prague_active_at_timestamp(attributes.timestamp) {
