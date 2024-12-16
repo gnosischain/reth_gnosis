@@ -39,11 +39,11 @@ use reth_provider::{
 use reth_trie::HashedPostState;
 use revm::{
     db::{states::bundle_state::BundleRetention, State},
-    Database, DatabaseCommit, Evm,
+    DatabaseCommit,
 };
 use revm_primitives::{
     calc_excess_blob_gas, Address, BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg,
-    InvalidTransaction, ResultAndState, U256,
+    InvalidTransaction, ResultAndState, TxEnv, U256,
 };
 use tracing::{debug, trace, warn};
 
@@ -52,24 +52,6 @@ use crate::{evm_config::GnosisEvmConfig, gnosis::apply_post_block_system_calls};
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
 >;
-
-fn initialize_evm<'a, DB>(
-    db: &'a mut DB,
-    initialized_cfg: &'a CfgEnvWithHandlerCfg,
-    initialized_block_env: &'a BlockEnv,
-) -> Evm<'a, (), &'a mut DB>
-where
-    DB: Database,
-{
-    Evm::builder()
-        .with_db(db)
-        .with_env_with_handler_cfg(EnvWithHandlerCfg::new_with_cfg_env(
-            initialized_cfg.clone(),
-            initialized_block_env.clone(),
-            Default::default(),
-        ))
-        .build()
-}
 
 /// A basic Gnosis payload service builder
 #[derive(Debug, Default, Clone)]
@@ -346,7 +328,12 @@ where
         PayloadBuilderError::Internal(err.into())
     })?;
 
-    let mut evm = initialize_evm(&mut db, &initialized_cfg, &initialized_block_env);
+    let env = EnvWithHandlerCfg::new_with_cfg_env(
+        initialized_cfg.clone(),
+        initialized_block_env.clone(),
+        TxEnv::default(),
+    );
+    let mut evm = evm_config.evm_with_env(&mut db, env);
 
     let mut receipts = Vec::new();
     while let Some(pool_tx) = best_txs.next() {
@@ -475,7 +462,12 @@ where
         });
     }
 
-    let mut evm = initialize_evm(&mut db, &initialized_cfg, &initialized_block_env);
+    let env = EnvWithHandlerCfg::new_with_cfg_env(
+        initialized_cfg.clone(),
+        initialized_block_env.clone(),
+        TxEnv::default(),
+    );
+    let mut evm = evm_config.evm_with_env(&mut db, env);
 
     // < GNOSIS SPECIFIC
     let balance_increments = apply_post_block_system_calls(
