@@ -2,7 +2,7 @@ use alloy_consensus::Header;
 use alloy_primitives::{Address, U256};
 use reth::revm::{inspector_handle_register, Database, GetInspector};
 use reth::revm::{Evm, EvmBuilder};
-use reth_chainspec::{ChainSpec, Head};
+use reth_chainspec::{ChainSpec, EthereumHardforks, Head};
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_after_merge};
 use reth_primitives::{transaction::FillTxEnv, TransactionSigned};
@@ -192,7 +192,13 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
         attributes: reth_evm::NextBlockEnvAttributes,
     ) -> Result<(CfgEnvWithHandlerCfg, BlockEnv), Self::Error> {
         // configure evm env based on parent block
-        let cfg = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
+        let mut cfg = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
+        if !self
+            .chain_spec
+            .is_shanghai_active_at_timestamp(attributes.timestamp)
+        {
+            cfg.limit_contract_code_size = Some(usize::MAX);
+        }
 
         // ensure we're not missing any timestamp based hardforks
         let spec_id = revm_spec_by_timestamp_after_merge(&self.chain_spec, attributes.timestamp);
