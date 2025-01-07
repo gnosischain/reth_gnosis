@@ -56,6 +56,16 @@ pub fn mint_basefee_to_collector_address<EXT, DB: Database>(
     Ok(())
 }
 
+/// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
+pub fn get_cfg_env(chain_spec: &ChainSpec, timestamp: u64) -> CfgEnv {
+    let mut cfg = CfgEnv::default().with_chain_id(chain_spec.chain().id());
+    if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
+        // EIP-170 is enabled at the Shanghai Fork on Gnosis Chain
+        cfg.limit_contract_code_size = Some(usize::MAX);
+    }
+    cfg
+}
+
 /// Custom EVM configuration
 #[derive(Debug, Clone)]
 pub struct GnosisEvmConfig {
@@ -192,13 +202,7 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
         attributes: reth_evm::NextBlockEnvAttributes,
     ) -> Result<(CfgEnvWithHandlerCfg, BlockEnv), Self::Error> {
         // configure evm env based on parent block
-        let mut cfg = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
-        if !self
-            .chain_spec
-            .is_shanghai_active_at_timestamp(attributes.timestamp)
-        {
-            cfg.limit_contract_code_size = Some(usize::MAX);
-        }
+        let cfg = get_cfg_env(&self.chain_spec, attributes.timestamp);
 
         // ensure we're not missing any timestamp based hardforks
         let spec_id = revm_spec_by_timestamp_after_merge(&self.chain_spec, attributes.timestamp);

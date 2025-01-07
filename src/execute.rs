@@ -1,4 +1,5 @@
 extern crate alloc;
+use crate::evm_config::get_cfg_env;
 use crate::evm_config::GnosisEvmConfig;
 
 use crate::gnosis::apply_post_block_system_calls;
@@ -26,7 +27,6 @@ use reth_node_ethereum::BasicBlockExecutorProvider;
 use reth_primitives::EthPrimitives;
 use reth_primitives::{BlockWithSenders, Receipt};
 use reth_revm::db::State;
-use revm_primitives::CfgEnv;
 use revm_primitives::{
     db::{Database, DatabaseCommit},
     BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ResultAndState, U256,
@@ -141,13 +141,7 @@ where
     ///
     /// Caution: this does not initialize the tx environment.
     fn evm_env_for_block(&self, header: &Header, total_difficulty: U256) -> EnvWithHandlerCfg {
-        let mut cfg_env = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
-        if !self
-            .chain_spec
-            .is_shanghai_active_at_timestamp(header.timestamp)
-        {
-            cfg_env.limit_contract_code_size = Some(usize::MAX);
-        }
+        let cfg_env = get_cfg_env(&self.chain_spec, header.timestamp);
 
         let mut cfg = CfgEnvWithHandlerCfg::new(cfg_env, Default::default());
         let mut block_env = BlockEnv::default();
