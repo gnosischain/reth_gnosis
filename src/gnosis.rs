@@ -231,10 +231,7 @@ where
         .zip(result.rewardsNative.iter())
     {
         // TODO: .to panics if the return value is too large
-        balance_increments
-            .entry(*address)
-            .and_modify(|e| *e += amount.to::<u128>())
-            .or_insert_with(|| amount.to::<u128>());
+        *balance_increments.entry(*address).or_default() += amount.to::<u128>();
     }
 
     Ok(balance_increments)
