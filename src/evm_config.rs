@@ -2,7 +2,7 @@ use alloy_consensus::Header;
 use alloy_primitives::{Address, U256};
 use reth::revm::{inspector_handle_register, Database, GetInspector};
 use reth::revm::{Evm, EvmBuilder};
-use reth_chainspec::{ChainSpec, Head};
+use reth_chainspec::{ChainSpec, EthereumHardforks, Head};
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_after_merge};
 use reth_primitives::{transaction::FillTxEnv, TransactionSigned};
@@ -54,6 +54,16 @@ pub fn mint_basefee_to_collector_address<EXT, DB: Database>(
         .saturating_add(base_fee * gas_used);
 
     Ok(())
+}
+
+/// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
+pub fn get_cfg_env(chain_spec: &ChainSpec, timestamp: u64) -> CfgEnv {
+    let mut cfg = CfgEnv::default().with_chain_id(chain_spec.chain().id());
+    if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
+        // EIP-170 is enabled at the Shanghai Fork on Gnosis Chain
+        cfg.limit_contract_code_size = Some(usize::MAX);
+    }
+    cfg
 }
 
 /// Custom EVM configuration
@@ -192,7 +202,7 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
         attributes: reth_evm::NextBlockEnvAttributes,
     ) -> Result<(CfgEnvWithHandlerCfg, BlockEnv), Self::Error> {
         // configure evm env based on parent block
-        let cfg = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
+        let cfg = get_cfg_env(&self.chain_spec, attributes.timestamp);
 
         // ensure we're not missing any timestamp based hardforks
         let spec_id = revm_spec_by_timestamp_after_merge(&self.chain_spec, attributes.timestamp);

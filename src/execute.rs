@@ -1,4 +1,5 @@
 extern crate alloc;
+use crate::evm_config::get_cfg_env;
 use crate::evm_config::GnosisEvmConfig;
 
 use crate::gnosis::apply_post_block_system_calls;
@@ -140,7 +141,9 @@ where
     ///
     /// Caution: this does not initialize the tx environment.
     fn evm_env_for_block(&self, header: &Header, total_difficulty: U256) -> EnvWithHandlerCfg {
-        let mut cfg = CfgEnvWithHandlerCfg::new(Default::default(), Default::default());
+        let cfg_env = get_cfg_env(&self.chain_spec, header.timestamp);
+
+        let mut cfg = CfgEnvWithHandlerCfg::new(cfg_env, Default::default());
         let mut block_env = BlockEnv::default();
         self.evm_config
             .fill_cfg_and_block_env(&mut cfg, &mut block_env, header, total_difficulty);
