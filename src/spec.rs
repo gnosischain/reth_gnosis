@@ -368,12 +368,12 @@ impl ChainSpecParser for GnosisChainSpecParser {
 /// to a json file, or a json formatted string in-memory. The json needs to be a Genesis struct.
 pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::Error> {
     Ok(match s {
-        "gnosis" => Arc::new(
-            GnosisChainSpec::from(parse_genesis("./scripts/mainnet_post_merge.json")?).into(),
-        ),
-        "chiado" => Arc::new(
-            GnosisChainSpec::from(parse_genesis("./scripts/chiado_genesis_alloc.json")?).into(),
-        ),
+        "gnosis" => Arc::new(GnosisChainSpec::from(parse_genesis(
+            "./scripts/mainnet_post_merge.json",
+        )?)),
+        "chiado" => Arc::new(GnosisChainSpec::from(parse_genesis(
+            "./scripts/chiado_genesis_alloc.json",
+        )?)),
         _ => Arc::new(parse_genesis(s)?.into()),
     })
 }

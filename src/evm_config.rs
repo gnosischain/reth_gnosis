@@ -13,7 +13,6 @@ use revm_primitives::{
     spec_to_generic, AnalysisKind, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv,
     CfgEnvWithHandlerCfg, EVMError, Env, HandlerCfg, Spec, SpecId, TxEnv, TxKind,
 };
-use std::usize;
 use std::{convert::Infallible, sync::Arc};
 
 use crate::spec::GnosisChainSpec;
