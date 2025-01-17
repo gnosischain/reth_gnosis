@@ -17,6 +17,8 @@ use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_ethereum_forks::hardfork;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use revm_primitives::{b256, B256, U256};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 const GNOSIS_NODES: &[&str] = &[
     "enode://fb14d72321ee823fcf21e163091849ee42e0f6ac0cddc737d79e324b0a734c4fc51823ef0a96b749c954483c25e8d2e534d1d5fc2619ea22d58671aff96f5188@65.109.103.148:30303",
@@ -355,7 +357,7 @@ pub struct GnosisChainSpecParser;
 impl ChainSpecParser for GnosisChainSpecParser {
     type ChainSpec = GnosisChainSpec;
 
-    const SUPPORTED_CHAINS: &'static [&'static str] = &["gnosis", "chiado"];
+    const SUPPORTED_CHAINS: &'static [&'static str] = &["chiado", "gnosis"];
 
     fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
         chain_value_parser(s)
@@ -368,11 +370,11 @@ impl ChainSpecParser for GnosisChainSpecParser {
 /// to a json file, or a json formatted string in-memory. The json needs to be a Genesis struct.
 pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::Error> {
     Ok(match s {
-        "gnosis" => Arc::new(GnosisChainSpec::from(parse_genesis(
-            "./scripts/mainnet_post_merge.json",
-        )?)),
         "chiado" => Arc::new(GnosisChainSpec::from(parse_genesis(
             "./scripts/chiado_genesis_alloc.json",
+        )?)),
+        "gnosis" => Arc::new(GnosisChainSpec::from(parse_genesis(
+            "./scripts/mainnet_post_merge.json",
         )?)),
         _ => Arc::new(parse_genesis(s)?.into()),
     })
