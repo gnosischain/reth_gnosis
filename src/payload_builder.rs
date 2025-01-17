@@ -24,7 +24,7 @@ use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
 };
 use reth_chain_state::ExecutedBlock;
-use reth_chainspec::{ChainSpec, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_errors::RethError;
 use reth_evm::{system_calls::SystemCaller, ConfigureEvm, ConfigureEvmEnv, NextBlockEnvAttributes};
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
@@ -47,7 +47,9 @@ use revm_primitives::{
 };
 use tracing::{debug, trace, warn};
 
-use crate::{evm_config::GnosisEvmConfig, gnosis::apply_post_block_system_calls};
+use crate::{
+    evm_config::GnosisEvmConfig, gnosis::apply_post_block_system_calls, spec::GnosisChainSpec,
+};
 
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
@@ -71,7 +73,7 @@ where
     Node: FullNodeTypes<
         Types: NodeTypesWithEngine<
             Engine = EthEngineTypes,
-            ChainSpec = ChainSpec,
+            ChainSpec = GnosisChainSpec,
             Primitives = EthPrimitives,
         >,
     >,
@@ -179,7 +181,7 @@ where
 impl<EvmConfig, Pool, Client> PayloadBuilder<Pool, Client> for GnosisPayloadBuilder<EvmConfig>
 where
     EvmConfig: ConfigureEvm<Header = Header>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec = ChainSpec>,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec = GnosisChainSpec>,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TransactionSigned>>,
 {
     type Attributes = EthPayloadBuilderAttributes;
@@ -253,7 +255,7 @@ pub fn default_ethereum_payload<EvmConfig, Pool, Client, F>(
 ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError>
 where
     EvmConfig: ConfigureEvm<Header = Header>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec = ChainSpec>,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec = GnosisChainSpec>,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TransactionSigned>>,
     F: FnOnce(BestTransactionsAttributes) -> BestTransactionsIter<Pool>,
 {

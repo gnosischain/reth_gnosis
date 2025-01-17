@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::errors::GnosisBlockExecutionError;
+use crate::{errors::GnosisBlockExecutionError, spec::GnosisChainSpec};
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
 use alloy_primitives::{address, Address};
@@ -11,7 +11,6 @@ use reth::revm::{
     primitives::{ExecutionResult, Output},
     Evm,
 };
-use reth_chainspec::ChainSpec;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::BlockValidationError;
 use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
@@ -50,7 +49,7 @@ sol!(
 #[inline]
 pub fn apply_withdrawals_contract_call<EvmConfig, EXT, DB>(
     evm_config: &EvmConfig,
-    chain_spec: &ChainSpec,
+    chain_spec: &GnosisChainSpec,
     withdrawals: &[Withdrawal],
     evm: &mut Evm<'_, EXT, DB>,
 ) -> Result<(), BlockExecutionError>
@@ -251,7 +250,7 @@ where
 // - Call block rewards contract for bridged xDAI mint
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_post_block_system_calls<EvmConfig, EXT, DB>(
-    chain_spec: &ChainSpec,
+    chain_spec: &GnosisChainSpec,
     evm_config: &EvmConfig,
     block_rewards_contract: Address,
     block_timestamp: u64,
