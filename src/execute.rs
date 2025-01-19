@@ -3,12 +3,12 @@ use crate::evm_config::get_cfg_env;
 use crate::evm_config::GnosisEvmConfig;
 
 use crate::gnosis::apply_post_block_system_calls;
+use crate::spec::GnosisChainSpec;
 use alloc::{boxed::Box, sync::Arc};
 use alloy_consensus::{Header, Transaction as _};
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::Address;
 use core::fmt::Display;
-use reth_chainspec::ChainSpec;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::validate_block_post_execution;
@@ -49,13 +49,13 @@ use revm_primitives::{
 // Factory for [`GnosisExecutionStrategy`]
 #[derive(Debug, Clone)]
 pub struct GnosisExecutionStrategyFactory<EvmConfig = GnosisEvmConfig> {
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<GnosisChainSpec>,
     evm_config: EvmConfig,
 }
 
 impl<EvmConfig> GnosisExecutionStrategyFactory<EvmConfig> {
     // Create a new executor strategy factory
-    pub fn new(chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> eyre::Result<Self> {
+    pub fn new(chain_spec: Arc<GnosisChainSpec>, evm_config: EvmConfig) -> eyre::Result<Self> {
         Ok(Self {
             chain_spec,
             evm_config,
@@ -93,13 +93,13 @@ where
     EvmConfig: Clone,
 {
     /// The chainspec
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<GnosisChainSpec>,
     /// How to create an EVM.
     evm_config: EvmConfig,
     /// Current state for block execution.
     state: State<DB>,
     /// Utility to call system smart contracts.
-    system_caller: SystemCaller<EvmConfig, ChainSpec>,
+    system_caller: SystemCaller<EvmConfig, GnosisChainSpec>,
     /// BlockRewards contract address
     block_rewards_contract: Address,
     /// Optional overrides for the transactions environment.
@@ -110,7 +110,7 @@ impl<DB, EvmConfig> GnosisExecutionStrategy<DB, EvmConfig>
 where
     EvmConfig: Clone,
 {
-    pub fn new(state: State<DB>, chain_spec: Arc<ChainSpec>, evm_config: EvmConfig) -> Self {
+    pub fn new(state: State<DB>, chain_spec: Arc<GnosisChainSpec>, evm_config: EvmConfig) -> Self {
         let system_caller = SystemCaller::new(evm_config.clone(), chain_spec.clone());
         let block_rewards_contract = chain_spec
             .genesis()
@@ -322,7 +322,7 @@ pub struct GnosisExecutorProvider;
 impl GnosisExecutorProvider {
     /// Creates a new default gnosis executor strategy factory.
     pub fn gnosis(
-        chain_spec: Arc<ChainSpec>,
+        chain_spec: Arc<GnosisChainSpec>,
     ) -> BasicBlockExecutorProvider<GnosisExecutionStrategyFactory> {
         let collector_address = chain_spec
             .genesis()
