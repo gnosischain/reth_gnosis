@@ -357,7 +357,7 @@ pub struct GnosisChainSpecParser;
 impl ChainSpecParser for GnosisChainSpecParser {
     type ChainSpec = GnosisChainSpec;
 
-    const SUPPORTED_CHAINS: &'static [&'static str] = &["chiado", "gnosis"];
+    const SUPPORTED_CHAINS: &'static [&'static str] = &["dev"];
 
     fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
         chain_value_parser(s)
@@ -371,7 +371,8 @@ impl ChainSpecParser for GnosisChainSpecParser {
 pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::Error> {
     Ok(match s {
         // currently it's mandatory to specify the path to the chainspec file
-        // TODO: allow for hardcoded built-in chains
+        // TODO: allow for hardcoded built-in chains. using Genesis::default() because fallback needed for clap
+        "dev" => Arc::new(GnosisChainSpec::from(Genesis::default())),
         _ => Arc::new(parse_genesis(s)?.into()),
     })
 }
