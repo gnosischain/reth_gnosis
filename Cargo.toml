@@ -72,10 +72,11 @@ alloy-genesis = { version = "0.7.2", default-features = false }
 alloy-primitives = { version = "0.8.11", default-features = false }
 alloy-rlp = { version = "0.3.4", default-features = false }
 alloy-sol-types = "0.8.11"
-alloy-trie = { version = "0.7", default-features = false }
+alloy-trie = { version = "=0.7.4", default-features = false }
 
 alloy-consensus = { version = "0.7.2", default-features = false }
 alloy-eips = { version = "0.7.2", default-features = false }
+alloy-genesis = { version = "0.7.2", default-features = false }
 alloy-sol-macro = "0.8.9"
 alloy-serde = { version = "0.7.2", default-features = false }
 rayon = "1.7"
