@@ -68,7 +68,6 @@ thiserror-no-std = { version = "2.0.2", default-features = false }
 # eth
 alloy-chains = { version = "0.1.32", default-features = false }
 alloy-dyn-abi = "0.8.11"
-alloy-genesis = { version = "0.7.2", default-features = false }
 alloy-primitives = { version = "0.8.11", default-features = false }
 alloy-rlp = { version = "0.3.4", default-features = false }
 alloy-sol-types = "0.8.11"
