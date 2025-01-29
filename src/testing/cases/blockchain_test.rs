@@ -2,6 +2,7 @@
 
 use crate::{
     execute::GnosisExecutorProvider,
+    spec::GnosisChainSpec,
     testing::{
         models::{BlockchainTest, ForkSpec},
         Case, Error, Suite,
@@ -178,7 +179,10 @@ impl Case for BlockchainTestCase {
                     .commit_without_sync_all()
                     .unwrap();
 
-                let gnosis_executor_provider = GnosisExecutorProvider::gnosis(chain_spec.clone());
+                let gnosis_executor_provider =
+                    GnosisExecutorProvider::gnosis(Arc::new(GnosisChainSpec {
+                        inner: chain_spec.as_ref().clone(),
+                    }));
 
                 // Execute the execution stage using the EVM processor factory for the test case
                 // network.
