@@ -1,20 +1,22 @@
-use alloy_consensus::Header;
+use alloy_consensus::{BlockHeader, Header};
 use alloy_primitives::{Address, U256};
+use core::fmt::Debug;
 use reth::revm::{inspector_handle_register, Database, GetInspector};
-use reth::revm::{Evm, EvmBuilder};
-use reth_chainspec::{EthereumHardforks, Head};
-use reth_evm::{ConfigureEvm, ConfigureEvmEnv};
-use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_after_merge};
+use reth_chainspec::EthereumHardforks;
+use reth_evm::{ConfigureEvm, ConfigureEvmEnv, EvmEnv, NextBlockEnvAttributes};
+use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_and_block_number, EthEvm};
 use reth_primitives::{transaction::FillTxEnv, TransactionSigned};
+use revm::EvmBuilder;
 use revm::{
     handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet, interpreter::Gas, Context,
 };
 use revm_primitives::{
-    spec_to_generic, AnalysisKind, BlobExcessGasAndPrice, BlockEnv, Bytes, CfgEnv,
-    CfgEnvWithHandlerCfg, EVMError, Env, HandlerCfg, Spec, SpecId, TxEnv, TxKind,
+    spec_to_generic, AnalysisKind, BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EVMError, HandlerCfg,
+    Spec, SpecId, TxEnv,
 };
 use std::{convert::Infallible, sync::Arc};
 
+use crate::blobs::{next_blob_gas_and_price, CANCUN_BLOB_PARAMS, PRAGUE_BLOB_PARAMS};
 use crate::spec::GnosisChainSpec;
 
 /// Reward beneficiary with gas fee.
@@ -91,12 +93,23 @@ impl GnosisEvmConfig {
 }
 
 impl ConfigureEvm for GnosisEvmConfig {
-    type DefaultExternalContext<'a> = ();
+    type Evm<'a, DB: Database + 'a, I: 'a> = EthEvm<'a, I, DB>;
 
-    fn evm<DB: Database>(&self, db: DB) -> Evm<'_, Self::DefaultExternalContext<'_>, DB> {
+    fn evm_with_env<DB: Database>(
+        &self,
+        db: DB,
+        evm_env: reth_evm::EvmEnv<Self::Spec>,
+    ) -> Self::Evm<'_, DB, ()> {
         let collector_address = self.collector_address;
+        let cfg_env_with_handler_cfg = CfgEnvWithHandlerCfg {
+            cfg_env: evm_env.cfg_env,
+            handler_cfg: HandlerCfg::new(evm_env.spec),
+        };
+
         EvmBuilder::default()
             .with_db(db)
+            .with_cfg_env_with_handler_cfg(cfg_env_with_handler_cfg)
+            .with_block_env(evm_env.block_env)
             .append_handler_register_box(Box::new(move |h| {
                 spec_to_generic!(h.spec_id(), {
                     h.post_execution.reward_beneficiary = Arc::new(move |context, gas| {
@@ -105,17 +118,30 @@ impl ConfigureEvm for GnosisEvmConfig {
                 });
             }))
             .build()
+            .into()
     }
 
-    fn evm_with_inspector<DB, I>(&self, db: DB, inspector: I) -> Evm<'_, I, DB>
+    fn evm_with_env_and_inspector<DB, I>(
+        &self,
+        db: DB,
+        evm_env: reth_evm::EvmEnv<Self::Spec>,
+        inspector: I,
+    ) -> Self::Evm<'_, DB, I>
     where
         DB: Database,
         I: GetInspector<DB>,
     {
         let collector_address = self.collector_address;
+        let cfg_env_with_handler_cfg = CfgEnvWithHandlerCfg {
+            cfg_env: evm_env.cfg_env,
+            handler_cfg: HandlerCfg::new(evm_env.spec),
+        };
+
         EvmBuilder::default()
             .with_db(db)
             .with_external_context(inspector)
+            .with_cfg_env_with_handler_cfg(cfg_env_with_handler_cfg)
+            .with_block_env(evm_env.block_env)
             .append_handler_register_box(Box::new(move |h| {
                 spec_to_generic!(h.spec_id(), {
                     h.post_execution.reward_beneficiary = Arc::new(move |context, gas| {
@@ -125,103 +151,94 @@ impl ConfigureEvm for GnosisEvmConfig {
             }))
             .append_handler_register(inspector_handle_register)
             .build()
+            .into()
     }
-
-    fn default_external_context<'a>(&self) -> Self::DefaultExternalContext<'a> {}
 }
 
 impl ConfigureEvmEnv for GnosisEvmConfig {
     type Header = Header;
+    type Transaction = TransactionSigned;
     type Error = Infallible;
+    type TxEnv = TxEnv;
+    type Spec = SpecId;
 
-    fn fill_tx_env(&self, tx_env: &mut TxEnv, transaction: &TransactionSigned, sender: Address) {
-        transaction.fill_tx_env(tx_env, sender);
+    fn tx_env(&self, transaction: &TransactionSigned, sender: Address) -> Self::TxEnv {
+        let mut tx_env = TxEnv::default();
+        transaction.fill_tx_env(&mut tx_env, sender);
+        tx_env
     }
 
-    fn fill_tx_env_system_contract_call(
-        &self,
-        env: &mut Env,
-        caller: Address,
-        contract: Address,
-        data: Bytes,
-    ) {
-        env.tx = TxEnv {
-            caller,
-            transact_to: TxKind::Call(contract),
-            // Explicitly set nonce to None so revm does not do any nonce checks
-            nonce: None,
-            gas_limit: 30_000_000,
-            value: U256::ZERO,
-            data,
-            // Setting the gas price to zero enforces that no value is transferred as part of the
-            // call, and that the call will not count against the block's gas limit
-            gas_price: U256::ZERO,
-            // The chain ID check is not relevant here and is disabled if set to None
-            chain_id: None,
-            // Setting the gas priority fee to None ensures the effective gas price is derived from
-            // the `gas_price` field, which we need to be zero
-            gas_priority_fee: None,
-            access_list: Vec::new(),
-            // blob fields can be None for this tx
-            blob_hashes: Vec::new(),
-            max_fee_per_blob_gas: None,
-            authorization_list: None,
+    fn evm_env(&self, header: &Self::Header) -> EvmEnv {
+        let spec = revm_spec(self.chain_spec(), header);
+
+        let mut cfg_env = get_cfg_env(self.chain_spec(), header.timestamp);
+        cfg_env.chain_id = self.chain_spec.chain().id();
+        cfg_env.perf_analyse_created_bytecodes = AnalysisKind::default();
+
+        let block_env = BlockEnv {
+            number: U256::from(header.number()),
+            coinbase: header.beneficiary(),
+            timestamp: U256::from(header.timestamp()),
+            difficulty: if spec >= SpecId::MERGE {
+                U256::ZERO
+            } else {
+                header.difficulty()
+            },
+            prevrandao: if spec >= SpecId::MERGE {
+                header.mix_hash()
+            } else {
+                None
+            },
+            gas_limit: U256::from(header.gas_limit()),
+            basefee: U256::from(header.base_fee_per_gas().unwrap_or_default()),
+            // EIP-4844 excess blob gas of this block, introduced in Cancun
+            blob_excess_gas_and_price: header.excess_blob_gas.map(|excess_blob_gas| {
+                next_blob_gas_and_price(excess_blob_gas, spec >= SpecId::PRAGUE)
+            }),
         };
 
-        // ensure the block gas limit is >= the tx
-        env.block.gas_limit = U256::from(env.tx.gas_limit);
-
-        // disable the base fee check for this call by setting the base fee to zero
-        env.block.basefee = U256::ZERO;
+        EvmEnv {
+            cfg_env,
+            spec,
+            block_env,
+        }
     }
 
-    fn fill_cfg_env(
-        &self,
-        cfg_env: &mut CfgEnvWithHandlerCfg,
-        header: &Header,
-        total_difficulty: U256,
-    ) {
-        let spec_id = revm_spec(
-            self.chain_spec(),
-            &Head {
-                number: header.number,
-                timestamp: header.timestamp,
-                difficulty: header.difficulty,
-                total_difficulty,
-                hash: Default::default(),
-            },
-        );
-
-        cfg_env.chain_id = self.chain_spec().chain().id();
-        cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Analyse;
-
-        cfg_env.handler_cfg.spec_id = spec_id;
-    }
-
-    fn next_cfg_and_block_env(
+    fn next_evm_env(
         &self,
         parent: &Self::Header,
-        attributes: reth_evm::NextBlockEnvAttributes,
-    ) -> Result<(CfgEnvWithHandlerCfg, BlockEnv), Self::Error> {
+        attributes: NextBlockEnvAttributes,
+    ) -> Result<EvmEnv, Self::Error> {
         // configure evm env based on parent block
+        // let cfg = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
         let cfg = get_cfg_env(&self.chain_spec, attributes.timestamp);
 
         // ensure we're not missing any timestamp based hardforks
-        let spec_id = revm_spec_by_timestamp_after_merge(&self.chain_spec, attributes.timestamp);
+        let spec_id = revm_spec_by_timestamp_and_block_number(
+            &self.chain_spec,
+            attributes.timestamp,
+            parent.number() + 1,
+        );
+
+        let blob_params = if spec_id >= SpecId::PRAGUE {
+            PRAGUE_BLOB_PARAMS
+        } else {
+            CANCUN_BLOB_PARAMS
+        };
 
         // if the parent block did not have excess blob gas (i.e. it was pre-cancun), but it is
-        // cancun now, we need to set the excess blob gas to the default value
+        // cancun now, we need to set the excess blob gas to the default value(0)
         let blob_excess_gas_and_price = parent
-            .next_block_excess_blob_gas()
-            .or_else(|| {
-                if spec_id.is_enabled_in(SpecId::CANCUN) {
-                    // default excess blob gas is zero
-                    Some(0)
-                } else {
-                    None
-                }
-            })
-            .map(BlobExcessGasAndPrice::new);
+            .next_block_excess_blob_gas(blob_params)
+            .or_else(|| (spec_id == SpecId::CANCUN).then_some(0))
+            .map(|gas| next_blob_gas_and_price(gas, spec_id >= SpecId::PRAGUE));
+
+        let basefee = parent.next_block_base_fee(
+            self.chain_spec
+                .base_fee_params_at_timestamp(attributes.timestamp),
+        );
+
+        let gas_limit = U256::from(attributes.gas_limit);
 
         let block_env = BlockEnv {
             number: U256::from(parent.number + 1),
@@ -229,28 +246,17 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
             timestamp: U256::from(attributes.timestamp),
             difficulty: U256::ZERO,
             prevrandao: Some(attributes.prev_randao),
-            gas_limit: U256::from(parent.gas_limit),
+            gas_limit,
             // calculate basefee based on parent block's gas usage
-            basefee: U256::from(
-                parent
-                    .next_block_base_fee(
-                        self.chain_spec
-                            .base_fee_params_at_timestamp(attributes.timestamp),
-                    )
-                    .unwrap_or_default(),
-            ),
+            basefee: basefee.map(U256::from).unwrap_or_default(),
             // calculate excess gas based on parent block's blob gas usage
             blob_excess_gas_and_price,
         };
 
-        let cfg_with_handler_cfg;
-        {
-            cfg_with_handler_cfg = CfgEnvWithHandlerCfg {
-                cfg_env: cfg,
-                handler_cfg: HandlerCfg { spec_id },
-            };
-        }
-
-        Ok((cfg_with_handler_cfg, block_env))
+        Ok((
+            CfgEnvWithHandlerCfg::new_with_spec_id(cfg, spec_id),
+            block_env,
+        )
+            .into())
     }
 }

@@ -15,7 +15,9 @@ use reth::{
     },
     network::NetworkHandle,
 };
+use reth_consensus::FullConsensus;
 use reth_engine_primitives::EngineValidator;
+use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::EthereumEngineValidator;
 use reth_node_ethereum::{BasicBlockExecutorProvider, EthEngineTypes};
@@ -26,6 +28,7 @@ use reth_trie_db::MerklePatriciaTrie;
 use spec::GnosisChainSpec;
 use std::sync::Arc;
 
+mod blobs;
 pub mod cli;
 mod errors;
 mod evm_config;
@@ -201,7 +204,7 @@ impl<Node> ConsensusBuilder<Node> for GnosisConsensusBuilder
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
 {
-    type Consensus = Arc<dyn reth_consensus::FullConsensus>;
+    type Consensus = Arc<dyn FullConsensus<EthPrimitives, Error = ConsensusError>>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
         Ok(Arc::new(EthBeaconConsensus::new(ctx.chain_spec())))
@@ -215,7 +218,11 @@ pub struct GnosisEngineValidatorBuilder;
 
 impl<Node, Types> EngineValidatorBuilder<Node> for GnosisEngineValidatorBuilder
 where
-    Types: NodeTypesWithEngine<ChainSpec = GnosisChainSpec>,
+    Types: NodeTypesWithEngine<
+        ChainSpec = GnosisChainSpec,
+        Engine = EthEngineTypes,
+        Primitives = EthPrimitives,
+    >,
     Node: FullNodeComponents<Types = Types>,
     EthereumEngineValidator: EngineValidator<Types::Engine>,
 {

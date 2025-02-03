@@ -1,11 +1,9 @@
 extern crate alloc;
-use crate::evm_config::get_cfg_env;
 use crate::evm_config::GnosisEvmConfig;
-
 use crate::gnosis::apply_post_block_system_calls;
 use crate::spec::GnosisChainSpec;
 use alloc::{boxed::Box, sync::Arc};
-use alloy_consensus::{Header, Transaction as _};
+use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::Address;
 use core::fmt::Display;
@@ -13,23 +11,24 @@ use reth_chainspec::EthereumHardforks;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::validate_block_post_execution;
 use reth_evm::system_calls::OnStateHook;
-use reth_evm::TxEnvOverrides;
 use reth_evm::{
     execute::{
         BlockExecutionError, BlockExecutionStrategy, BlockExecutionStrategyFactory,
         BlockValidationError, ExecuteOutput, ProviderError,
     },
     system_calls::SystemCaller,
-    ConfigureEvm,
+    ConfigureEvm, Evm,
 };
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::BasicBlockExecutorProvider;
+use reth_primitives::Block;
 use reth_primitives::EthPrimitives;
-use reth_primitives::{BlockWithSenders, Receipt};
+use reth_primitives::{Receipt, RecoveredBlock};
+use reth_primitives_traits::{BlockBody, SignedTransaction};
 use reth_revm::db::State;
 use revm_primitives::{
     db::{Database, DatabaseCommit},
-    BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ResultAndState, U256,
+    ResultAndState,
 };
 
 // We need to have block rewards contract address in the executor provider
@@ -65,8 +64,15 @@ impl<EvmConfig> GnosisExecutionStrategyFactory<EvmConfig> {
 
 impl<EvmConfig> BlockExecutionStrategyFactory for GnosisExecutionStrategyFactory<EvmConfig>
 where
-    EvmConfig:
-        Clone + Unpin + Sync + Send + 'static + ConfigureEvm<Header = alloy_consensus::Header>,
+    EvmConfig: Clone
+        + Unpin
+        + Sync
+        + Send
+        + 'static
+        + ConfigureEvm<
+            Header = alloy_consensus::Header,
+            Transaction = reth_primitives::TransactionSigned,
+        >,
 {
     type Strategy<DB: Database<Error: Into<ProviderError> + Display>> =
         GnosisExecutionStrategy<DB, EvmConfig>;
@@ -102,8 +108,6 @@ where
     system_caller: SystemCaller<EvmConfig, GnosisChainSpec>,
     /// BlockRewards contract address
     block_rewards_contract: Address,
-    /// Optional overrides for the transactions environment.
-    tx_env_overrides: Option<Box<dyn TxEnvOverrides>>,
 }
 
 impl<DB, EvmConfig> GnosisExecutionStrategy<DB, EvmConfig>
@@ -127,78 +131,55 @@ where
             evm_config,
             system_caller,
             block_rewards_contract,
-            tx_env_overrides: None,
         }
-    }
-}
-
-impl<DB, EvmConfig> GnosisExecutionStrategy<DB, EvmConfig>
-where
-    DB: Database<Error: Into<ProviderError> + Display>,
-    EvmConfig: ConfigureEvm<Header = alloy_consensus::Header>,
-{
-    /// Configures a new evm configuration and block environment for the given block.
-    ///
-    /// Caution: this does not initialize the tx environment.
-    fn evm_env_for_block(&self, header: &Header, total_difficulty: U256) -> EnvWithHandlerCfg {
-        let cfg_env = get_cfg_env(&self.chain_spec, header.timestamp);
-
-        let mut cfg = CfgEnvWithHandlerCfg::new(cfg_env, Default::default());
-        let mut block_env = BlockEnv::default();
-        self.evm_config
-            .fill_cfg_and_block_env(&mut cfg, &mut block_env, header, total_difficulty);
-
-        EnvWithHandlerCfg::new_with_cfg_env(cfg, block_env, Default::default())
     }
 }
 
 impl<DB, EvmConfig> BlockExecutionStrategy for GnosisExecutionStrategy<DB, EvmConfig>
 where
     DB: Database<Error: Into<ProviderError> + Display>,
-    EvmConfig: ConfigureEvm<Header = alloy_consensus::Header>,
+    EvmConfig: ConfigureEvm<
+        Header = alloy_consensus::Header,
+        Transaction = reth_primitives::TransactionSigned,
+    >,
 {
     type DB = DB;
     type Error = BlockExecutionError;
-
     type Primitives = EthPrimitives;
-
-    fn init(&mut self, tx_env_overrides: Box<dyn TxEnvOverrides>) {
-        self.tx_env_overrides = Some(tx_env_overrides);
-    }
 
     fn apply_pre_execution_changes(
         &mut self,
-        block: &BlockWithSenders,
-        total_difficulty: U256,
+        block: &RecoveredBlock<Block>,
     ) -> Result<(), Self::Error> {
         // Set state clear flag if the block is after the Spurious Dragon hardfork.
         let state_clear_flag =
-            (*self.chain_spec).is_spurious_dragon_active_at_block(block.header.number);
+            (*self.chain_spec).is_spurious_dragon_active_at_block(block.number());
         self.state.set_state_clear_flag(state_clear_flag);
 
-        let env = self.evm_env_for_block(&block.header, total_difficulty);
-        let mut evm = self.evm_config.evm_with_env(&mut self.state, env);
+        let mut evm = self
+            .evm_config
+            .evm_for_block(&mut self.state, block.header());
 
         self.system_caller
-            .apply_pre_execution_changes(block, &mut evm)?;
+            .apply_pre_execution_changes(block.header(), &mut evm)?;
 
         Ok(())
     }
 
     fn execute_transactions(
         &mut self,
-        block: &BlockWithSenders,
-        total_difficulty: U256,
+        block: &RecoveredBlock<Block>,
     ) -> Result<ExecuteOutput<Receipt>, Self::Error> {
-        let env = self.evm_env_for_block(&block.header, total_difficulty);
-        let mut evm = self.evm_config.evm_with_env(&mut self.state, env);
+        let mut evm = self
+            .evm_config
+            .evm_for_block(&mut self.state, block.header());
 
         let mut cumulative_gas_used = 0;
-        let mut receipts = Vec::with_capacity(block.body.transactions.len());
+        let mut receipts = Vec::with_capacity(block.body().transaction_count());
         for (sender, transaction) in block.transactions_with_sender() {
             // The sum of the transaction’s gas limit, Tg, and the gas utilized in this block prior,
             // must be no greater than the block’s gasLimit.
-            let block_available_gas = block.header.gas_limit - cumulative_gas_used;
+            let block_available_gas = block.gas_limit() - cumulative_gas_used;
             if transaction.gas_limit() > block_available_gas {
                 return Err(
                     BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
@@ -209,15 +190,10 @@ where
                 );
             }
 
-            self.evm_config
-                .fill_tx_env(evm.tx_mut(), transaction, *sender);
-
-            if let Some(tx_env_overrides) = &mut self.tx_env_overrides {
-                tx_env_overrides.apply(evm.tx_mut());
-            }
+            let tx_env = self.evm_config.tx_env(transaction, *sender);
 
             // Execute transaction.
-            let result_and_state = evm.transact().map_err(move |err| {
+            let result_and_state = evm.transact(tx_env).map_err(move |err| {
                 let new_err = err.map_db_err(|e| e.into());
                 // Ensure hash is calculated for error log, if not already done
                 BlockValidationError::EVM {
@@ -255,19 +231,18 @@ where
 
     fn apply_post_execution_changes(
         &mut self,
-        block: &BlockWithSenders,
-        total_difficulty: U256,
+        block: &RecoveredBlock<Block>,
         receipts: &[Receipt],
     ) -> Result<Requests, Self::Error> {
-        let env = self.evm_env_for_block(&block.header, total_difficulty);
-        let mut evm = self.evm_config.evm_with_env(&mut self.state, env);
+        let mut evm = self
+            .evm_config
+            .evm_for_block(&mut self.state, block.header());
 
-        let balance_increments = apply_post_block_system_calls(
+        let (balance_increments, _requests) = apply_post_block_system_calls(
             &self.chain_spec,
-            &self.evm_config,
             self.block_rewards_contract,
             block.timestamp,
-            block.body.withdrawals.as_ref(),
+            block.body().withdrawals.as_ref(),
             block.beneficiary,
             &mut evm,
         )?;
@@ -307,7 +282,7 @@ where
 
     fn validate_block_post_execution(
         &self,
-        block: &BlockWithSenders,
+        block: &RecoveredBlock<Block>,
         receipts: &[Receipt],
         requests: &Requests,
     ) -> Result<(), ConsensusError> {

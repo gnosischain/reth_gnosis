@@ -6,6 +6,7 @@ use core::{
 };
 
 use alloy_consensus::Header;
+use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use derive_more::{Constructor, Deref, From, Into};
 use reth_chainspec::{
@@ -19,6 +20,8 @@ use reth_network_peers::{parse_nodes, NodeRecord};
 use revm_primitives::{b256, B256, U256};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+use crate::blobs::GNOSIS_BLOB_SCHEDULE;
 
 const GNOSIS_NODES: &[&str] = &[
     "enode://fb14d72321ee823fcf21e163091849ee42e0f6ac0cddc737d79e324b0a734c4fc51823ef0a96b749c954483c25e8d2e534d1d5fc2619ea22d58671aff96f5188@65.109.103.148:30303",
@@ -71,6 +74,10 @@ impl EthChainSpec for GnosisChainSpec {
         self.inner.base_fee_params_at_timestamp(timestamp)
     }
 
+    fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
+        self.inner.blob_params_at_timestamp(timestamp)
+    }
+
     fn deposit_contract(&self) -> Option<&DepositContract> {
         self.inner.deposit_contract()
     }
@@ -93,10 +100,6 @@ impl EthChainSpec for GnosisChainSpec {
 
     fn genesis(&self) -> &Genesis {
         self.inner.genesis()
-    }
-
-    fn max_gas_limit(&self) -> u64 {
-        self.inner.max_gas_limit()
     }
 
     fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
@@ -207,6 +210,10 @@ impl Hardforks for GnosisChainSpec {
 }
 
 impl EthereumHardforks for GnosisChainSpec {
+    fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
+        self.fork(fork)
+    }
+
     fn get_final_paris_total_difficulty(&self) -> Option<U256> {
         self.inner.get_final_paris_total_difficulty()
     }
@@ -272,6 +279,12 @@ impl From<Genesis> for GnosisChainSpec {
                 hardforks.push((
                     EthereumHardfork::Paris.boxed(),
                     ForkCondition::TTD {
+                        // NOTE: this will not work properly if the merge is not activated at
+                        // genesis, and there is no merge netsplit block
+                        activation_block_number: genesis
+                            .config
+                            .merge_netsplit_block
+                            .unwrap_or_default(),
                         total_difficulty: ttd,
                         fork_block: genesis.config.merge_netsplit_block,
                     },
@@ -343,6 +356,7 @@ impl From<Genesis> for GnosisChainSpec {
                 hardforks: ChainHardforks::new(ordered_hardforks),
                 paris_block_and_final_difficulty,
                 deposit_contract,
+                blob_params: GNOSIS_BLOB_SCHEDULE,
                 ..Default::default()
             },
         }
