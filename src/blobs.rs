@@ -40,10 +40,6 @@ pub fn calc_blob_gasprice(excess_blob_gas: u64, is_prague: bool) -> u128 {
 
 pub fn fake_exponential(factor: u128, numerator: u128, denominator: u128) -> u128 {
     assert_ne!(denominator, 0, "attempt to divide by zero");
-    let factor = factor as u128;
-    let numerator = numerator as u128;
-    let denominator = denominator as u128;
-
     let mut i = 1;
     let mut output = 0;
     let mut numerator_accum = factor * denominator;
