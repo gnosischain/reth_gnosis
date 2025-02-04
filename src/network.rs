@@ -3,8 +3,8 @@ use reth::{
     builder::{components::NetworkBuilder, BuilderContext},
     network::{NetworkHandle, NetworkManager, PeersInfo},
 };
-use reth_eth_wire_types::Status;
-use reth_primitives::EthPrimitives;
+use reth_eth_wire_types::{EthNetworkPrimitives, Status};
+use reth_primitives::{EthPrimitives, PooledTransaction};
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
@@ -20,10 +20,13 @@ pub struct GnosisNetworkBuilder {
 impl<Node, Pool> NetworkBuilder<Node, Pool> for GnosisNetworkBuilder
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
-        + Unpin
+    Pool: TransactionPool<
+            Transaction: PoolTransaction<Consensus = TxTy<Node::Types>, Pooled = PooledTransaction>,
+        > + Unpin
         + 'static,
 {
+    type Primitives = EthNetworkPrimitives;
+
     async fn build_network(
         self,
         ctx: &BuilderContext<Node>,

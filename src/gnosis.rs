@@ -2,22 +2,22 @@ use std::collections::HashMap;
 
 use crate::{errors::GnosisBlockExecutionError, spec::GnosisChainSpec};
 use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_eips::eip4895::{Withdrawal, Withdrawals};
-use alloy_primitives::{address, Address};
+use alloy_eips::{
+    eip4895::{Withdrawal, Withdrawals},
+    eip7002::WITHDRAWAL_REQUEST_TYPE,
+    eip7685::Requests,
+};
+use alloy_primitives::{address, Address, Bytes};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
-use reth::revm::{
-    interpreter::Host,
-    primitives::{ExecutionResult, Output},
-    Evm,
-};
+use reth::revm::primitives::{ExecutionResult, Output};
 use reth_chainspec::EthereumHardforks;
 use reth_errors::BlockValidationError;
-use reth_evm::{execute::BlockExecutionError, ConfigureEvm};
-use revm_primitives::{
-    db::{Database, DatabaseCommit},
-    ResultAndState, U256,
+use reth_evm::{
+    execute::{BlockExecutionError, InternalBlockExecutionError},
+    Evm,
 };
+use revm_primitives::{db::DatabaseCommit, ResultAndState, U256};
 use revm_primitives::{Account, AccountInfo, AccountStatus};
 use std::fmt::Display;
 
@@ -47,17 +47,11 @@ sol!(
 ///
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
 #[inline]
-pub fn apply_withdrawals_contract_call<EvmConfig, EXT, DB>(
-    evm_config: &EvmConfig,
+pub fn apply_withdrawals_contract_call(
     chain_spec: &GnosisChainSpec,
     withdrawals: &[Withdrawal],
-    evm: &mut Evm<'_, EXT, DB>,
-) -> Result<(), BlockExecutionError>
-where
-    DB: Database + DatabaseCommit,
-    DB::Error: std::fmt::Display,
-    EvmConfig: ConfigureEvm,
-{
+    evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
+) -> Result<Bytes, BlockExecutionError> {
     // TODO: how is the deposit contract address passed to here?
     let withdrawal_contract_address = chain_spec
         .deposit_contract
@@ -70,12 +64,7 @@ where
     // TODO: Only do the call post-merge
     // TODO: Should this call be made for the genesis block?
 
-    // get previous env
-    let previous_env = Box::new(evm.context.env().clone());
-
-    // modify env for pre block call
-    evm_config.fill_tx_env_system_contract_call(
-        &mut evm.context.evm.env,
+    let ResultAndState { result, mut state } = match evm.transact_system_call(
         SYSTEM_ADDRESS,
         withdrawal_contract_address,
         executeSystemWithdrawalsCall {
@@ -85,17 +74,14 @@ where
         }
         .abi_encode()
         .into(),
-    );
-
-    let mut state = match evm.transact() {
-        Ok(res) => res.state,
+    ) {
+        Ok(res) => res,
         Err(e) => {
-            evm.context.evm.env = previous_env;
-            return Err(BlockExecutionError::Validation(
-                BlockValidationError::WithdrawalRequestsContractCall {
-                    message: format!("withdrawal contract system call revert: {}", e),
-                },
-            ));
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!("withdrawal contract system call revert: {}", e).into(),
+                ),
+            ))
         }
     };
 
@@ -104,11 +90,24 @@ where
     // Clean-up post system tx context
     state.remove(&SYSTEM_ADDRESS);
     state.remove(&evm.block().coinbase);
-    evm.context.evm.db.commit(state);
-    // re-set the previous env
-    evm.context.evm.env = previous_env;
 
-    Ok(())
+    evm.db_mut().commit(state);
+
+    match result {
+        ExecutionResult::Success { output, .. } => Ok(output.into_data()),
+        ExecutionResult::Revert { output, .. } => {
+            Err(BlockValidationError::WithdrawalRequestsContractCall {
+                message: format!("execution reverted: {output}"),
+            }
+            .into())
+        }
+        ExecutionResult::Halt { reason, .. } => {
+            Err(BlockValidationError::WithdrawalRequestsContractCall {
+                message: format!("execution halted: {reason:?}"),
+            }
+            .into())
+        }
+    }
 }
 
 /// Applies the post-block call to the block rewards POSDAO contract, using the given block,
@@ -116,24 +115,14 @@ where
 ///
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
 #[inline]
-pub fn apply_block_rewards_contract_call<EvmConfig, EXT, DB>(
-    evm_config: &EvmConfig,
+pub fn apply_block_rewards_contract_call(
+    // evm_config: &EvmConfig,
     block_rewards_contract: Address,
     _block_timestamp: u64,
     coinbase: Address,
-    evm: &mut Evm<'_, EXT, DB>,
-) -> Result<HashMap<Address, u128>, BlockExecutionError>
-where
-    DB: Database + DatabaseCommit,
-    DB::Error: std::fmt::Display,
-    EvmConfig: ConfigureEvm,
-{
-    // get previous env
-    let previous_env = Box::new(evm.context.env().clone());
-
-    // modify env for pre block call
-    evm_config.fill_tx_env_system_contract_call(
-        &mut evm.context.evm.env,
+    evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
+) -> Result<HashMap<Address, u128>, BlockExecutionError> {
+    let ResultAndState { result, mut state } = match evm.transact_system_call(
         SYSTEM_ADDRESS,
         block_rewards_contract,
         rewardCall {
@@ -143,12 +132,9 @@ where
         }
         .abi_encode()
         .into(),
-    );
-
-    let ResultAndState { result, mut state } = match evm.transact() {
+    ) {
         Ok(res) => res,
         Err(e) => {
-            evm.context.evm.env = previous_env;
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
                     message: format!("block rewards contract system call error: {}", e),
@@ -218,9 +204,7 @@ where
     }
 
     state.remove(&evm.block().coinbase);
-    evm.context.evm.db.commit(state);
-    // re-set the previous env
-    evm.context.evm.env = previous_env;
+    evm.db_mut().commit(state);
 
     // TODO: How to get function return call from evm.transact()?
     let mut balance_increments = HashMap::new();
@@ -249,34 +233,37 @@ where
 // - Call into deposit contract with withdrawal data
 // - Call block rewards contract for bridged xDAI mint
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_post_block_system_calls<EvmConfig, EXT, DB>(
+pub(crate) fn apply_post_block_system_calls(
     chain_spec: &GnosisChainSpec,
-    evm_config: &EvmConfig,
+    // evm_config: &EvmConfig,
     block_rewards_contract: Address,
     block_timestamp: u64,
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
-    evm: &mut Evm<'_, EXT, DB>,
-) -> Result<HashMap<alloy_primitives::Address, u128>, BlockExecutionError>
-where
-    EvmConfig: ConfigureEvm,
-    DB: Database + DatabaseCommit,
-    DB::Error: Display,
-{
+    evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
+) -> Result<
+    (
+        HashMap<alloy_primitives::Address, u128>,
+        alloy_eips::eip7685::Requests,
+    ),
+    BlockExecutionError,
+> {
+    let mut requests = Requests::default();
+
     if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
         let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
             message: "block has no withdrawals field".to_owned(),
         })?;
-        apply_withdrawals_contract_call(evm_config, chain_spec, withdrawals, evm)?;
+        let withdrawal_requests = apply_withdrawals_contract_call(chain_spec, withdrawals, evm)?;
+        if !withdrawal_requests.is_empty() {
+            requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawal_requests);
+        }
     }
 
-    let balance_increments = apply_block_rewards_contract_call(
-        evm_config,
-        block_rewards_contract,
-        block_timestamp,
-        coinbase,
-        evm,
-    )?;
+    // TODO: Use this withdrawal_requests for pectra (along with consolidation_requests)
 
-    Ok(balance_increments)
+    let balance_increments =
+        apply_block_rewards_contract_call(block_rewards_contract, block_timestamp, coinbase, evm)?;
+
+    Ok((balance_increments, requests))
 }

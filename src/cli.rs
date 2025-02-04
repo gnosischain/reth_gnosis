@@ -12,6 +12,7 @@ use reth::{
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::node::NoArgs;
 use reth_db::DatabaseEnv;
+use reth_eth_wire_types::EthNetworkPrimitives;
 use reth_node_ethereum::BasicBlockExecutorProvider;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
@@ -124,9 +125,14 @@ where
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
             Commands::Stage(command) => runner.run_command_until_exit(|ctx| {
-                command.execute::<GnosisNode, _, _>(ctx, GnosisExecutorProvider::gnosis)
+                command.execute::<GnosisNode, _, _, EthNetworkPrimitives>(
+                    ctx,
+                    GnosisExecutorProvider::gnosis,
+                )
             }),
-            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute()),
+            Commands::P2P(command) => {
+                runner.run_until_ctrl_c(command.execute::<EthNetworkPrimitives>())
+            }
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Recover(command) => {
                 runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
