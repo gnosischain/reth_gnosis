@@ -6,7 +6,6 @@ use alloc::{boxed::Box, sync::Arc};
 use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::Address;
-use core::fmt::Display;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::validate_block_post_execution;
@@ -14,10 +13,10 @@ use reth_evm::system_calls::OnStateHook;
 use reth_evm::{
     execute::{
         BlockExecutionError, BlockExecutionStrategy, BlockExecutionStrategyFactory,
-        BlockValidationError, ExecuteOutput, ProviderError,
+        BlockValidationError, ExecuteOutput,
     },
     system_calls::SystemCaller,
-    ConfigureEvm, Evm,
+    ConfigureEvm, Database, Evm,
 };
 use reth_evm_ethereum::eip6110::parse_deposits_from_receipts;
 use reth_node_ethereum::BasicBlockExecutorProvider;
@@ -26,10 +25,7 @@ use reth_primitives::EthPrimitives;
 use reth_primitives::{Receipt, RecoveredBlock};
 use reth_primitives_traits::{BlockBody, SignedTransaction};
 use reth_revm::db::State;
-use revm_primitives::{
-    db::{Database, DatabaseCommit},
-    ResultAndState,
-};
+use revm_primitives::{db::DatabaseCommit, ResultAndState};
 
 // We need to have block rewards contract address in the executor provider
 // because it's used in the post execution system calls.
@@ -74,12 +70,12 @@ where
             Transaction = reth_primitives::TransactionSigned,
         >,
 {
-    type Strategy<DB: Database<Error: Into<ProviderError> + Display>> =
-        GnosisExecutionStrategy<DB, EvmConfig>;
+    type Primitives = EthPrimitives;
+    type Strategy<DB: Database> = GnosisExecutionStrategy<DB, EvmConfig>;
 
     fn create_strategy<DB>(&self, db: DB) -> Self::Strategy<DB>
     where
-        DB: Database<Error: Into<ProviderError> + Display>,
+        DB: Database,
     {
         let state = State::builder()
             .with_database(db)
@@ -88,8 +84,6 @@ where
             .build();
         GnosisExecutionStrategy::new(state, self.chain_spec.clone(), self.evm_config.clone())
     }
-
-    type Primitives = EthPrimitives;
 }
 
 // Block execution strategy for Gnosis
@@ -137,7 +131,7 @@ where
 
 impl<DB, EvmConfig> BlockExecutionStrategy for GnosisExecutionStrategy<DB, EvmConfig>
 where
-    DB: Database<Error: Into<ProviderError> + Display>,
+    DB: Database,
     EvmConfig: ConfigureEvm<
         Header = alloy_consensus::Header,
         Transaction = reth_primitives::TransactionSigned,
@@ -194,11 +188,10 @@ where
 
             // Execute transaction.
             let result_and_state = evm.transact(tx_env).map_err(move |err| {
-                let new_err = err.map_db_err(|e| e.into());
                 // Ensure hash is calculated for error log, if not already done
                 BlockValidationError::EVM {
                     hash: transaction.recalculate_hash(),
-                    error: Box::new(new_err),
+                    error: Box::new(err),
                 }
             })?;
             self.system_caller.on_state(&result_and_state.state);
@@ -299,14 +292,7 @@ impl GnosisExecutorProvider {
     pub fn gnosis(
         chain_spec: Arc<GnosisChainSpec>,
     ) -> BasicBlockExecutorProvider<GnosisExecutionStrategyFactory> {
-        let collector_address = chain_spec
-            .genesis()
-            .config
-            .extra_fields
-            .get("eip1559collector")
-            .unwrap();
-        let collector_address: Address = serde_json::from_value(collector_address.clone()).unwrap();
-        let evm_config = GnosisEvmConfig::new(collector_address, chain_spec.clone());
+        let evm_config = GnosisEvmConfig::new(chain_spec.clone());
         BasicBlockExecutorProvider::new(
             GnosisExecutionStrategyFactory::new(chain_spec, evm_config).unwrap(),
         )

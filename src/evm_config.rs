@@ -1,9 +1,9 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_primitives::{Address, U256};
 use core::fmt::Debug;
-use reth::revm::{inspector_handle_register, Database, GetInspector};
+use reth::revm::{inspector_handle_register, GetInspector};
 use reth_chainspec::EthereumHardforks;
-use reth_evm::{ConfigureEvm, ConfigureEvmEnv, EvmEnv, NextBlockEnvAttributes};
+use reth_evm::{env::EvmEnv, ConfigureEvm, ConfigureEvmEnv, Database, NextBlockEnvAttributes};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_and_block_number, EthEvm};
 use reth_primitives::{transaction::FillTxEnv, TransactionSigned};
 use revm::EvmBuilder;
@@ -11,8 +11,8 @@ use revm::{
     handler::mainnet::reward_beneficiary as reward_beneficiary_mainnet, interpreter::Gas, Context,
 };
 use revm_primitives::{
-    spec_to_generic, AnalysisKind, BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EVMError, HandlerCfg,
-    Spec, SpecId, TxEnv,
+    spec_to_generic, AnalysisKind, BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EVMError, HaltReason,
+    HandlerCfg, Spec, SpecId, TxEnv,
 };
 use std::{convert::Infallible, sync::Arc};
 
@@ -79,7 +79,15 @@ pub struct GnosisEvmConfig {
 
 impl GnosisEvmConfig {
     /// Creates a new [`GnosisEvmConfig`] with the given chain spec.
-    pub const fn new(collector_address: Address, chain_spec: Arc<GnosisChainSpec>) -> Self {
+    pub fn new(chain_spec: Arc<GnosisChainSpec>) -> Self {
+        let collector_address = chain_spec
+            .genesis()
+            .config
+            .extra_fields
+            .get("eip1559collector")
+            .expect("no eip1559collector field");
+        let collector_address: Address = serde_json::from_value(collector_address.clone())
+            .expect("failed to parse eip1559collector field");
         Self {
             collector_address,
             chain_spec,
@@ -94,6 +102,8 @@ impl GnosisEvmConfig {
 
 impl ConfigureEvm for GnosisEvmConfig {
     type Evm<'a, DB: Database + 'a, I: 'a> = EthEvm<'a, I, DB>;
+    type EvmError<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
+    type HaltReason = HaltReason;
 
     fn evm_with_env<DB: Database>(
         &self,
