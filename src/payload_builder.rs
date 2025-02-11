@@ -19,7 +19,7 @@ use crate::{evm_config::GnosisEvmConfig, spec::GnosisChainSpec};
 pub struct GnosisPayloadBuilder;
 
 impl GnosisPayloadBuilder {
-    /// A helper method initializing [`reth_ethereum_payload_builder::GnosisPayloadBuilder`] with
+    /// A helper method initializing [`crate::payload::GnosisPayloadBuilder`] with
     /// the given EVM config.
     pub fn build<Types, Node, Evm, Pool>(
         &self,
