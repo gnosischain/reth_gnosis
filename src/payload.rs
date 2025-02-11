@@ -166,6 +166,7 @@ where
 /// and configuration, this function creates a transaction payload. Returns
 /// a result indicating success with the payload or an error in case of failure.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn default_ethereum_payload<EvmConfig, Pool, Client, F>(
     evm_config: EvmConfig,
     client: Client,
@@ -417,7 +418,7 @@ where
     let requests_hash = requests.as_ref().map(|requests| requests.requests_hash());
     let execution_outcome = ExecutionOutcome::new(
         db.take_bundle(),
-        vec![receipts].into(),
+        vec![receipts],
         block_number,
         vec![requests.clone().unwrap_or_default()],
     );
@@ -500,8 +501,8 @@ where
         gas_used: cumulative_gas_used,
         extra_data: builder_config.extra_data,
         parent_beacon_block_root: attributes.parent_beacon_block_root,
-        blob_gas_used: blob_gas_used,
-        excess_blob_gas: excess_blob_gas,
+        blob_gas_used,
+        excess_blob_gas,
         requests_hash,
     };
 
