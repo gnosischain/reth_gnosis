@@ -16,7 +16,7 @@ use revm_primitives::{
 };
 use std::{convert::Infallible, sync::Arc};
 
-use crate::blobs::{next_blob_gas_and_price, CANCUN_BLOB_PARAMS, PRAGUE_BLOB_PARAMS};
+use crate::blobs::{get_blob_params, next_blob_gas_and_price};
 use crate::spec::GnosisChainSpec;
 
 /// Reward beneficiary with gas fee.
@@ -230,11 +230,7 @@ impl ConfigureEvmEnv for GnosisEvmConfig {
             parent.number() + 1,
         );
 
-        let blob_params = if spec_id >= SpecId::PRAGUE {
-            PRAGUE_BLOB_PARAMS
-        } else {
-            CANCUN_BLOB_PARAMS
-        };
+        let blob_params = get_blob_params(spec_id >= SpecId::PRAGUE);
 
         // if the parent block did not have excess blob gas (i.e. it was pre-cancun), but it is
         // cancun now, we need to set the excess blob gas to the default value(0)

@@ -21,6 +21,14 @@ pub const GNOSIS_BLOB_SCHEDULE: HardforkBlobParams = HardforkBlobParams {
     prague: PRAGUE_BLOB_PARAMS,
 };
 
+pub fn get_blob_params(is_prague: bool) -> BlobParams {
+    if is_prague {
+        PRAGUE_BLOB_PARAMS
+    } else {
+        CANCUN_BLOB_PARAMS
+    }
+}
+
 #[inline]
 pub fn calc_blob_gasprice(excess_blob_gas: u64, is_prague: bool) -> u128 {
     fake_exponential(

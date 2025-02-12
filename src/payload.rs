@@ -35,11 +35,7 @@ use revm::{
 use revm_primitives::{ResultAndState, U256};
 use tracing::{debug, trace, warn};
 
-use crate::{
-    blobs::{CANCUN_BLOB_PARAMS, PRAGUE_BLOB_PARAMS},
-    gnosis::apply_post_block_system_calls,
-    spec::GnosisChainSpec,
-};
+use crate::{blobs::get_blob_params, gnosis::apply_post_block_system_calls, spec::GnosisChainSpec};
 
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
@@ -466,12 +462,8 @@ where
             .map_err(PayloadBuilderError::other)?;
 
         excess_blob_gas = if chain_spec.is_cancun_active_at_timestamp(parent_header.timestamp) {
-            let blob_params = if chain_spec.is_prague_active_at_timestamp(attributes.timestamp) {
-                PRAGUE_BLOB_PARAMS
-            } else {
-                // cancun
-                CANCUN_BLOB_PARAMS
-            };
+            let blob_params =
+                get_blob_params(chain_spec.is_prague_active_at_timestamp(attributes.timestamp));
             parent_header.next_block_excess_blob_gas(blob_params)
         } else {
             // for the first post-fork block, both parent.blob_gas_used and
