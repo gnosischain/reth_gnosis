@@ -1,14 +1,13 @@
-use std::sync::Arc;
-
-use reth::{
-    api::{FullNodeTypes, NodeTypesWithEngine},
-    builder::{components::PoolBuilder, BuilderContext},
-    transaction_pool::{
-        blobstore::DiskFileBlobStore, EthTransactionPool, TransactionValidationTaskExecutor,
-    },
+use reth_node_builder::{
+    components::PoolBuilder,
+    node::{FullNodeTypes, NodeTypesWithEngine},
+    BuilderContext,
 };
 use reth_primitives::EthPrimitives;
 use reth_provider::CanonStateSubscriptions;
+use reth_transaction_pool::{
+    blobstore::DiskFileBlobStore, EthTransactionPool, TransactionValidationTaskExecutor,
+};
 
 use crate::spec::GnosisChainSpec;
 #[derive(Debug, Clone, Default)]
@@ -26,18 +25,12 @@ where
         let data_dir = ctx.config().datadir();
         let pool_config = ctx.pool_config();
         let blob_store = DiskFileBlobStore::open(data_dir.blobstore(), Default::default())?;
-        let validator = TransactionValidationTaskExecutor::eth_builder(Arc::new(
-            ctx.chain_spec().as_ref().clone().into(),
-        ))
-        .with_head_timestamp(ctx.head().timestamp)
-        .kzg_settings(ctx.kzg_settings()?)
-        .with_local_transactions_config(pool_config.local_transactions_config.clone())
-        .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
-        .build_with_tasks(
-            ctx.provider().clone(),
-            ctx.task_executor().clone(),
-            blob_store.clone(),
-        );
+        let validator = TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone())
+            .with_head_timestamp(ctx.head().timestamp)
+            .kzg_settings(ctx.kzg_settings()?)
+            .with_local_transactions_config(pool_config.local_transactions_config.clone())
+            .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
+            .build_with_tasks(ctx.task_executor().clone(), blob_store.clone());
 
         let transaction_pool =
             reth_transaction_pool::Pool::eth_pool(validator, blob_store, pool_config);

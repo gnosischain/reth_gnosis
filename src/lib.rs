@@ -1,9 +1,8 @@
 // use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
 use execute::GnosisExecutionStrategyFactory;
-use eyre::eyre;
 use network::GnosisNetworkBuilder;
-use payload_builder::GnosisPayloadServiceBuilder;
+use payload_builder::GnosisPayloadBuilder;
 use pool::GnosisPoolBuilder;
 use reth::{
     api::{AddOnsContext, FullNodeComponents},
@@ -35,6 +34,7 @@ mod evm_config;
 pub mod execute;
 mod gnosis;
 mod network;
+mod payload;
 mod payload_builder;
 mod pool;
 pub mod spec;
@@ -67,7 +67,7 @@ impl GnosisNode {
     ) -> ComponentsBuilder<
         Node,
         GnosisPoolBuilder,
-        GnosisPayloadServiceBuilder,
+        GnosisPayloadBuilder,
         GnosisNetworkBuilder,
         GnosisExecutorBuilder,
         GnosisConsensusBuilder,
@@ -84,7 +84,7 @@ impl GnosisNode {
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(GnosisPoolBuilder::default())
-            .payload(GnosisPayloadServiceBuilder::default())
+            .payload(GnosisPayloadBuilder::default())
             .network(GnosisNetworkBuilder::default())
             .executor(GnosisExecutorBuilder::default())
             .consensus(GnosisConsensusBuilder::default())
@@ -129,7 +129,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         GnosisPoolBuilder,
-        GnosisPayloadServiceBuilder,
+        GnosisPayloadBuilder,
         GnosisNetworkBuilder,
         GnosisExecutorBuilder,
         GnosisConsensusBuilder,
@@ -174,19 +174,7 @@ where
         ctx: &BuilderContext<Node>,
     ) -> eyre::Result<(Self::EVM, Self::Executor)> {
         let chain_spec = ctx.chain_spec();
-        let collector_address = ctx
-            .config()
-            .chain
-            .genesis()
-            .config
-            .extra_fields
-            .get("eip1559collector")
-            .ok_or(eyre!("no eip1559collector field"))?;
-
-        let evm_config = GnosisEvmConfig::new(
-            serde_json::from_value(collector_address.clone())?,
-            chain_spec.clone(),
-        );
+        let evm_config = GnosisEvmConfig::new(chain_spec.clone());
         let strategy_factory =
             GnosisExecutionStrategyFactory::new(ctx.chain_spec(), evm_config.clone())?;
         let executor = BasicBlockExecutorProvider::new(strategy_factory);
