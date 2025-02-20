@@ -10,7 +10,7 @@ docker run --name neth-vec-gen --rm \
   -v $DIR/networkdata:/networkdata \
   -p 8545:8545 \
   -p 8546:8546 \
-  nethermind/nethermind:1.30.1 \
+  nethermind/nethermind:latest \
   --config=none \
   --Init.ChainSpecPath=/networkdata/chainspec.json \
   --Init.DiscoveryEnabled=false \
