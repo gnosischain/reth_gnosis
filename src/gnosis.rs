@@ -47,7 +47,7 @@ sol!(
 ///
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
 #[inline]
-pub fn apply_withdrawals_contract_call(
+fn apply_withdrawals_contract_call(
     chain_spec: &GnosisChainSpec,
     withdrawals: &[Withdrawal],
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
@@ -115,7 +115,7 @@ pub fn apply_withdrawals_contract_call(
 ///
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
 #[inline]
-pub fn apply_block_rewards_contract_call(
+fn apply_block_rewards_contract_call(
     // evm_config: &EvmConfig,
     block_rewards_contract: Address,
     _block_timestamp: u64,
@@ -220,6 +220,25 @@ pub fn apply_block_rewards_contract_call(
     Ok(balance_increments)
 }
 
+// Post-pectra, the blob fee is collected by the fee collector contract instead of getting burned
+fn add_blob_fee_collection_to_balance_increments(
+    balance_increments: &mut HashMap<Address, u128>,
+    chain_spec: &GnosisChainSpec,
+    blob_fee: u128,
+) {
+    let fee_collector_contract = chain_spec
+        .genesis()
+        .config
+        .extra_fields
+        .get("eip1559collector")
+        .expect("no eip1559collector field");
+    let fee_collector_contract: Address = serde_json::from_value(fee_collector_contract.clone())
+        .expect("failed to parse eip1559collector field");
+    *balance_increments
+        .entry(fee_collector_contract)
+        .or_default() += blob_fee;
+}
+
 // TODO: this can be simplified by using the existing apply_post_execution_changes
 // which does all of the same things
 //
@@ -241,29 +260,23 @@ pub(crate) fn apply_post_block_system_calls(
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
-) -> Result<
-    (
-        HashMap<alloy_primitives::Address, u128>,
-        alloy_eips::eip7685::Requests,
-    ),
-    BlockExecutionError,
-> {
-    let mut requests = Requests::default();
+    blob_fee: u128,
+) -> Result<(HashMap<alloy_primitives::Address, u128>, Bytes), BlockExecutionError> {
+    let mut withdrawal_requests = Bytes::new();
 
     if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
         let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
             message: "block has no withdrawals field".to_owned(),
         })?;
-        let withdrawal_requests = apply_withdrawals_contract_call(chain_spec, withdrawals, evm)?;
-        if !withdrawal_requests.is_empty() {
-            requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawal_requests);
-        }
+        withdrawal_requests = apply_withdrawals_contract_call(chain_spec, withdrawals, evm)?;
     }
 
-    // TODO: Use this withdrawal_requests for pectra (along with consolidation_requests)
-
-    let balance_increments =
+    let mut balance_increments =
         apply_block_rewards_contract_call(block_rewards_contract, block_timestamp, coinbase, evm)?;
 
-    Ok((balance_increments, requests))
+    if chain_spec.is_prague_active_at_timestamp(block_timestamp) {
+        add_blob_fee_collection_to_balance_increments(&mut balance_increments, chain_spec, blob_fee);
+    }
+
+    Ok((balance_increments, withdrawal_requests))
 }
