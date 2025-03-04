@@ -180,7 +180,7 @@ fn apply_block_rewards_contract_call(
 
     // keeping this generalized, instead of only in block 1
     // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
-    let should_create = state.get(&SYSTEM_ADDRESS).map_or(true, |system_account| {
+    let should_create = state.get(&SYSTEM_ADDRESS).is_none_or(|system_account| {
         // true if account not in state (either None, or Touched | LoadedAsNotExisting)
         system_account.status == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
     });
