@@ -275,7 +275,11 @@ pub(crate) fn apply_post_block_system_calls(
         apply_block_rewards_contract_call(block_rewards_contract, block_timestamp, coinbase, evm)?;
 
     if chain_spec.is_prague_active_at_timestamp(block_timestamp) {
-        add_blob_fee_collection_to_balance_increments(&mut balance_increments, chain_spec, blob_fee);
+        add_blob_fee_collection_to_balance_increments(
+            &mut balance_increments,
+            chain_spec,
+            blob_fee,
+        );
     }
 
     Ok((balance_increments, withdrawal_requests))
