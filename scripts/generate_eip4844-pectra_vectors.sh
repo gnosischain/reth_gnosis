@@ -6,7 +6,7 @@ DIR="$(dirname "$0")"
 $DIR/run_nethermind.sh &
 BG_PID=$!
 
-OUT_DIR=$DIR/eip4844_blocks_cancun
+OUT_DIR=$DIR/eip4844_blocks_pectra
 mkdir -p $OUT_DIR
 
 # Set the trap to call cleanup if an error occurs
@@ -38,15 +38,10 @@ JWT_TOKEN=$(jwt encode --alg HS256 --secret "$JWT_SECRET")
 echo JWT_TOKEN: $JWT_TOKEN
 
 declare -i BLOCK_COUNTER=1
-TIMESTAMP=1850000000
 
 echo "Making block $BLOCK_COUNTER"
 
-sleep 3
-
-##########################################
-##### making an extra block at first #####
-##########################################
+TIMESTAMP=1850000000
 HEAD_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
     --data "{
         \"jsonrpc\":\"2.0\",
@@ -102,6 +97,8 @@ echo "Sending transaction on block $BLOCK_COUNTER to create deposit contract"
 #     'data': deposit_contract_bytecode,
 # }
 # where 'deposit_contract_bytecode' is the input data from https://gnosisscan.io/tx/0x2ca31c57363a9950c8124266f003bc7f0e5f30772028476e8de357b713ff5da3
+
+sleep 1
 
 RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: Bearer $JWT_TOKEN" \
@@ -188,7 +185,7 @@ echo engine_forkchoiceUpdatedV3 set new block as head RESPONSE $RESPONSE
 ############################
 
 BLOCK_COUNTER=$((BLOCK_COUNTER + 1))
-TIMESTAMP=1850000100
+TIMESTAMP=1950000050
 
 HEAD_BLOCK=$(curl -X POST -H "Content-Type: application/json" \
     --data "{
@@ -286,7 +283,7 @@ RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: Bearer $JWT_TOKEN" \
     --data "{
         \"jsonrpc\":\"2.0\",
-        \"method\":\"engine_getPayloadV3\",
+        \"method\":\"engine_getPayloadV4\",
         \"params\":[
         \"$PAYLOAD_ID\"
         ],
@@ -294,7 +291,7 @@ RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     }" \
     http://localhost:8546 \
 )
-echo engine_getPayloadV3 RESPONSE $RESPONSE
+echo engine_getPayloadV4 RESPONSE $RESPONSE
 
 BLOCK=$(echo $RESPONSE | jq '.result.executionPayload')
 # BLOCK_NUMBER_HEX = 0x1, 0x2, etc
@@ -314,17 +311,18 @@ RESPONSE=$(curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: Bearer $JWT_TOKEN" \
     --data "{
       \"jsonrpc\":\"2.0\",
-      \"method\":\"engine_newPayloadV3\",
+      \"method\":\"engine_newPayloadV4\",
       \"params\":[
         $BLOCK,
         [\"0x01af254f4973a787397a71597d9492c0d7e52c3d80b42dd51f7ae249954c57bd\"],
-        \"0x1100000000000000000000000000000000000000000000000000000000000000\"
+        \"0x1100000000000000000000000000000000000000000000000000000000000000\",
+        []
       ],
       \"id\":1
     }" \
     http://localhost:8546 \
 )
-echo engine_newPayloadV3 with new block RESPONSE $RESPONSE
+echo engine_newPayloadV4 with new block RESPONSE $RESPONSE
 
 # set the block as head
 
