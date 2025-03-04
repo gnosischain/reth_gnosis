@@ -71,11 +71,39 @@
     "eip3855TransitionTimestamp": "0x65971a48",
     "eip3651TransitionTimestamp": "0x65971a48",
     "eip3860TransitionTimestamp": "0x65971a48",
-    "eip4844TransitionTimestamp": "0x965971a48",
-    "eip4788TransitionTimestamp": "0x965971a48",
-    "eip1153TransitionTimestamp": "0x965971a48",
-    "eip5656TransitionTimestamp": "0x965971a48",
-    "eip6780TransitionTimestamp": "0x965971a48"
+    "eip4844TransitionTimestamp": "0x6b49d200",
+    "eip4788TransitionTimestamp": "0x6b49d200",
+    "eip1153TransitionTimestamp": "0x6b49d200",
+    "eip5656TransitionTimestamp": "0x6b49d200",
+    "eip6780TransitionTimestamp": "0x6b49d200",
+    "eip7685TransitionTimestamp": "0x713fb300",
+    "depositContractAddress": "0xbabe2bed00000000000000000000000000000003",
+    "blobSchedule": {
+      "cancun": {
+        "target": 1,
+        "max": 2,
+        "baseFeeUpdateFraction": 1112826
+      },
+      "prague": {
+        "target": 1,
+        "max": 2,
+        "baseFeeUpdateFraction": 1112826
+      },
+      "osaka": {
+        "target": 1,
+        "max": 2,
+        "baseFeeUpdateFraction": 1112826
+      }
+    },
+    "eip2537TransitionTimestamp": "0x713fb300",
+    "eip2935TransitionTimestamp": "0x713fb300",
+    "eip6110TransitionTimestamp": "0x713fb300",
+    "eip7002TransitionTimestamp": "0x713fb300",
+    "eip7251TransitionTimestamp": "0x713fb300",
+    "eip7702TransitionTimestamp": "0x713fb300",
+    "eip4844FeeCollectorTransitionTimestamp": "0x713fb300",
+    "eip7623TransitionTimestamp": "0x713fb300",
+    "eip7692TransitionTimestamp": "0x713fb300"
   },
   "genesis": {
     "baseFeePerGas": "0x3b9aca00",
