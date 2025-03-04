@@ -56,10 +56,15 @@ jobs:
         run: bash ./scripts/generate_eip4895_vectors.sh
       - name: Apply EIP4895 vectors to Reth
         run: bash ./scripts/apply_test_vectors_reth.sh eip4895_blocks 2
-      # EIP4844 test vectors against Nethermind
-      - name: Generate EIP4844 vectors through Nethermind
+      # EIP4844 test vectors (Cancun) against Nethermind
+      - name: Generate EIP4844 (Cancun) vectors through Nethermind
         run: bash ./scripts/generate_eip4844-cancun_vectors.sh
       - name: Apply EIP4844 vectors to Reth
         run: bash ./scripts/apply_test_vectors_reth.sh eip4844_blocks_cancun 2
+      # EIP4844 test vectors (Pectra) against Nethermind
+      - name: Generate EIP4844 (Pectra) vectors through Nethermind
+        run: bash ./scripts/generate_eip4844-pectra_vectors.sh
+      - name: Apply EIP4844 vectors to Reth
+        run: bash ./scripts/apply_test_vectors_reth.sh eip4844_blocks_pectra 2
 
 

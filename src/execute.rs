@@ -5,6 +5,7 @@ use crate::spec::GnosisChainSpec;
 use alloc::{boxed::Box, sync::Arc};
 use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_eips::eip7685::Requests;
+use alloy_eips::{eip6110, eip7002, eip7251};
 use alloy_primitives::Address;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::ConsensusError;
@@ -231,32 +232,66 @@ where
             .evm_config
             .evm_for_block(&mut self.state, block.header());
 
-        let (balance_increments, _requests) = apply_post_block_system_calls(
+        let blob_fee_to_refund = if self
+            .chain_spec
+            .is_prague_active_at_timestamp(block.timestamp)
+        {
+            let blob_gasprice = evm.block().get_blob_gasprice().unwrap_or(0);
+            let blob_gas_used = block.blob_gas_used().unwrap_or(0) as u128;
+            blob_gas_used * blob_gasprice
+        } else {
+            0
+        };
+
+        let (balance_increments, withdrawal_requests) = apply_post_block_system_calls(
             &self.chain_spec,
             self.block_rewards_contract,
             block.timestamp,
             block.body().withdrawals.as_ref(),
             block.beneficiary,
             &mut evm,
+            blob_fee_to_refund,
         )?;
-
-        drop(evm);
-
-        self.state
-            .increment_balances(balance_increments.clone())
-            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
 
         let requests = if self
             .chain_spec
             .is_prague_active_at_timestamp(block.timestamp)
         {
             // Collect all EIP-6110 deposits
-            let deposit_requests = parse_deposits_from_receipts(&self.chain_spec, receipts)?;
 
-            Requests::new(vec![deposit_requests])
+            let mut requests = Requests::default();
+
+            let deposit_requests = parse_deposits_from_receipts(&self.chain_spec, receipts)?;
+            if !deposit_requests.is_empty() {
+                requests.push_request_with_type(eip6110::DEPOSIT_REQUEST_TYPE, deposit_requests);
+            }
+
+            if !withdrawal_requests.is_empty() {
+                requests
+                    .push_request_with_type(eip7002::WITHDRAWAL_REQUEST_TYPE, withdrawal_requests);
+            }
+
+            // Collect all EIP-7251 requests
+            let consolidation_requests = self
+                .system_caller
+                .apply_consolidation_requests_contract_call(&mut evm)?;
+            if !consolidation_requests.is_empty() {
+                requests.push_request_with_type(
+                    eip7251::CONSOLIDATION_REQUEST_TYPE,
+                    consolidation_requests,
+                );
+            }
+
+            requests
         } else {
             Requests::default()
         };
+
+        drop(evm);
+
+        self.state
+            .increment_balances(balance_increments.clone())
+            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
 
         Ok(requests)
     }
