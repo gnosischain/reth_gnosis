@@ -302,6 +302,14 @@ BLOCK_NUMBER_HEX=${BLOCK_NUMBER_HEX_PREFIX#"0x"}
 BLOCK_NUMBER=$((16#$BLOCK_NUMBER_HEX))
 BLOCK_HASH=$(echo $BLOCK | jq --raw-output '.blockHash')
 
+# assert block.transactions has a single transaction
+TRANSACTIONS=$(echo $BLOCK | jq '.transactions')
+TRANSACTION_COUNT=$(echo $TRANSACTIONS | jq 'length')
+if [ $TRANSACTION_COUNT -ne 1 ]; then
+  echo "Error: Block has $TRANSACTION_COUNT transactions, expected 1"
+  exit 1
+fi
+
 # persist the block as test-vector
 
 echo $BLOCK | jq '.' > $OUT_DIR/block_$BLOCK_NUMBER_HEX.json
