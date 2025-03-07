@@ -51,6 +51,16 @@ impl GnosisPayloadBuilder {
             serde_json::from_value(block_rewards_contract.clone())
                 .expect("failed to parse blockRewardsContract field");
 
+        let fee_collector_contract = chain_spec
+            .genesis()
+            .config
+            .extra_fields
+            .get("eip1559collector")
+            .expect("no eip1559collector field");
+        let fee_collector_contract: Address =
+            serde_json::from_value(fee_collector_contract.clone())
+                .expect("failed to parse eip1559collector field");
+
         let conf = ctx.payload_builder_config();
         let gas_limit = chain_spec.genesis.gas_limit;
 
@@ -59,6 +69,7 @@ impl GnosisPayloadBuilder {
             pool,
             evm_config,
             block_rewards_contract,
+            fee_collector_contract,
             EthereumBuilderConfig::new(conf.extra_data_bytes()).with_gas_limit(gas_limit),
         ))
     }

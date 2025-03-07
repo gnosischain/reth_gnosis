@@ -1,6 +1,6 @@
 extern crate alloc;
 use crate::evm_config::GnosisEvmConfig;
-use crate::gnosis::apply_post_block_system_calls;
+use crate::gnosis::{add_blob_fee_collection_to_balance_increments, apply_post_block_system_calls};
 use crate::spec::GnosisChainSpec;
 use alloc::{boxed::Box, sync::Arc};
 use alloy_consensus::{BlockHeader, Transaction as _};
@@ -103,6 +103,8 @@ where
     system_caller: SystemCaller<EvmConfig, GnosisChainSpec>,
     /// BlockRewards contract address
     block_rewards_contract: Address,
+    /// EIP-1559 and EIP-4844 collector address
+    fee_collector_contract: Address,
 }
 
 impl<DB, EvmConfig> GnosisExecutionStrategy<DB, EvmConfig>
@@ -120,12 +122,24 @@ where
             .clone();
         let block_rewards_contract: Address = serde_json::from_value(block_rewards_contract)
             .expect("blockRewardsContract not an address");
+
+        let fee_collector_contract = chain_spec
+            .genesis()
+            .config
+            .extra_fields
+            .get("eip1559collector")
+            .expect("no eip1559collector field");
+        let fee_collector_contract: Address =
+            serde_json::from_value(fee_collector_contract.clone())
+                .expect("failed to parse eip1559collector field");
+
         Self {
             state,
             chain_spec,
             evm_config,
             system_caller,
             block_rewards_contract,
+            fee_collector_contract,
         }
     }
 }
@@ -232,7 +246,7 @@ where
             .evm_config
             .evm_for_block(&mut self.state, block.header());
 
-        let blob_fee_to_refund = if self
+        let blob_fee_to_collect = if self
             .chain_spec
             .is_prague_active_at_timestamp(block.timestamp)
         {
@@ -243,15 +257,25 @@ where
             0
         };
 
-        let (balance_increments, withdrawal_requests) = apply_post_block_system_calls(
+        let (mut balance_increments, withdrawal_requests) = apply_post_block_system_calls(
             &self.chain_spec,
             self.block_rewards_contract,
             block.timestamp,
             block.body().withdrawals.as_ref(),
             block.beneficiary,
             &mut evm,
-            blob_fee_to_refund,
         )?;
+
+        if self
+            .chain_spec
+            .is_prague_active_at_timestamp(block.timestamp)
+        {
+            add_blob_fee_collection_to_balance_increments(
+                &mut balance_increments,
+                self.fee_collector_contract,
+                blob_fee_to_collect,
+            );
+        }
 
         let requests = if self
             .chain_spec

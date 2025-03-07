@@ -217,19 +217,11 @@ fn apply_block_rewards_contract_call(
 }
 
 // Post-pectra, the blob fee is collected by the fee collector contract instead of getting burned
-fn add_blob_fee_collection_to_balance_increments(
+pub(crate) fn add_blob_fee_collection_to_balance_increments(
     balance_increments: &mut HashMap<Address, u128>,
-    chain_spec: &GnosisChainSpec,
+    fee_collector_contract: Address,
     blob_fee: u128,
 ) {
-    let fee_collector_contract = chain_spec
-        .genesis()
-        .config
-        .extra_fields
-        .get("eip1559collector")
-        .expect("no eip1559collector field");
-    let fee_collector_contract: Address = serde_json::from_value(fee_collector_contract.clone())
-        .expect("failed to parse eip1559collector field");
     *balance_increments
         .entry(fee_collector_contract)
         .or_default() += blob_fee;
@@ -256,7 +248,6 @@ pub(crate) fn apply_post_block_system_calls(
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
-    blob_fee: u128,
 ) -> Result<(HashMap<alloy_primitives::Address, u128>, Bytes), BlockExecutionError> {
     let mut withdrawal_requests = Bytes::new();
 
@@ -267,16 +258,8 @@ pub(crate) fn apply_post_block_system_calls(
         withdrawal_requests = apply_withdrawals_contract_call(chain_spec, withdrawals, evm)?;
     }
 
-    let mut balance_increments =
+    let balance_increments =
         apply_block_rewards_contract_call(block_rewards_contract, block_timestamp, coinbase, evm)?;
-
-    if chain_spec.is_prague_active_at_timestamp(block_timestamp) {
-        add_blob_fee_collection_to_balance_increments(
-            &mut balance_increments,
-            chain_spec,
-            blob_fee,
-        );
-    }
 
     Ok((balance_increments, withdrawal_requests))
 }

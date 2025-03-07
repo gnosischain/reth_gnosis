@@ -37,7 +37,11 @@ use revm::{
 use revm_primitives::{ResultAndState, U256};
 use tracing::{debug, trace, warn};
 
-use crate::{blobs::get_blob_params, gnosis::apply_post_block_system_calls, spec::GnosisChainSpec};
+use crate::{
+    blobs::get_blob_params,
+    gnosis::{add_blob_fee_collection_to_balance_increments, apply_post_block_system_calls},
+    spec::GnosisChainSpec,
+};
 
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
@@ -56,6 +60,8 @@ pub struct GnosisPayloadBuilder<Pool, Client, GnosisEvmConfig> {
     block_rewards_contract: Address,
     /// Payload builder configuration.
     builder_config: EthereumBuilderConfig,
+    /// EIP-1559 and EIP-4844 collector address
+    fee_collector_contract: Address,
 }
 
 impl<Pool, Client, EvmConfig> GnosisPayloadBuilder<Pool, Client, EvmConfig>
@@ -67,6 +73,7 @@ where
         pool: Pool,
         evm_config: EvmConfig,
         block_rewards_contract: Address,
+        fee_collector_contract: Address,
         builder_config: EthereumBuilderConfig,
     ) -> Self {
         Self {
@@ -74,6 +81,7 @@ where
             pool,
             evm_config,
             block_rewards_contract,
+            fee_collector_contract,
             builder_config,
         }
     }
@@ -126,6 +134,7 @@ where
             args,
             evm_env,
             self.block_rewards_contract,
+            self.fee_collector_contract,
             |attributes| self.pool.best_transactions_with_attributes(attributes),
         )
     }
@@ -148,6 +157,7 @@ where
             args,
             evm_env,
             self.block_rewards_contract,
+            self.fee_collector_contract,
             |attributes| self.pool.best_transactions_with_attributes(attributes),
         )?
         .into_payload()
@@ -173,6 +183,7 @@ pub fn default_ethereum_payload<EvmConfig, Pool, Client, F>(
     args: BuildArguments<EthPayloadBuilderAttributes, EthBuiltPayload>,
     evm_env: EvmEnv<EvmConfig::Spec>,
     block_rewards_contract: Address,
+    fee_collector_contract: Address,
     best_txs: F,
 ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError>
 where
@@ -378,7 +389,7 @@ where
         });
     }
 
-    let blob_fee_to_refund = if chain_spec.is_prague_active_at_timestamp(attributes.timestamp) {
+    let blob_fee_to_collect = if chain_spec.is_prague_active_at_timestamp(attributes.timestamp) {
         let blob_gasprice = evm.block().get_blob_gasprice().unwrap_or(0);
         let blob_gas_used = (block_blob_count * DATA_GAS_PER_BLOB) as u128;
         blob_gas_used * blob_gasprice
@@ -387,7 +398,7 @@ where
     };
 
     // < GNOSIS SPECIFIC
-    let (balance_increments, withdrawal_requests) = apply_post_block_system_calls(
+    let (mut balance_increments, withdrawal_requests) = apply_post_block_system_calls(
         &chain_spec,
         // &evm_config,
         block_rewards_contract,
@@ -395,9 +406,16 @@ where
         Some(&attributes.withdrawals),
         attributes.suggested_fee_recipient,
         &mut evm,
-        blob_fee_to_refund,
     )
     .map_err(|err| PayloadBuilderError::Internal(err.into()))?;
+
+    if chain_spec.is_prague_active_at_timestamp(attributes.timestamp) {
+        add_blob_fee_collection_to_balance_increments(
+            &mut balance_increments,
+            fee_collector_contract,
+            blob_fee_to_collect,
+        );
+    }
     // GNOSIS SPECIFIC >
 
     evm.db_mut()
