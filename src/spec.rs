@@ -294,7 +294,45 @@ impl From<Genesis> for GnosisChainSpec {
                 EthereumHardfork::Istanbul.boxed(),
                 genesis.config.istanbul_block,
             ),
-            // (EthereumHardfork::MuirGlacier.boxed(), genesis.config.muir_glacier_block),
+            (
+                EthereumHardfork::Berlin.boxed(),
+                genesis.config.berlin_block,
+            ),
+            (
+                EthereumHardfork::London.boxed(),
+                genesis.config.london_block,
+            ),
+        ];
+
+        let chiado_hardfork_opts: [(Box<dyn Hardfork>, Option<u64>); 9] = [
+            (
+                EthereumHardfork::Homestead.boxed(),
+                genesis.config.homestead_block,
+            ),
+            (
+                EthereumHardfork::Tangerine.boxed(),
+                genesis.config.eip150_block,
+            ),
+            (
+                EthereumHardfork::SpuriousDragon.boxed(),
+                genesis.config.eip155_block,
+            ),
+            (
+                EthereumHardfork::Byzantium.boxed(),
+                genesis.config.byzantium_block,
+            ),
+            (
+                EthereumHardfork::Constantinople.boxed(),
+                genesis.config.constantinople_block,
+            ),
+            (
+                EthereumHardfork::Petersburg.boxed(),
+                genesis.config.petersburg_block,
+            ),
+            (
+                EthereumHardfork::Istanbul.boxed(),
+                genesis.config.istanbul_block,
+            ),
             (
                 EthereumHardfork::Berlin.boxed(),
                 genesis.config.berlin_block,
@@ -307,7 +345,12 @@ impl From<Genesis> for GnosisChainSpec {
 
         let mut hardforks = if chain_id == 10200 {
             // no block-based hardforks for chiado
-            vec![]
+            chiado_hardfork_opts
+                .into_iter()
+                .filter_map(|(hardfork, opt)| {
+                    opt.map(|block| (hardfork, ForkCondition::Block(block)))
+                })
+                .collect::<Vec<_>>()
         } else {
             mainnet_hardfork_opts
                 .into_iter()
