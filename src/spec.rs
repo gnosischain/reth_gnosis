@@ -21,6 +21,22 @@ use revm_primitives::{b256, B256, U256};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, PartialEq, Eq)]
+enum Chain {
+    Gnosis,
+    Chiado,
+}
+
+impl Chain {
+    fn from_chain_id(chain_id: u64) -> Option<Self> {
+        match chain_id {
+            100 => Some(Chain::Gnosis),
+            10200 => Some(Chain::Chiado),
+            _ => None,
+        }
+    }
+}
+
 use crate::blobs::GNOSIS_BLOB_SCHEDULE;
 
 const GNOSIS_NODES: &[&str] = &[
@@ -66,13 +82,15 @@ hardfork!(
     }
 );
 
-fn genesis_hash(chain_id: u64) -> B256 {
-    if chain_id == 100 {
-        b256!("4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756")
-    } else if chain_id == 10200 {
-        b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
-    } else {
-        b256!("0000000000000000000000000000000000000000000000000000000000000000")
+fn genesis_hash(chain_id: u64, chainspec_genesis_hash: B256) -> B256 {
+    match Chain::from_chain_id(chain_id) {
+        Some(Chain::Gnosis) => {
+            b256!("4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756")
+        }
+        Some(Chain::Chiado) => {
+            b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
+        }
+        None => chainspec_genesis_hash,
     }
 }
 
@@ -134,10 +152,11 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
-        if self.chain_id() == 100 {
-            Some(parse_nodes(GNOSIS_NODES))
-        } else if self.chain_id() == 10200 {
-            Some(parse_nodes(CHIADO_NODES))
+        if let Some(chain) = Chain::from_chain_id(self.chain_id()) {
+            match chain {
+                Chain::Gnosis => Some(parse_nodes(GNOSIS_NODES)),
+                Chain::Chiado => Some(parse_nodes(CHIADO_NODES)),
+            }
         } else {
             None
         }
@@ -156,7 +175,7 @@ impl Hardforks for GnosisChainSpec {
     }
 
     fn fork_id(&self, head: &Head) -> ForkId {
-        let mut forkhash = ForkHash::from(genesis_hash(self.chain_id()));
+        let mut forkhash = ForkHash::from(genesis_hash(self.chain_id(), self.genesis_hash()));
         let mut current_applied = 0;
 
         // handle all block forks before handling timestamp based forks. see: https://eips.ethereum.org/EIPS/eip-6122
@@ -236,7 +255,7 @@ impl Hardforks for GnosisChainSpec {
 
         ForkFilter::new(
             head,
-            genesis_hash(self.chain_id()),
+            genesis_hash(self.chain_id(), self.genesis_hash()),
             self.genesis_timestamp(),
             forks,
         )
@@ -343,21 +362,19 @@ impl From<Genesis> for GnosisChainSpec {
             ),
         ];
 
-        let mut hardforks = if chain_id == 10200 {
-            // no block-based hardforks for chiado
-            chiado_hardfork_opts
+        let mut hardforks = match Chain::from_chain_id(chain_id) {
+            Some(Chain::Chiado) => chiado_hardfork_opts
                 .into_iter()
                 .filter_map(|(hardfork, opt)| {
                     opt.map(|block| (hardfork, ForkCondition::Block(block)))
                 })
-                .collect::<Vec<_>>()
-        } else {
-            mainnet_hardfork_opts
+                .collect::<Vec<_>>(),
+            _ => mainnet_hardfork_opts
                 .into_iter()
                 .filter_map(|(hardfork, opt)| {
                     opt.map(|block| (hardfork, ForkCondition::Block(block)))
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
         };
 
         // Paris
