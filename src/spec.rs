@@ -1,9 +1,8 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use core::{
-    fmt::{self, Display, Formatter},
-    str::FromStr,
-};
+use core::
+    fmt::Display
+;
 
 use alloy_consensus::Header;
 use alloy_eips::eip7840::BlobParams;
@@ -16,8 +15,9 @@ use reth_chainspec::{
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_ethereum_forks::hardfork;
+use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
-use revm_primitives::{b256, B256, U256};
+use revm_primitives::{b256, Address, B256, U256};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -102,7 +102,7 @@ pub struct GnosisChainSpecBuilder {
 }
 
 /// Gnosis chain spec type.
-#[derive(Debug, Clone, Deref, Into, Constructor, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deref, Into, Constructor, PartialEq, Eq)]
 pub struct GnosisChainSpec {
     /// [`ChainSpec`].
     pub inner: ChainSpec,
@@ -161,6 +161,10 @@ impl EthChainSpec for GnosisChainSpec {
             None
         }
     }
+
+    fn final_paris_total_difficulty(&self) -> Option<U256> {
+        self.inner.final_paris_total_difficulty()
+    }
 }
 
 impl Hardforks for GnosisChainSpec {
@@ -182,13 +186,11 @@ impl Hardforks for GnosisChainSpec {
         for (_, cond) in self.hardforks.forks_iter() {
             // handle block based forks and the sepolia merge netsplit block edge case (TTD
             // ForkCondition with Some(block))
-            if let ForkCondition::Block(block)
-            | ForkCondition::TTD {
-                fork_block: Some(block),
-                ..
-            } = cond
+            if let ForkCondition::Block(block) |
+            ForkCondition::TTD { fork_block: Some(block), .. } = cond
             {
-                if cond.active_at_head(head) {
+                if head.number >= block {
+                    // skip duplicated hardforks: hardforks enabled at genesis block
                     if block != current_applied {
                         forkhash += block;
                         current_applied = block;
@@ -196,10 +198,7 @@ impl Hardforks for GnosisChainSpec {
                 } else {
                     // we can return here because this block fork is not active, so we set the
                     // `next` value
-                    return ForkId {
-                        hash: forkhash,
-                        next: block,
-                    };
+                    return ForkId { hash: forkhash, next: block }
                 }
             }
         }
@@ -208,11 +207,11 @@ impl Hardforks for GnosisChainSpec {
         //
         // this filter ensures that no block-based forks are returned
         for timestamp in self.hardforks.forks_iter().filter_map(|(_, cond)| {
-            cond.as_timestamp()
-                .filter(|time| time > &self.genesis.timestamp)
+            // ensure we only get timestamp forks activated __after__ the genesis block
+            cond.as_timestamp().filter(|time| time > &self.genesis.timestamp)
         }) {
-            let cond = ForkCondition::Timestamp(timestamp);
-            if cond.active_at_head(head) {
+            if head.timestamp >= timestamp {
+                // skip duplicated hardfork activated at the same timestamp
                 if timestamp != current_applied {
                     forkhash += timestamp;
                     current_applied = timestamp;
@@ -221,10 +220,7 @@ impl Hardforks for GnosisChainSpec {
                 // can safely return here because we have already handled all block forks and
                 // have handled all active timestamp forks, and set the next value to the
                 // timestamp that is known but not active yet
-                return ForkId {
-                    hash: forkhash,
-                    next: timestamp,
-                };
+                return ForkId { hash: forkhash, next: timestamp }
             }
         }
 
@@ -266,13 +262,11 @@ impl EthereumHardforks for GnosisChainSpec {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
         self.fork(fork)
     }
+}
 
-    fn get_final_paris_total_difficulty(&self) -> Option<U256> {
-        self.inner.get_final_paris_total_difficulty()
-    }
-
-    fn final_paris_total_difficulty(&self, block_number: u64) -> Option<U256> {
-        self.inner.final_paris_total_difficulty(block_number)
+impl EthExecutorSpec for GnosisChainSpec {
+    fn deposit_contract_address(&self) -> Option<Address> {
+        self.deposit_contract.map(|deposit_contract| deposit_contract.address)
     }
 }
 
@@ -456,7 +450,6 @@ impl From<Genesis> for GnosisChainSpec {
             inner: ChainSpec {
                 chain: genesis.config.chain_id.into(),
                 genesis,
-                genesis_hash: OnceLock::new(),
                 hardforks: ChainHardforks::new(ordered_hardforks),
                 paris_block_and_final_difficulty,
                 deposit_contract,

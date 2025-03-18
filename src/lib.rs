@@ -1,35 +1,32 @@
 // use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
-use execute::GnosisExecutionStrategyFactory;
 use network::GnosisNetworkBuilder;
 use payload_builder::GnosisPayloadBuilder;
 use pool::GnosisPoolBuilder;
 use reth::{
     api::{AddOnsContext, FullNodeComponents},
-    builder::{
-        components::{ComponentsBuilder, ConsensusBuilder, ExecutorBuilder},
-        node::{FullNodeTypes, NodeTypes, NodeTypesWithEngine},
-        rpc::{EngineValidatorBuilder, RpcAddOns},
-        BuilderContext, Node, NodeAdapter, NodeComponentsBuilder,
-    },
     network::NetworkHandle,
 };
 use reth_consensus::FullConsensus;
 use reth_engine_primitives::EngineValidator;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
-use reth_ethereum_engine_primitives::EthereumEngineValidator;
-use reth_node_ethereum::{BasicBlockExecutorProvider, EthEngineTypes};
+use reth_ethereum_engine_primitives::{EthBuiltPayload, EthPayloadAttributes, EthPayloadBuilderAttributes};
+use reth_node_builder::{components::{BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder}, rpc::{EngineValidatorBuilder, RpcAddOns}, BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes, NodeTypesWithEngine, PayloadTypes};
+use reth_node_ethereum::{node::EthereumPayloadBuilder, BasicBlockExecutorProvider, EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder};
 use reth_primitives::EthPrimitives;
 use reth_provider::EthStorage;
-use reth_rpc::EthApi;
+use reth_rpc::{eth::{core::EthApiFor, FullEthApiServer}, EthApi};
 use reth_trie_db::MerklePatriciaTrie;
 use spec::GnosisChainSpec;
 use std::sync::Arc;
 
 mod blobs;
+mod block;
+mod build;
 pub mod cli;
 mod errors;
+mod evm;
 mod evm_config;
 pub mod execute;
 mod gnosis;
@@ -67,24 +64,30 @@ impl GnosisNode {
     ) -> ComponentsBuilder<
         Node,
         GnosisPoolBuilder,
-        GnosisPayloadBuilder,
+        BasicPayloadServiceBuilder<GnosisPayloadBuilder>,
         GnosisNetworkBuilder,
         GnosisExecutorBuilder,
         GnosisConsensusBuilder,
     >
     where
-        Node: FullNodeTypes<
-            Types: NodeTypesWithEngine<
-                Engine = EthEngineTypes,
-                ChainSpec = GnosisChainSpec,
-                Primitives = EthPrimitives,
-            >,
+    //     Node: FullNodeTypes<
+    //         Types: NodeTypesWithEngine<
+    //             Engine = EthEngineTypes,
+    //             ChainSpec = GnosisChainSpec,
+    //             Primitives = EthPrimitives,
+    //         >,
+    //     >,
+        Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
+        <Node::Types as NodeTypesWithEngine>::Engine: PayloadTypes<
+            BuiltPayload = EthBuiltPayload,
+            PayloadAttributes = EthPayloadAttributes,
+            PayloadBuilderAttributes = EthPayloadBuilderAttributes,
         >,
     {
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(GnosisPoolBuilder::default())
-            .payload(GnosisPayloadBuilder::default())
+            .payload(BasicPayloadServiceBuilder::default())
             .network(GnosisNetworkBuilder::default())
             .executor(GnosisExecutorBuilder::default())
             .consensus(GnosisConsensusBuilder::default())
@@ -104,16 +107,18 @@ impl NodeTypesWithEngine for GnosisNode {
 }
 
 /// Add-ons w.r.t. gnosis
-pub type GnosisAddOns<N> = RpcAddOns<
-    N,
-    EthApi<
-        <N as FullNodeTypes>::Provider,
-        <N as FullNodeComponents>::Pool,
-        NetworkHandle,
-        <N as FullNodeComponents>::Evm,
-    >,
-    GnosisEngineValidatorBuilder,
->;
+// pub type GnosisAddOns__<N> = RpcAddOns<
+//     N,
+//     EthApi<
+//         <N as FullNodeTypes>::Provider,
+//         <N as FullNodeComponents>::Pool,
+//         NetworkHandle,
+//         <N as FullNodeComponents>::Evm,
+//     >,
+//     GnosisEngineValidatorBuilder,
+// >;
+/// Add-ons w.r.t. gnosis
+pub type GnosisAddOns<N> = RpcAddOns<N, EthereumEthApiBuilder, GnosisEngineValidatorBuilder>;
 
 impl<N> Node<N> for GnosisNode
 where
@@ -129,7 +134,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         GnosisPoolBuilder,
-        GnosisPayloadBuilder,
+        BasicPayloadServiceBuilder<GnosisPayloadBuilder>,
         GnosisNetworkBuilder,
         GnosisExecutorBuilder,
         GnosisConsensusBuilder,
@@ -154,30 +159,20 @@ where
 #[non_exhaustive]
 pub struct GnosisExecutorBuilder;
 
-impl<Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
+impl<Types, Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
 where
-    Node: FullNodeTypes<
-        Types: NodeTypesWithEngine<
-            Engine = EthEngineTypes,
-            ChainSpec = GnosisChainSpec,
-            Primitives = EthPrimitives,
-        >,
-    >,
+    Types: NodeTypesWithEngine<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
+    Node: FullNodeTypes<Types = Types>,
 {
-    // Must implement ConfigureEvm;
     type EVM = GnosisEvmConfig;
-    // Must implement BlockExecutorProvider;
-    type Executor = BasicBlockExecutorProvider<GnosisExecutionStrategyFactory>;
+    type Executor = BasicBlockExecutorProvider<GnosisEvmConfig>;
 
     async fn build_evm(
         self,
         ctx: &BuilderContext<Node>,
     ) -> eyre::Result<(Self::EVM, Self::Executor)> {
-        let chain_spec = ctx.chain_spec();
-        let evm_config = GnosisEvmConfig::new(chain_spec.clone());
-        let strategy_factory =
-            GnosisExecutionStrategyFactory::new(ctx.chain_spec(), evm_config.clone())?;
-        let executor = BasicBlockExecutorProvider::new(strategy_factory);
+        let evm_config = GnosisEvmConfig::new(ctx.chain_spec());
+        let executor = BasicBlockExecutorProvider::new(evm_config.clone());
 
         Ok((evm_config, executor))
     }
@@ -212,7 +207,6 @@ where
         Primitives = EthPrimitives,
     >,
     Node: FullNodeComponents<Types = Types>,
-    EthereumEngineValidator: EngineValidator<Types::Engine>,
 {
     type Validator = EthereumEngineValidator;
 

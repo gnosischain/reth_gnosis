@@ -12,6 +12,7 @@ use alloy_rlp::Decodable;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::parse_genesis;
+use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_primitives::{BlockBody, SealedBlock, StaticFileSegment};
 use reth_provider::{
     providers::StaticFileWriter, test_utils::create_test_provider_factory_with_chain_spec,
@@ -180,13 +181,13 @@ impl Case for BlockchainTestCase {
                     .unwrap();
 
                 let gnosis_executor_provider =
-                    GnosisExecutorProvider::gnosis(Arc::new(GnosisChainSpec {
+                    GnosisExecutorProvider::new(Arc::new(GnosisChainSpec {
                         inner: chain_spec.as_ref().clone(),
                     }));
 
                 // Execute the execution stage using the EVM processor factory for the test case
                 // network.
-                let result = ExecutionStage::new_with_executor(gnosis_executor_provider).execute(
+                let result = ExecutionStage::new_with_executor(gnosis_executor_provider, Arc::new(EthBeaconConsensus::new(chain_spec))).execute(
                     &provider,
                     ExecInput {
                         target: last_block.as_ref().map(|b| b.number),

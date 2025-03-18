@@ -1,12 +1,15 @@
+use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_ethereum_engine_primitives::{
     EthBuiltPayload, EthPayloadAttributes, EthPayloadBuilderAttributes,
 };
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
-use reth_evm::ConfigureEvmFor;
+use reth_evm::ConfigureEvm;
 use reth_node_builder::{
-    components::PayloadServiceBuilder, BuilderContext, FullNodeTypes, NodeTypesWithEngine,
+    components::{PayloadBuilderBuilder, PayloadServiceBuilder}, BuilderContext, FullNodeTypes, NodeTypesWithEngine,
     PayloadBuilderConfig, PayloadTypes, PrimitivesTy, TxTy,
 };
+use reth_node_ethereum::EthEngineTypes;
+use reth_payload_builder::PayloadBuilderService;
 use reth_primitives::EthPrimitives;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::Address;
@@ -30,7 +33,7 @@ impl GnosisPayloadBuilder {
     where
         Types: NodeTypesWithEngine<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
         Node: FullNodeTypes<Types = Types>,
-        Evm: ConfigureEvmFor<PrimitivesTy<Types>>,
+        Evm: ConfigureEvm<Primitives = PrimitivesTy<Types>>,
         Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
             + Unpin
             + 'static,
@@ -70,12 +73,12 @@ impl GnosisPayloadBuilder {
             evm_config,
             block_rewards_contract,
             fee_collector_contract,
-            EthereumBuilderConfig::new(conf.extra_data_bytes()).with_gas_limit(gas_limit),
+            EthereumBuilderConfig::new().with_gas_limit(gas_limit),
         ))
     }
 }
 
-impl<Types, Node, Pool> PayloadServiceBuilder<Node, Pool> for GnosisPayloadBuilder
+impl<Types, Node, Pool> PayloadBuilderBuilder<Node, Pool> for GnosisPayloadBuilder
 where
     Types: NodeTypesWithEngine<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
     Node: FullNodeTypes<Types = Types>,
@@ -92,7 +95,7 @@ where
         crate::payload::GnosisPayloadBuilder<Pool, Node::Provider, GnosisEvmConfig>;
 
     async fn build_payload_builder(
-        &self,
+        self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
     ) -> eyre::Result<Self::PayloadBuilder> {

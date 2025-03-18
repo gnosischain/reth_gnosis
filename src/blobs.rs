@@ -1,6 +1,7 @@
 use alloy_eips::eip7840::BlobParams;
 use reth_chainspec::HardforkBlobParams;
-use revm_primitives::BlobExcessGasAndPrice;
+use revm::context_interface::block::BlobExcessGasAndPrice;
+use revm_primitives::hardfork::SpecId;
 
 pub static CANCUN_BLOB_PARAMS: BlobParams = BlobParams {
     target_blob_count: 1,
@@ -12,7 +13,7 @@ pub static CANCUN_BLOB_PARAMS: BlobParams = BlobParams {
 pub static PRAGUE_BLOB_PARAMS: BlobParams = BlobParams {
     target_blob_count: 1,
     max_blob_count: 2,
-    update_fraction: 5007716,
+    update_fraction: 1112826,
     min_blob_fee: 1000000000,
 };
 
@@ -20,6 +21,14 @@ pub const GNOSIS_BLOB_SCHEDULE: HardforkBlobParams = HardforkBlobParams {
     cancun: CANCUN_BLOB_PARAMS,
     prague: PRAGUE_BLOB_PARAMS,
 };
+
+// helper function to create the evm's CfgEnv in get_cfg_env
+pub fn evm_env_blob_schedule() -> Vec<(SpecId, u8, u8)> {
+    vec![
+        (SpecId::CANCUN, 1, 2),
+        (SpecId::PRAGUE, 1, 2),
+    ]
+}
 
 pub fn get_blob_params(is_prague: bool) -> BlobParams {
     if is_prague {
