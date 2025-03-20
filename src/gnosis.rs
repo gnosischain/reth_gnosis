@@ -1,9 +1,7 @@
-use std::collections::HashMap;
-
 use crate::errors::GnosisBlockExecutionError;
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
-use alloy_primitives::{address, Address, Bytes};
+use alloy_primitives::{address, Address, Bytes, map::HashMap};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use reth_chainspec::EthereumHardforks;
@@ -142,7 +140,7 @@ fn apply_block_rewards_contract_call(
     };
 
     if state.get(&block_rewards_contract).unwrap().info.code_hash == KECCAK_EMPTY {
-        return Ok(HashMap::new());
+        return Ok(HashMap::default());
     }
 
     let output_bytes = match result {
@@ -205,7 +203,7 @@ fn apply_block_rewards_contract_call(
     evm.db_mut().commit(state);
 
     // TODO: How to get function return call from evm.transact()?
-    let mut balance_increments = HashMap::new();
+    let mut balance_increments = HashMap::default();
     for (address, amount) in result
         .receiversNative
         .iter()

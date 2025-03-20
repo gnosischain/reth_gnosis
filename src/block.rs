@@ -1,12 +1,13 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use alloy_consensus::{Transaction, TxReceipt};
+use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
 use alloy_eips::{eip7002, eip7251};
 use alloy_evm::{Database, Evm};
 use alloy_evm::{block::state_changes::balance_increment_state, eth::eip6110::{self, parse_deposits_from_receipts}};
 use alloy_eips::{eip7685::Requests, Encodable2718};
 use reth_errors::{BlockExecutionError, BlockValidationError};
+use reth_evm::block::calc::{base_block_reward, block_reward, ommer_reward};
 use reth_primitives::Recovered;
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;
@@ -163,7 +164,7 @@ where
 
         //disab dbg!("debjit debug >", self.spec.is_cancun_active_at_timestamp(self.evm.block().timestamp), self.spec.is_prague_active_at_timestamp(self.evm.block().timestamp));
 
-        let (mut gnosis_balance_increments, withdrawal_requests) = apply_post_block_system_calls(
+        let (mut balance_increments, withdrawal_requests) = apply_post_block_system_calls(
             &self.spec, 
             BLOCK_REWARDS_CONTRACT, 
             deposit_contract,
@@ -201,15 +202,17 @@ where
             Requests::default()
         };
 
-        let mut balance_increments  = post_block_balance_increments(
-            &self.spec,
-            self.evm.block(),
-            self.ctx.ommers,
-            self.ctx.withdrawals.as_deref(),
-        );
+        // Add block rewards if they are enabled.
+        if let Some(base_block_reward) = base_block_reward(&self.spec, self.evm.block().number) {
+            // Ommer rewards
+            for ommer in self.ctx.ommers {
+                *balance_increments.entry(ommer.beneficiary()).or_default() +=
+                    ommer_reward(base_block_reward, self.evm.block().number, ommer.number());
+            }
 
-        for (address, increment) in gnosis_balance_increments.drain() {
-            *balance_increments.entry(address).or_default() += increment;
+            // Full block reward
+            *balance_increments.entry(self.evm.block().beneficiary).or_default() +=
+                block_reward(base_block_reward, self.ctx.ommers.len());
         }
 
         // increment balances
