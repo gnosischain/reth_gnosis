@@ -161,9 +161,8 @@ where
         block: &RecoveredBlock<Block>,
     ) -> Result<(), Self::Error> {
         // Set state clear flag if the block is after the Spurious Dragon hardfork.
-        let state_clear_flag =
-            (*self.chain_spec).is_spurious_dragon_active_at_block(block.number());
-        self.state.set_state_clear_flag(state_clear_flag);
+        // For Gnosis, this is always true
+        self.state.set_state_clear_flag(true);
 
         let mut evm = self
             .evm_config
