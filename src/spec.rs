@@ -9,14 +9,13 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use derive_more::{Constructor, Deref, From, Into};
 use reth_chainspec::{
-    BaseFeeParams, ChainHardforks, ChainSpec, ChainSpecBuilder, DepositContract, EthChainSpec,
-    EthereumHardfork, EthereumHardforks, ForkCondition, ForkFilter, ForkFilterKey, ForkHash,
-    ForkId, Hardfork, Hardforks, Head,
+    make_genesis_header, BaseFeeParams, BaseFeeParamsKind, ChainHardforks, ChainSpec, ChainSpecBuilder, DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks, ForkCondition, ForkFilter, ForkFilterKey, ForkHash, ForkId, Hardfork, Hardforks, Head
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_ethereum_forks::hardfork;
 use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
+use reth_primitives::SealedHeader;
 use revm_primitives::{b256, Address, B256, U256};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -442,21 +441,31 @@ impl From<Genesis> for GnosisChainSpec {
                     address,
                     block: 0,
                     topic: b256!(
-                        "649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5"
+                        "0x649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5"
                     ),
                 });
 
-        Self {
+        let hardforks = ChainHardforks::new(ordered_hardforks);
+
+
+        let spec = Self {
             inner: ChainSpec {
                 chain: genesis.config.chain_id.into(),
+                genesis_header: SealedHeader::new_unhashed(
+                    make_genesis_header(&genesis, &hardforks),
+                ),
                 genesis,
-                hardforks: ChainHardforks::new(ordered_hardforks),
+                hardforks,
                 paris_block_and_final_difficulty,
                 deposit_contract,
                 blob_params: GNOSIS_BLOB_SCHEDULE,
+                base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
                 ..Default::default()
             },
-        }
+        };
+
+
+        spec
     }
 }
 

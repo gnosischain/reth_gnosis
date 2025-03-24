@@ -7,8 +7,7 @@ use alloy_sol_types::SolCall;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::BlockValidationError;
 use reth_evm::{
-    execute::{BlockExecutionError, InternalBlockExecutionError},
-    Evm,
+    block::{StateChangePostBlockSource, StateChangeSource, SystemCaller}, eth::spec::EthExecutorSpec, execute::{BlockExecutionError, InternalBlockExecutionError}, Evm
 };
 use revm::{context::result::{ExecutionResult, Output, ResultAndState}, DatabaseCommit};
 use alloy_primitives::U256;
@@ -41,12 +40,16 @@ sol!(
 ///
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
 #[inline]
-fn apply_withdrawals_contract_call(
+fn apply_withdrawals_contract_call<SPEC>(
     // chain_spec: &GnosisChainSpec,
     withdrawal_contract_address: Address,
     withdrawals: &[Withdrawal],
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
-) -> Result<Bytes, BlockExecutionError> {
+    system_caller: &mut SystemCaller<SPEC>,
+) -> Result<Bytes, BlockExecutionError>
+where
+    SPEC: EthExecutorSpec,
+{
     // TODO: how is the deposit contract address passed to here?
     // let withdrawal_contract_address = chain_spec
     //     .deposit_contract
@@ -86,6 +89,15 @@ fn apply_withdrawals_contract_call(
     state.remove(&SYSTEM_ADDRESS);
     state.remove(&evm.block().beneficiary);
 
+    system_caller.invoke_hook_with(|hook| {
+        hook.on_state(
+            StateChangeSource::PostBlock(
+                StateChangePostBlockSource::WithdrawalRequestsContract,
+            ),
+            &state,
+        );
+    });
+
     evm.db_mut().commit(state);
 
     match result {
@@ -110,13 +122,17 @@ fn apply_withdrawals_contract_call(
 ///
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
 #[inline]
-fn apply_block_rewards_contract_call(
+fn apply_block_rewards_contract_call<SPEC>(
     // evm_config: &EvmConfig,
     block_rewards_contract: Address,
     _block_timestamp: u64,
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
-) -> Result<HashMap<Address, u128>, BlockExecutionError> {
+    system_caller: &mut SystemCaller<SPEC>,
+) -> Result<HashMap<Address, u128>, BlockExecutionError>
+where
+    SPEC: EthExecutorSpec,
+{
     let ResultAndState { result, mut state } = match evm.transact_system_call(
         SYSTEM_ADDRESS,
         block_rewards_contract,
@@ -200,6 +216,16 @@ fn apply_block_rewards_contract_call(
     }
 
     state.remove(&evm.block().beneficiary);
+
+    system_caller.invoke_hook_with(|hook| {
+        hook.on_state(
+            StateChangeSource::PostBlock(
+                StateChangePostBlockSource::WithdrawalRequestsContract,
+            ),
+            &state,
+        );
+    });
+
     evm.db_mut().commit(state);
 
     // TODO: How to get function return call from evm.transact()?
@@ -240,8 +266,8 @@ fn apply_block_rewards_contract_call(
 // - Call into deposit contract with withdrawal data
 // - Call block rewards contract for bridged xDAI mint
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_post_block_system_calls<SPEC>(
-    chain_spec: SPEC,
+pub(crate) fn apply_post_block_system_calls<'a, SPEC>(
+    chain_spec: &'a SPEC,
     // evm_config: &EvmConfig,
     block_rewards_contract: Address,
     withdrawal_contract: Address,
@@ -249,9 +275,10 @@ pub(crate) fn apply_post_block_system_calls<SPEC>(
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit>,
+    system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<(HashMap<alloy_primitives::Address, u128>, Bytes), BlockExecutionError> 
 where
-    SPEC: EthereumHardforks,
+    SPEC: EthExecutorSpec,
 {
     let mut withdrawal_requests = Bytes::new();
 
@@ -259,11 +286,11 @@ where
         let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
             message: "block has no withdrawals field".to_owned(),
         })?;
-        withdrawal_requests = apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm)?;
+        withdrawal_requests = apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm, system_caller)?;
     }
 
     let balance_increments =
-        apply_block_rewards_contract_call(block_rewards_contract, block_timestamp, coinbase, evm)?;
+        apply_block_rewards_contract_call(block_rewards_contract, block_timestamp, coinbase, evm, system_caller)?;
 
     Ok((balance_increments, withdrawal_requests))
 }

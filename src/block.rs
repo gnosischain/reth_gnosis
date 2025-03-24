@@ -154,6 +154,8 @@ where
 
         //disab dbg!("debjit debug > finishing");
 
+        // self.evm.db_mut().set_state_clear_flag(false);
+
         let deposit_contract = self.spec.deposit_contract_address();
         let deposit_contract = deposit_contract.unwrap_or_else(|| {
             panic!("Deposit contract address is not set in the chain specification");
@@ -172,6 +174,7 @@ where
             withdrawals,
             beneficiary,
             &mut self.evm,
+            &mut self.system_caller,
         )?;
 
         let requests = if self.spec.is_prague_active_at_timestamp(self.evm.block().timestamp) {
@@ -220,6 +223,7 @@ where
             .db_mut()
             .increment_balances(balance_increments.clone())
             .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
+
 
         // call state hook with changes due to balance increments.
         self.system_caller.try_on_state_with(|| {
