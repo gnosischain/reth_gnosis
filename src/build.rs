@@ -17,7 +17,7 @@ use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
 
-/// Block builder for Optimism.
+/// Block builder for Gnosis.
 #[derive(Debug)]
 pub struct GnosisBlockAssembler<ChainSpec> {
     chain_spec: Arc<ChainSpec>,
@@ -26,7 +26,7 @@ pub struct GnosisBlockAssembler<ChainSpec> {
 }
 
 impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
-    /// Creates a new [`OpBlockAssembler`].
+    /// Creates a new [`GnosisBlockAssembler`].
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             chain_spec,
