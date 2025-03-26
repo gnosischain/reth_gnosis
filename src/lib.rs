@@ -7,9 +7,20 @@ use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
-use reth_ethereum_engine_primitives::{EthBuiltPayload, EthPayloadAttributes, EthPayloadBuilderAttributes};
-use reth_node_builder::{components::{BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder}, rpc::{EngineValidatorBuilder, RpcAddOns}, BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes, NodeTypesWithEngine, PayloadTypes};
-use reth_node_ethereum::{BasicBlockExecutorProvider, EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder};
+use reth_ethereum_engine_primitives::{
+    EthBuiltPayload, EthPayloadAttributes, EthPayloadBuilderAttributes,
+};
+use reth_node_builder::{
+    components::{
+        BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
+    },
+    rpc::{EngineValidatorBuilder, RpcAddOns},
+    BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes,
+    NodeTypesWithEngine, PayloadTypes,
+};
+use reth_node_ethereum::{
+    BasicBlockExecutorProvider, EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder,
+};
 use reth_primitives::EthPrimitives;
 use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
@@ -65,7 +76,9 @@ impl GnosisNode {
         GnosisConsensusBuilder,
     >
     where
-        Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
+        Node: FullNodeTypes<
+            Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
+        >,
         <Node::Types as NodeTypesWithEngine>::Engine: PayloadTypes<
             BuiltPayload = EthBuiltPayload,
             PayloadAttributes = EthPayloadAttributes,

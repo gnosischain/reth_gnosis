@@ -12,8 +12,6 @@ pub struct GnosisExecutorProvider;
 impl GnosisExecutorProvider {
     /// Creates a new default optimism executor strategy factory.
     pub fn new(chain_spec: Arc<GnosisChainSpec>) -> BasicBlockExecutorProvider<GnosisEvmConfig> {
-        BasicBlockExecutorProvider::new(GnosisEvmConfig::new(
-            chain_spec,
-        ))
+        BasicBlockExecutorProvider::new(GnosisEvmConfig::new(chain_spec))
     }
 }

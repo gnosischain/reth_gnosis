@@ -187,7 +187,11 @@ impl Case for BlockchainTestCase {
 
                 // Execute the execution stage using the EVM processor factory for the test case
                 // network.
-                let result = ExecutionStage::new_with_executor(gnosis_executor_provider, Arc::new(EthBeaconConsensus::new(chain_spec))).execute(
+                let result = ExecutionStage::new_with_executor(
+                    gnosis_executor_provider,
+                    Arc::new(EthBeaconConsensus::new(chain_spec)),
+                )
+                .execute(
                     &provider,
                     ExecInput {
                         target: last_block.as_ref().map(|b| b.number),

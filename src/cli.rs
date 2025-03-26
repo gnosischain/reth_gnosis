@@ -119,7 +119,10 @@ where
         let _ = install_prometheus_recorder();
 
         let components = |spec: Arc<C::ChainSpec>| {
-            (GnosisExecutorProvider::new(spec.clone()), EthBeaconConsensus::new(spec))
+            (
+                GnosisExecutorProvider::new(spec.clone()),
+                EthBeaconConsensus::new(spec),
+            )
         };
 
         match self.command {

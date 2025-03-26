@@ -1,15 +1,21 @@
 use crate::errors::GnosisBlockExecutionError;
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
-use alloy_primitives::{Address, Bytes, map::HashMap};
+use alloy_primitives::U256;
+use alloy_primitives::{map::HashMap, Address, Bytes};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use reth_errors::BlockValidationError;
 use reth_evm::{
-    block::{StateChangePostBlockSource, StateChangeSource, SystemCaller}, eth::spec::EthExecutorSpec, execute::{BlockExecutionError, InternalBlockExecutionError}, Evm
+    block::{StateChangePostBlockSource, StateChangeSource, SystemCaller},
+    eth::spec::EthExecutorSpec,
+    execute::{BlockExecutionError, InternalBlockExecutionError},
+    Evm,
 };
-use revm::{context::result::{ExecutionResult, Output, ResultAndState}, DatabaseCommit};
-use alloy_primitives::U256;
+use revm::{
+    context::result::{ExecutionResult, Output, ResultAndState},
+    DatabaseCommit,
+};
 use revm_state::{Account, AccountInfo, AccountStatus};
 use std::fmt::Display;
 
@@ -78,9 +84,7 @@ where
 
     system_caller.invoke_hook_with(|hook| {
         hook.on_state(
-            StateChangeSource::PostBlock(
-                StateChangePostBlockSource::WithdrawalRequestsContract,
-            ),
+            StateChangeSource::PostBlock(StateChangePostBlockSource::WithdrawalRequestsContract),
             &state,
         );
     });
@@ -180,10 +184,14 @@ where
 
     // keeping this generalized, instead of only in block 1
     // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
-    let should_create = state.get(&alloy_eips::eip4788::SYSTEM_ADDRESS).is_none_or(|system_account| {
-        // true if account not in state (either None, or Touched | LoadedAsNotExisting)
-        system_account.status == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
-    });
+    let should_create =
+        state
+            .get(&alloy_eips::eip4788::SYSTEM_ADDRESS)
+            .is_none_or(|system_account| {
+                // true if account not in state (either None, or Touched | LoadedAsNotExisting)
+                system_account.status
+                    == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
+            });
 
     // this check needs to be there in every call, so instead of making it into a function which is called from post_execution, we can just include it in the rewards function
     if should_create {
@@ -203,9 +211,7 @@ where
 
     system_caller.invoke_hook_with(|hook| {
         hook.on_state(
-            StateChangeSource::PostBlock(
-                StateChangePostBlockSource::WithdrawalRequestsContract,
-            ),
+            StateChangeSource::PostBlock(StateChangePostBlockSource::WithdrawalRequestsContract),
             &state,
         );
     });
@@ -260,7 +266,7 @@ pub(crate) fn apply_post_block_system_calls<'a, SPEC>(
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit>,
     system_caller: &mut SystemCaller<SPEC>,
-) -> Result<(HashMap<alloy_primitives::Address, u128>, Bytes), BlockExecutionError> 
+) -> Result<(HashMap<alloy_primitives::Address, u128>, Bytes), BlockExecutionError>
 where
     SPEC: EthExecutorSpec,
 {
@@ -270,7 +276,8 @@ where
         let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
             message: "block has no withdrawals field".to_owned(),
         })?;
-        withdrawal_requests = apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm, system_caller)?;
+        withdrawal_requests =
+            apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm, system_caller)?;
     }
 
     let balance_increments =

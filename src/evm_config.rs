@@ -5,25 +5,27 @@ use reth_evm::eth::EthBlockExecutionCtx;
 use reth_primitives::EthPrimitives;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 
-use revm::context::{BlockEnv, CfgEnv};
-use revm_primitives::hardfork::SpecId;
-use revm_primitives::Bytes;
 use core::fmt::Debug;
-use std::borrow::Cow;
 use reth_chainspec::EthereumHardforks;
 use reth_evm::{env::EvmEnv, ConfigureEvm, NextBlockEnvAttributes};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_and_block_number, RethReceiptBuilder};
+use revm::context::{BlockEnv, CfgEnv};
+use revm_primitives::hardfork::SpecId;
+use revm_primitives::Bytes;
+use std::borrow::Cow;
 use std::{convert::Infallible, sync::Arc};
 
 use crate::blobs::{evm_env_blob_schedule, get_blob_params, next_blob_gas_and_price};
 use crate::block::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
-use crate::spec::GnosisChainSpec;
 use crate::evm::evm::GnosisEvmFactory;
+use crate::spec::GnosisChainSpec;
 
 /// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
 pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -> CfgEnv {
-    let mut cfg = CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec(spec);
+    let mut cfg = CfgEnv::new()
+        .with_chain_id(chain_spec.chain().id())
+        .with_spec(spec);
     cfg.set_blob_max_and_target_count(evm_env_blob_schedule());
     // let mut cfg = cfg.;
     if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
@@ -38,7 +40,8 @@ pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -
 #[derive(Debug, Clone)]
 pub struct GnosisEvmConfig {
     /// Inner [`GnosisBlockExecutorFactory`].
-    pub executor_factory: GnosisBlockExecutorFactory<RethReceiptBuilder, Arc<GnosisChainSpec>, GnosisEvmFactory>,
+    pub executor_factory:
+        GnosisBlockExecutorFactory<RethReceiptBuilder, Arc<GnosisChainSpec>, GnosisEvmFactory>,
     /// Ethereum block assembler.
     pub block_assembler: GnosisBlockAssembler<GnosisChainSpec>,
     /// Spec.
@@ -57,7 +60,7 @@ impl GnosisEvmConfig {
             .expect("no eip1559collector field");
         let fee_collector_address: Address = serde_json::from_value(fee_collector_address.clone())
             .expect("failed to parse eip1559collector field");
-        
+
         let block_rewards_address = chain_spec
             .genesis()
             .config
@@ -66,13 +69,15 @@ impl GnosisEvmConfig {
             .expect("no eip1559collector field");
         let block_rewards_address: Address = serde_json::from_value(block_rewards_address.clone())
             .expect("failed to parse eip1559collector field");
-        
+
         Self {
             block_assembler: GnosisBlockAssembler::new(chain_spec.clone()),
             executor_factory: GnosisBlockExecutorFactory::new(
                 RethReceiptBuilder::default(),
                 chain_spec.clone(),
-                GnosisEvmFactory { fee_collector_address },
+                GnosisEvmFactory {
+                    fee_collector_address,
+                },
                 fee_collector_address,
                 block_rewards_address,
             ),
@@ -92,12 +97,12 @@ impl GnosisEvmConfig {
     }
 }
 
-impl ConfigureEvm for GnosisEvmConfig
-{
+impl ConfigureEvm for GnosisEvmConfig {
     type Primitives = EthPrimitives;
     type Error = Infallible;
     type NextBlockEnvCtx = NextBlockEnvAttributes;
-    type BlockExecutorFactory = GnosisBlockExecutorFactory<RethReceiptBuilder, Arc<GnosisChainSpec>, GnosisEvmFactory>;
+    type BlockExecutorFactory =
+        GnosisBlockExecutorFactory<RethReceiptBuilder, Arc<GnosisChainSpec>, GnosisEvmFactory>;
     type BlockAssembler = GnosisBlockAssembler<GnosisChainSpec>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
@@ -118,8 +123,16 @@ impl ConfigureEvm for GnosisEvmConfig
             number: header.number(),
             beneficiary: header.beneficiary(),
             timestamp: header.timestamp(),
-            difficulty: if spec >= SpecId::MERGE { U256::ZERO } else { header.difficulty() },
-            prevrandao: if spec >= SpecId::MERGE { header.mix_hash() } else { None },
+            difficulty: if spec >= SpecId::MERGE {
+                U256::ZERO
+            } else {
+                header.difficulty()
+            },
+            prevrandao: if spec >= SpecId::MERGE {
+                header.mix_hash()
+            } else {
+                None
+            },
             gas_limit: header.gas_limit(),
             basefee: header.base_fee_per_gas().unwrap_or_default(),
             // EIP-4844 excess blob gas of this block, introduced in Cancun
@@ -142,9 +155,9 @@ impl ConfigureEvm for GnosisEvmConfig
             attributes.timestamp,
             parent.number() + 1,
         );
-        
+
         // configure evm env based on parent block
-        let cfg = get_cfg_env(&self.chain_spec, spec_id,  attributes.timestamp);
+        let cfg = get_cfg_env(&self.chain_spec, spec_id, attributes.timestamp);
 
         let blob_params = get_blob_params(spec_id >= SpecId::PRAGUE);
 

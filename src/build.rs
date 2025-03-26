@@ -1,15 +1,21 @@
 use std::sync::Arc;
 
-use alloy_consensus::{proofs, Block, BlockBody, BlockHeader, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{
+    proofs, Block, BlockBody, BlockHeader, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH,
+};
 use alloy_eips::merge::BEACON_NONCE;
+use alloy_primitives::Bytes;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::BlockExecutionError;
 use reth_ethereum_primitives::Receipt;
-use reth_evm::{block::BlockExecutorFactory, eth::EthBlockExecutionCtx, execute::{BlockAssembler, BlockAssemblerInput}};
+use reth_evm::{
+    block::BlockExecutorFactory,
+    eth::EthBlockExecutionCtx,
+    execute::{BlockAssembler, BlockAssemblerInput},
+};
 use reth_primitives::TransactionSigned;
-use reth_provider::BlockExecutionResult;
 use reth_primitives_traits::logs_bloom;
-use alloy_primitives::Bytes;
+use reth_provider::BlockExecutionResult;
 
 /// Block builder for Optimism.
 #[derive(Debug)]
@@ -22,13 +28,19 @@ pub struct GnosisBlockAssembler<ChainSpec> {
 impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
     /// Creates a new [`OpBlockAssembler`].
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
-        Self { chain_spec, extra_data: Default::default() }
+        Self {
+            chain_spec,
+            extra_data: Default::default(),
+        }
     }
 }
 
 impl<ChainSpec> Clone for GnosisBlockAssembler<ChainSpec> {
     fn clone(&self) -> Self {
-        Self { chain_spec: self.chain_spec.clone(), extra_data: self.extra_data.clone() }
+        Self {
+            chain_spec: self.chain_spec.clone(),
+            extra_data: self.extra_data.clone(),
+        }
     }
 }
 
@@ -53,7 +65,12 @@ where
             execution_ctx: ctx,
             parent,
             transactions,
-            output: BlockExecutionResult { receipts, requests, gas_used },
+            output:
+                BlockExecutionResult {
+                    receipts,
+                    requests,
+                    gas_used,
+                },
             state_root,
             ..
         } = input;
@@ -69,8 +86,9 @@ where
             .is_shanghai_active_at_timestamp(timestamp)
             .then(|| ctx.withdrawals.map(|w| w.into_owned()).unwrap_or_default());
 
-        let withdrawals_root =
-            withdrawals.as_deref().map(|w| proofs::calculate_withdrawals_root(w));
+        let withdrawals_root = withdrawals
+            .as_deref()
+            .map(|w| proofs::calculate_withdrawals_root(w));
         let requests_hash = self
             .chain_spec
             .is_prague_active_at_timestamp(timestamp)
@@ -81,9 +99,16 @@ where
 
         // only determine cancun fields when active
         if self.chain_spec.is_cancun_active_at_timestamp(timestamp) {
-            blob_gas_used =
-                Some(transactions.iter().map(|tx| tx.blob_gas_used().unwrap_or_default()).sum());
-            excess_blob_gas = if self.chain_spec.is_cancun_active_at_timestamp(parent.timestamp) {
+            blob_gas_used = Some(
+                transactions
+                    .iter()
+                    .map(|tx| tx.blob_gas_used().unwrap_or_default())
+                    .sum(),
+            );
+            excess_blob_gas = if self
+                .chain_spec
+                .is_cancun_active_at_timestamp(parent.timestamp)
+            {
                 parent.maybe_next_block_excess_blob_gas(
                     self.chain_spec.blob_params_at_timestamp(timestamp),
                 )
@@ -120,7 +145,11 @@ where
 
         Ok(Block {
             header,
-            body: BlockBody { transactions, ommers: Default::default(), withdrawals },
+            body: BlockBody {
+                transactions,
+                ommers: Default::default(),
+                withdrawals,
+            },
         })
     }
 }

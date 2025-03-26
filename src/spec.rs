@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
-use core::
-    fmt::Display
-;
+use core::fmt::Display;
 
 use alloy_consensus::Header;
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use derive_more::{Constructor, Deref, From, Into};
 use reth_chainspec::{
-    make_genesis_header, BaseFeeParams, BaseFeeParamsKind, ChainHardforks, ChainSpec, ChainSpecBuilder, DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks, ForkCondition, ForkFilter, ForkFilterKey, ForkHash, ForkId, Hardfork, Hardforks, Head
+    make_genesis_header, BaseFeeParams, BaseFeeParamsKind, ChainHardforks, ChainSpec,
+    ChainSpecBuilder, DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks,
+    ForkCondition, ForkFilter, ForkFilterKey, ForkHash, ForkId, Hardfork, Hardforks, Head,
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_ethereum_forks::hardfork;
@@ -185,8 +185,11 @@ impl Hardforks for GnosisChainSpec {
         for (_, cond) in self.hardforks.forks_iter() {
             // handle block based forks and the sepolia merge netsplit block edge case (TTD
             // ForkCondition with Some(block))
-            if let ForkCondition::Block(block) |
-            ForkCondition::TTD { fork_block: Some(block), .. } = cond
+            if let ForkCondition::Block(block)
+            | ForkCondition::TTD {
+                fork_block: Some(block),
+                ..
+            } = cond
             {
                 if head.number >= block {
                     // skip duplicated hardforks: hardforks enabled at genesis block
@@ -197,7 +200,10 @@ impl Hardforks for GnosisChainSpec {
                 } else {
                     // we can return here because this block fork is not active, so we set the
                     // `next` value
-                    return ForkId { hash: forkhash, next: block }
+                    return ForkId {
+                        hash: forkhash,
+                        next: block,
+                    };
                 }
             }
         }
@@ -207,7 +213,8 @@ impl Hardforks for GnosisChainSpec {
         // this filter ensures that no block-based forks are returned
         for timestamp in self.hardforks.forks_iter().filter_map(|(_, cond)| {
             // ensure we only get timestamp forks activated __after__ the genesis block
-            cond.as_timestamp().filter(|time| time > &self.genesis.timestamp)
+            cond.as_timestamp()
+                .filter(|time| time > &self.genesis.timestamp)
         }) {
             if head.timestamp >= timestamp {
                 // skip duplicated hardfork activated at the same timestamp
@@ -219,7 +226,10 @@ impl Hardforks for GnosisChainSpec {
                 // can safely return here because we have already handled all block forks and
                 // have handled all active timestamp forks, and set the next value to the
                 // timestamp that is known but not active yet
-                return ForkId { hash: forkhash, next: timestamp }
+                return ForkId {
+                    hash: forkhash,
+                    next: timestamp,
+                };
             }
         }
 
@@ -265,7 +275,8 @@ impl EthereumHardforks for GnosisChainSpec {
 
 impl EthExecutorSpec for GnosisChainSpec {
     fn deposit_contract_address(&self) -> Option<Address> {
-        self.deposit_contract.map(|deposit_contract| deposit_contract.address)
+        self.deposit_contract
+            .map(|deposit_contract| deposit_contract.address)
     }
 }
 
@@ -450,9 +461,9 @@ impl From<Genesis> for GnosisChainSpec {
         Self {
             inner: ChainSpec {
                 chain: genesis.config.chain_id.into(),
-                genesis_header: SealedHeader::new_unhashed(
-                    make_genesis_header(&genesis, &hardforks),
-                ),
+                genesis_header: SealedHeader::new_unhashed(make_genesis_header(
+                    &genesis, &hardforks,
+                )),
                 genesis,
                 hardforks,
                 paris_block_and_final_difficulty,

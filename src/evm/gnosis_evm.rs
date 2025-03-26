@@ -1,4 +1,20 @@
-use revm::{context::{result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, ResultAndState}, Block, Cfg, ContextSetters, ContextTr, Evm, JournalOutput, JournalTr}, handler::{instructions::{EthInstructions, InstructionProvider}, post_execution, EthFrame, EvmTr, EvmTrError, Frame, FrameResult, Handler, PrecompileProvider}, inspector::{InspectorEvmTr, InspectorFrame, InspectorHandler, JournalExt}, interpreter::{interpreter::EthInterpreter, FrameInput, Interpreter, InterpreterAction, InterpreterResult, InterpreterTypes}, Database, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectEvm, Inspector};
+use revm::{
+    context::{
+        result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, ResultAndState},
+        Block, Cfg, ContextSetters, ContextTr, Evm, JournalOutput, JournalTr,
+    },
+    handler::{
+        instructions::{EthInstructions, InstructionProvider},
+        post_execution, EthFrame, EvmTr, EvmTrError, Frame, FrameResult, Handler,
+        PrecompileProvider,
+    },
+    inspector::{InspectorEvmTr, InspectorFrame, InspectorHandler, JournalExt},
+    interpreter::{
+        interpreter::EthInterpreter, FrameInput, Interpreter, InterpreterAction, InterpreterResult,
+        InterpreterTypes,
+    },
+    Database, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectEvm, Inspector,
+};
 use revm_primitives::{hardfork::SpecId, Address, U256};
 
 // REF 1: https://github.com/bluealloy/revm/blob/24162b7ddbf467f4541f49c3e93bcff6e704b198/book/src/framework.md
@@ -30,22 +46,27 @@ where
     type HaltReason = HaltReason;
 
     fn reward_beneficiary(
-            &self,
-            evm: &mut Self::Evm,
-            exec_result: &mut <Self::Frame as Frame>::FrameResult,
-        ) -> Result<(), Self::Error> {
-            post_execution::reward_beneficiary(evm.ctx(), exec_result.gas_mut())?;
-            let spec: SpecId = evm.ctx().cfg().spec().into();
-            if spec.is_enabled_in(SpecId::LONDON) {
-                // mint basefee to collector address
-                let basefee = evm.ctx().block().basefee() as u128;
-                let gas_used = (exec_result.gas().spent() - exec_result.gas().refunded() as u64) as u128;
+        &self,
+        evm: &mut Self::Evm,
+        exec_result: &mut <Self::Frame as Frame>::FrameResult,
+    ) -> Result<(), Self::Error> {
+        post_execution::reward_beneficiary(evm.ctx(), exec_result.gas_mut())?;
+        let spec: SpecId = evm.ctx().cfg().spec().into();
+        if spec.is_enabled_in(SpecId::LONDON) {
+            // mint basefee to collector address
+            let basefee = evm.ctx().block().basefee() as u128;
+            let gas_used =
+                (exec_result.gas().spent() - exec_result.gas().refunded() as u64) as u128;
 
-                let mut collector_account = evm.ctx().journal().load_account(self.fee_collector)?;
-                collector_account.mark_touch();
-                collector_account.data.info.balance = collector_account.data.info.balance.saturating_add(U256::from(basefee * gas_used));
-            }
-            Ok(())
+            let mut collector_account = evm.ctx().journal().load_account(self.fee_collector)?;
+            collector_account.mark_touch();
+            collector_account.data.info.balance = collector_account
+                .data
+                .info
+                .balance
+                .saturating_add(U256::from(basefee * gas_used));
+        }
+        Ok(())
     }
 }
 
@@ -62,10 +83,7 @@ where
     type IT = EthInterpreter;
 }
 
-pub struct GnosisEvm<CTX, INSP, I, P>(
-    pub Evm<CTX, INSP, I, P>,
-    pub Address,
-);
+pub struct GnosisEvm<CTX, INSP, I, P>(pub Evm<CTX, INSP, I, P>, pub Address);
 
 impl<CTX, INSP, I, P> EvmTr for GnosisEvm<CTX, INSP, I, P>
 where

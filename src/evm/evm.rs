@@ -1,12 +1,26 @@
 use alloy_evm::{Database, Evm};
 use core::ops::{Deref, DerefMut};
 use reth_evm::{eth::EthEvmContext, EvmEnv, EvmFactory};
-use revm::{context::{result::{EVMError, HaltReason, ResultAndState}, BlockEnv, TxEnv}, handler::{instructions::EthInstructions, EthPrecompiles, PrecompileProvider}, inspector::NoOpInspector, interpreter::{interpreter::EthInterpreter, InterpreterResult}, Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext};
+use revm::{
+    context::{
+        result::{EVMError, HaltReason, ResultAndState},
+        BlockEnv, TxEnv,
+    },
+    handler::{instructions::EthInstructions, EthPrecompiles, PrecompileProvider},
+    inspector::NoOpInspector,
+    interpreter::{interpreter::EthInterpreter, InterpreterResult},
+    Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext,
+};
 use revm_primitives::{hardfork::SpecId, Address, Bytes, TxKind, U256};
 
 #[allow(missing_debug_implementations)] // missing revm::Context Debug impl
 pub struct GnosisEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
-    inner: crate::evm::gnosis_evm::GnosisEvm<EthEvmContext<DB>, I, EthInstructions<EthInterpreter, EthEvmContext<DB>>, PRECOMPILE>,
+    inner: crate::evm::gnosis_evm::GnosisEvm<
+        EthEvmContext<DB>,
+        I,
+        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
+        PRECOMPILE,
+    >,
     inspect: bool,
 }
 
@@ -16,17 +30,29 @@ impl<DB: Database, I, PRECOMPILE> GnosisEvm<DB, I, PRECOMPILE> {
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
     /// [`GnosisEvm`] should be invoked on [`Evm::transact`].
     pub const fn new(
-        evm: crate::evm::gnosis_evm::GnosisEvm<EthEvmContext<DB>, I, EthInstructions<EthInterpreter, EthEvmContext<DB>>, PRECOMPILE>,
+        evm: crate::evm::gnosis_evm::GnosisEvm<
+            EthEvmContext<DB>,
+            I,
+            EthInstructions<EthInterpreter, EthEvmContext<DB>>,
+            PRECOMPILE,
+        >,
         inspect: bool,
     ) -> Self {
-        Self { inner: evm, inspect }
+        Self {
+            inner: evm,
+            inspect,
+        }
     }
 
     /// Consumes self and return the inner EVM instance.
     pub fn into_inner(
         self,
-    ) -> super::gnosis_evm::GnosisEvm<EthEvmContext<DB>, I, EthInstructions<EthInterpreter, EthEvmContext<DB>>, PRECOMPILE>
-    {
+    ) -> super::gnosis_evm::GnosisEvm<
+        EthEvmContext<DB>,
+        I,
+        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
+        PRECOMPILE,
+    > {
         self.inner
     }
 
@@ -148,7 +174,12 @@ where
     }
 
     fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.0.data.ctx;
+        let Context {
+            block: block_env,
+            cfg: cfg_env,
+            journaled_state,
+            ..
+        } = self.inner.0.data.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
@@ -162,8 +193,7 @@ pub struct GnosisEvmFactory {
 }
 
 impl EvmFactory for GnosisEvmFactory {
-    type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> =
-        GnosisEvm<DB, I>;
+    type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> = GnosisEvm<DB, I>;
     type Tx = TxEnv;
     type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
     type HaltReason = HaltReason;

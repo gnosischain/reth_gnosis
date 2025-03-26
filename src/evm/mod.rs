@@ -1,2 +1,2 @@
-mod gnosis_evm;
 pub mod evm;
+mod gnosis_evm;

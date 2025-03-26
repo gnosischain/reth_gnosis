@@ -19,17 +19,15 @@ use reth_primitives_traits::{transaction::error::InvalidTransactionError, Signed
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_transaction_pool::{
-    error::{Eip4844PoolTransactionError, InvalidPoolTransactionError}, BestTransactions, BestTransactionsAttributes,
-    PoolTransaction, TransactionPool, ValidPoolTransaction,
+    error::{Eip4844PoolTransactionError, InvalidPoolTransactionError},
+    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
+    ValidPoolTransaction,
 };
 use revm::context::Block;
 use revm_primitives::U256;
 use tracing::{debug, trace, warn};
 
-use crate::{
-    blobs::get_blob_params,
-    spec::GnosisChainSpec,
-};
+use crate::{blobs::get_blob_params, spec::GnosisChainSpec};
 
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
@@ -142,13 +140,23 @@ where
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TransactionSigned>>,
     F: FnOnce(BestTransactionsAttributes) -> BestTransactionsIter<Pool>,
 {
-    let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
-    let PayloadConfig { parent_header, attributes } = config;
+    let BuildArguments {
+        mut cached_reads,
+        config,
+        cancel,
+        best_payload,
+    } = args;
+    let PayloadConfig {
+        parent_header,
+        attributes,
+    } = config;
 
     let state_provider = client.state_by_block_hash(parent_header.hash())?;
     let state = StateProviderDatabase::new(&state_provider);
-    let mut db =
-        State::builder().with_database(cached_reads.as_db_mut(state)).with_bundle_update().build();
+    let mut db = State::builder()
+        .with_database(cached_reads.as_db_mut(state))
+        .with_bundle_update()
+        .build();
 
     let mut builder = evm_config
         .builder_for_next_block(
@@ -174,7 +182,11 @@ where
 
     let mut best_txs = best_txs(BestTransactionsAttributes::new(
         base_fee,
-        builder.evm_mut().block().blob_gasprice().map(|gasprice| gasprice as u64),
+        builder
+            .evm_mut()
+            .block()
+            .blob_gasprice()
+            .map(|gasprice| gasprice as u64),
     ));
     let mut total_fees = U256::ZERO;
 
@@ -202,12 +214,12 @@ where
                 &pool_tx,
                 InvalidPoolTransactionError::ExceedsGasLimit(pool_tx.gas_limit(), block_gas_limit),
             );
-            continue
+            continue;
         }
 
         // check if the job was cancelled, if so we can exit early
         if cancel.is_cancelled() {
-            return Ok(BuildOutcome::Cancelled)
+            return Ok(BuildOutcome::Cancelled);
         }
 
         // convert tx to a signed transaction
@@ -233,7 +245,7 @@ where
                         },
                     ),
                 );
-                continue
+                continue;
             }
         }
 
@@ -256,7 +268,7 @@ where
                         ),
                     );
                 }
-                continue
+                continue;
             }
             // this is an error that we should treat as fatal for this attempt
             Err(err) => return Err(PayloadBuilderError::evm(err)),
@@ -273,8 +285,9 @@ where
         }
 
         // update add to total fees
-        let miner_fee =
-            tx.effective_tip_per_gas(base_fee).expect("fee is always valid; execution succeeded");
+        let miner_fee = tx
+            .effective_tip_per_gas(base_fee)
+            .expect("fee is always valid; execution succeeded");
         total_fees += U256::from(miner_fee) * U256::from(gas_used);
         cumulative_gas_used += gas_used;
     }
@@ -292,7 +305,11 @@ where
         });
     }
 
-    let BlockBuilderOutcome { execution_result, block, .. } = builder.finish(&state_provider)?;
+    let BlockBuilderOutcome {
+        execution_result,
+        block,
+        ..
+    } = builder.finish(&state_provider)?;
 
     let requests = chain_spec
         .is_prague_active_at_timestamp(attributes.timestamp)
