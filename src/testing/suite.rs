@@ -31,7 +31,7 @@ pub trait Suite {
         // let suite_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         //     .join("fixtures")
         //     .join(self.suite_name());
-        // dbg!("suit path", self.suite_name());
+        dbg!("suit path", self.suite_name());
         let suite_path = match self.suite_name().starts_with("blockchain_tests") {
             true => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("fixtures")
