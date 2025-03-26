@@ -34,7 +34,7 @@ use revm::{
 use revm_database::State;
 use revm_primitives::{Address, Log};
 
-use crate::evm::evm::GnosisEvmFactory;
+use crate::evm::factory::GnosisEvmFactory;
 use crate::gnosis::apply_post_block_system_calls;
 
 // REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/op-evm/src/block/mod.rs#L42

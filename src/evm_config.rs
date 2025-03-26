@@ -18,7 +18,7 @@ use std::{convert::Infallible, sync::Arc};
 use crate::blobs::{evm_env_blob_schedule, get_blob_params, next_blob_gas_and_price};
 use crate::block::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
-use crate::evm::evm::GnosisEvmFactory;
+use crate::evm::factory::GnosisEvmFactory;
 use crate::spec::GnosisChainSpec;
 
 /// Returns a configuration environment for the EVM based on the given chain specification and timestamp.

@@ -11,6 +11,7 @@ pub struct GnosisExecutorProvider;
 
 impl GnosisExecutorProvider {
     /// Creates a new default optimism executor strategy factory.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(chain_spec: Arc<GnosisChainSpec>) -> BasicBlockExecutorProvider<GnosisEvmConfig> {
         BasicBlockExecutorProvider::new(GnosisEvmConfig::new(chain_spec))
     }

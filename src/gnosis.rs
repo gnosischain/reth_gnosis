@@ -256,8 +256,8 @@ where
 // - Call into deposit contract with withdrawal data
 // - Call block rewards contract for bridged xDAI mint
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_post_block_system_calls<'a, SPEC>(
-    chain_spec: &'a SPEC,
+pub(crate) fn apply_post_block_system_calls<SPEC>(
+    chain_spec: &SPEC,
     // evm_config: &EvmConfig,
     block_rewards_contract: Address,
     withdrawal_contract: Address,
