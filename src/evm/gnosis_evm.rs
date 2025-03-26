@@ -1,8 +1,9 @@
 use revm::{context::{result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, ResultAndState}, Block, Cfg, ContextSetters, ContextTr, Evm, JournalOutput, JournalTr}, handler::{instructions::{EthInstructions, InstructionProvider}, post_execution, EthFrame, EvmTr, EvmTrError, Frame, FrameResult, Handler, PrecompileProvider}, inspector::{InspectorEvmTr, InspectorFrame, InspectorHandler, JournalExt}, interpreter::{interpreter::EthInterpreter, FrameInput, Interpreter, InterpreterAction, InterpreterResult, InterpreterTypes}, Database, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectEvm, Inspector};
-use revm_primitives::{address, hardfork::SpecId, Address, U256};
+use revm_primitives::{hardfork::SpecId, Address, U256};
 
-const FEE_COLLECTOR: Address = address!("1559000000000000000000000000000000000000");
-
+// REF 1: https://github.com/bluealloy/revm/blob/24162b7ddbf467f4541f49c3e93bcff6e704b198/book/src/framework.md
+// REF 2: https://github.com/bluealloy/revm/blob/dff454328b2932937803f98adb546aa7e6f8bec2/examples/erc20_gas/src/handler.rs#L148
+/// Custom EVM Handler needed due of custom `reward_beneficiary` in [`crate::evm::gnosis_evm::GnosisEvmHandler`]
 pub struct GnosisEvmHandler<EVM, ERROR, FRAME> {
     fee_collector: Address,
     _phantom: core::marker::PhantomData<(EVM, ERROR, FRAME)>,
@@ -33,9 +34,8 @@ where
             evm: &mut Self::Evm,
             exec_result: &mut <Self::Frame as Frame>::FrameResult,
         ) -> Result<(), Self::Error> {
-            //disab dbg!("debjit debug > sending funds back to beneficiary");
             post_execution::reward_beneficiary(evm.ctx(), exec_result.gas_mut())?;
-            let spec = evm.ctx().cfg().spec().into();
+            let spec: SpecId = evm.ctx().cfg().spec().into();
             if spec.is_enabled_in(SpecId::LONDON) {
                 // mint basefee to collector address
                 let basefee = evm.ctx().block().basefee() as u128;
@@ -64,6 +64,7 @@ where
 
 pub struct GnosisEvm<CTX, INSP, I, P>(
     pub Evm<CTX, INSP, I, P>,
+    pub Address,
 );
 
 impl<CTX, INSP, I, P> EvmTr for GnosisEvm<CTX, INSP, I, P>
@@ -127,8 +128,7 @@ where
     type Block = <CTX as ContextTr>::Block;
 
     fn replay(&mut self) -> Self::Output {
-        //disab dbg!("debjit debug > inside replay");
-        let mut t = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(FEE_COLLECTOR);
+        let mut t = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
         t.run(self)
     }
 
@@ -205,7 +205,7 @@ where
     }
 
     fn inspect_replay(&mut self) -> Self::Output {
-        let mut h = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(FEE_COLLECTOR);
+        let mut h = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
         h.inspect_run(self)
     }
 }

@@ -356,13 +356,13 @@ impl From<Genesis> for GnosisChainSpec {
         ];
 
         let mut hardforks = match Chain::from_chain_id(chain_id) {
-            Some(Chain::Chiado) => chiado_hardfork_opts
+            Some(Chain::Gnosis) => mainnet_hardfork_opts
                 .into_iter()
                 .filter_map(|(hardfork, opt)| {
                     opt.map(|block| (hardfork, ForkCondition::Block(block)))
                 })
                 .collect::<Vec<_>>(),
-            _ => mainnet_hardfork_opts
+            _ => chiado_hardfork_opts
                 .into_iter()
                 .filter_map(|(hardfork, opt)| {
                     opt.map(|block| (hardfork, ForkCondition::Block(block)))
@@ -447,8 +447,7 @@ impl From<Genesis> for GnosisChainSpec {
 
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
-
-        let spec = Self {
+        Self {
             inner: ChainSpec {
                 chain: genesis.config.chain_id.into(),
                 genesis_header: SealedHeader::new_unhashed(
@@ -462,10 +461,7 @@ impl From<Genesis> for GnosisChainSpec {
                 base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
                 ..Default::default()
             },
-        };
-
-
-        spec
+        }
     }
 }
 

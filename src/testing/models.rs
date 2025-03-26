@@ -232,7 +232,7 @@ impl Account {
                 ))
             })?;
 
-        //disab dbg!("Account for {}: {:?}", address, account);
+        // dbg!("Account for {}: {:?}", address, account);
 
         assert_equal(self.balance, account.balance, "Balance does not match")?;
         assert_equal(self.nonce.to(), account.nonce, "Nonce does not match")?;
@@ -252,17 +252,13 @@ impl Account {
         }
 
         let mut storage_cursor = tx.cursor_dup_read::<tables::PlainStorageState>()?;
-        //disab dbg!("self.storage: {:?}", self.storage.clone());
-        // //disab dbg!("printing all storage entries");
-        // let mut all = storage_cursor.walk(None).unwrap();
-        // while let Ok(entry) = all.next().unwrap() {
-        //     //disab dbg!("Storage entries: {:?}", entry);
-        // }
+        // dbg!("self.storage: {:?}", self.storage.clone());
+
         for (slot, value) in &self.storage {
             if let Some(entry) =
                 storage_cursor.seek_by_key_subkey(address, B256::new(slot.to_be_bytes()))?
             {
-                //disab dbg!("Storage entry: {:?}", entry);
+                // dbg!("Storage entry: {:?}", entry);
                 if U256::from_be_bytes(entry.key.0) == *slot {
                     assert_equal(
                         *value,

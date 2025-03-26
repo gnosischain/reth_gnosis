@@ -1,10 +1,9 @@
 use crate::errors::GnosisBlockExecutionError;
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
-use alloy_primitives::{address, Address, Bytes, map::HashMap};
+use alloy_primitives::{Address, Bytes, map::HashMap};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
-use reth_chainspec::EthereumHardforks;
 use reth_errors::BlockValidationError;
 use reth_evm::{
     block::{StateChangePostBlockSource, StateChangeSource, SystemCaller}, eth::spec::EthExecutorSpec, execute::{BlockExecutionError, InternalBlockExecutionError}, Evm
@@ -13,8 +12,6 @@ use revm::{context::result::{ExecutionResult, Output, ResultAndState}, DatabaseC
 use alloy_primitives::U256;
 use revm_state::{Account, AccountInfo, AccountStatus};
 use std::fmt::Display;
-
-pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
 // Codegen from https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
 sol!(
@@ -41,7 +38,6 @@ sol!(
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
 #[inline]
 fn apply_withdrawals_contract_call<SPEC>(
-    // chain_spec: &GnosisChainSpec,
     withdrawal_contract_address: Address,
     withdrawals: &[Withdrawal],
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
@@ -50,20 +46,11 @@ fn apply_withdrawals_contract_call<SPEC>(
 where
     SPEC: EthExecutorSpec,
 {
-    // TODO: how is the deposit contract address passed to here?
-    // let withdrawal_contract_address = chain_spec
-    //     .deposit_contract
-    //     .as_ref()
-    //     .ok_or(GnosisBlockExecutionError::CustomErrorMessage {
-    //         message: "deposit_contract not set".to_owned(),
-    //     })?
-    //     .address;
-
     // TODO: Only do the call post-merge
     // TODO: Should this call be made for the genesis block?
 
     let ResultAndState { result, mut state } = match evm.transact_system_call(
-        SYSTEM_ADDRESS,
+        alloy_eips::eip4788::SYSTEM_ADDRESS,
         withdrawal_contract_address,
         executeSystemWithdrawalsCall {
             maxFailedWithdrawalsToProcess: U256::from(4),
@@ -86,7 +73,7 @@ where
     // TODO: Should check the execution is successful? Is an Ok from transact() enough?
 
     // Clean-up post system tx context
-    state.remove(&SYSTEM_ADDRESS);
+    state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
     state.remove(&evm.block().beneficiary);
 
     system_caller.invoke_hook_with(|hook| {
@@ -123,9 +110,7 @@ where
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
 #[inline]
 fn apply_block_rewards_contract_call<SPEC>(
-    // evm_config: &EvmConfig,
     block_rewards_contract: Address,
-    _block_timestamp: u64,
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
     system_caller: &mut SystemCaller<SPEC>,
@@ -134,7 +119,7 @@ where
     SPEC: EthExecutorSpec,
 {
     let ResultAndState { result, mut state } = match evm.transact_system_call(
-        SYSTEM_ADDRESS,
+        alloy_eips::eip4788::SYSTEM_ADDRESS,
         block_rewards_contract,
         rewardCall {
             benefactors: vec![coinbase],
@@ -146,7 +131,6 @@ where
     ) {
         Ok(res) => res,
         Err(e) => {
-            //disab dbg!("debjit debug >", &e);
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
                     message: format!("block rewards contract system call error: {}", e),
@@ -196,7 +180,7 @@ where
 
     // keeping this generalized, instead of only in block 1
     // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
-    let should_create = state.get(&SYSTEM_ADDRESS).is_none_or(|system_account| {
+    let should_create = state.get(&alloy_eips::eip4788::SYSTEM_ADDRESS).is_none_or(|system_account| {
         // true if account not in state (either None, or Touched | LoadedAsNotExisting)
         system_account.status == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
     });
@@ -209,10 +193,10 @@ where
             // we force the account to be created by changing the status
             status: AccountStatus::Touched | AccountStatus::Created,
         };
-        state.insert(SYSTEM_ADDRESS, account);
+        state.insert(alloy_eips::eip4788::SYSTEM_ADDRESS, account);
     } else {
         // clear the system address account from state transitions, else EIP-158/161 (impl in revm) removes it from state
-        state.remove(&SYSTEM_ADDRESS);
+        state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
     }
 
     state.remove(&evm.block().beneficiary);
@@ -290,7 +274,7 @@ where
     }
 
     let balance_increments =
-        apply_block_rewards_contract_call(block_rewards_contract, block_timestamp, coinbase, evm, system_caller)?;
+        apply_block_rewards_contract_call(block_rewards_contract, coinbase, evm, system_caller)?;
 
     Ok((balance_increments, withdrawal_requests))
 }

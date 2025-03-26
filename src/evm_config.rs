@@ -1,21 +1,18 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_primitives::{Address, U256};
 use reth_ethereum_primitives::Block;
-use reth_evm::eth::{EthBlockExecutionCtx, EthBlockExecutorFactory};
-use reth_evm::{EvmFactory, FromRecoveredTx, TransactionEnv};
+use reth_evm::eth::EthBlockExecutionCtx;
 use reth_primitives::EthPrimitives;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 
-use revm::context::result::EVMError;
-use revm::context::{BlockEnv, Cfg, CfgEnv};
+use revm::context::{BlockEnv, CfgEnv};
 use revm_primitives::hardfork::SpecId;
 use revm_primitives::Bytes;
 use core::fmt::Debug;
 use std::borrow::Cow;
-use reth_chainspec::{ChainSpec, EthereumHardforks};
-use reth_evm::{env::EvmEnv, ConfigureEvm, Database, NextBlockEnvAttributes};
-use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_and_block_number, EthBlockAssembler, RethReceiptBuilder};
-use reth_primitives::{transaction::FillTxEnv, TransactionSigned};
+use reth_chainspec::EthereumHardforks;
+use reth_evm::{env::EvmEnv, ConfigureEvm, NextBlockEnvAttributes};
+use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_and_block_number, RethReceiptBuilder};
 use std::{convert::Infallible, sync::Arc};
 
 use crate::blobs::{evm_env_blob_schedule, get_blob_params, next_blob_gas_and_price};
@@ -36,6 +33,7 @@ pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -
     cfg
 }
 
+// REF: https://github.com/paradigmxyz/reth/blob/d3b299754fe79b051bec022e67e922f6792f2a17/crates/ethereum/evm/src/lib.rs#L54
 /// Custom EVM configuration
 #[derive(Debug, Clone)]
 pub struct GnosisEvmConfig {
@@ -43,21 +41,30 @@ pub struct GnosisEvmConfig {
     pub executor_factory: GnosisBlockExecutorFactory<RethReceiptBuilder, Arc<GnosisChainSpec>, GnosisEvmFactory>,
     /// Ethereum block assembler.
     pub block_assembler: GnosisBlockAssembler<GnosisChainSpec>,
-
-    pub collector_address: Address,
+    /// Spec.
     chain_spec: Arc<GnosisChainSpec>,
 }
 
 impl GnosisEvmConfig {
     /// Creates a new [`GnosisEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<GnosisChainSpec>) -> Self {
-        let collector_address = chain_spec
+        // Parsing fields MANDATORY for GnosisBlockExecutorFactory
+        let fee_collector_address = chain_spec
             .genesis()
             .config
             .extra_fields
             .get("eip1559collector")
             .expect("no eip1559collector field");
-        let collector_address: Address = serde_json::from_value(collector_address.clone())
+        let fee_collector_address: Address = serde_json::from_value(fee_collector_address.clone())
+            .expect("failed to parse eip1559collector field");
+        
+        let block_rewards_address = chain_spec
+            .genesis()
+            .config
+            .extra_fields
+            .get("blockRewardsContract")
+            .expect("no eip1559collector field");
+        let block_rewards_address: Address = serde_json::from_value(block_rewards_address.clone())
             .expect("failed to parse eip1559collector field");
         
         Self {
@@ -65,9 +72,10 @@ impl GnosisEvmConfig {
             executor_factory: GnosisBlockExecutorFactory::new(
                 RethReceiptBuilder::default(),
                 chain_spec.clone(),
-                GnosisEvmFactory::default(),
+                GnosisEvmFactory { fee_collector_address },
+                fee_collector_address,
+                block_rewards_address,
             ),
-            collector_address,
             chain_spec,
         }
     }
@@ -102,7 +110,6 @@ impl ConfigureEvm for GnosisEvmConfig
 
     fn evm_env(&self, header: &Header) -> EvmEnv {
         let spec = revm_spec(self.chain_spec(), header);
-        //disab dbg!("debjit debug > spec in evm_env: {:?}", spec);
 
         // configure evm env based on parent block
         let cfg_env = get_cfg_env(self.chain_spec(), spec, header.timestamp);
@@ -135,11 +142,9 @@ impl ConfigureEvm for GnosisEvmConfig
             attributes.timestamp,
             parent.number() + 1,
         );
-        //disab dbg!("debjit debug > spec in next_evm_env: {:?}", spec_id);
         
         // configure evm env based on parent block
         let cfg = get_cfg_env(&self.chain_spec, spec_id,  attributes.timestamp);
-        //disab dbg!("debjit debug > spec in next_evm_env: {:?}", cfg.spec());
 
         let blob_params = get_blob_params(spec_id >= SpecId::PRAGUE);
 

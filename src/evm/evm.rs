@@ -1,7 +1,7 @@
 use alloy_evm::{Database, Evm};
 use core::ops::{Deref, DerefMut};
 use reth_evm::{eth::EthEvmContext, EvmEnv, EvmFactory};
-use revm::{context::{result::{EVMError, HaltReason, ResultAndState}, BlockEnv, ContextTr, TxEnv}, handler::{instructions::EthInstructions, EthPrecompiles, EvmTr, PrecompileProvider}, inspector::NoOpInspector, interpreter::{interpreter::EthInterpreter, InterpreterResult}, Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext};
+use revm::{context::{result::{EVMError, HaltReason, ResultAndState}, BlockEnv, TxEnv}, handler::{instructions::EthInstructions, EthPrecompiles, PrecompileProvider}, inspector::NoOpInspector, interpreter::{interpreter::EthInterpreter, InterpreterResult}, Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext};
 use revm_primitives::{hardfork::SpecId, Address, Bytes, TxKind, U256};
 
 #[allow(missing_debug_implementations)] // missing revm::Context Debug impl
@@ -11,10 +11,10 @@ pub struct GnosisEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
 }
 
 impl<DB: Database, I, PRECOMPILE> GnosisEvm<DB, I, PRECOMPILE> {
-    /// Creates a new OP EVM instance.
+    /// Creates a new Gnosis EVM instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
-    /// [`GnosisEvm`](op_revm::GnosisEvm) should be invoked on [`Evm::transact`].
+    /// [`GnosisEvm`] should be invoked on [`Evm::transact`].
     pub const fn new(
         evm: crate::evm::gnosis_evm::GnosisEvm<EthEvmContext<DB>, I, EthInstructions<EthInterpreter, EthEvmContext<DB>>, PRECOMPILE>,
         inspect: bool,
@@ -82,7 +82,6 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        //disab dbg!("debjit debug > self.inspect: {:?}", self.inspect);
         if self.inspect {
             self.inner.set_tx(tx);
             self.inner.inspect_replay()
@@ -97,7 +96,6 @@ where
         contract: Address,
         data: Bytes,
     ) -> Result<ResultAndState, Self::Error> {
-        //disab dbg!("debjit debug > doing transact_system_call");
         let tx = TxEnv {
             caller,
             kind: TxKind::Call(contract),
@@ -133,16 +131,7 @@ where
         // disable the nonce check
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
 
-        let sp = self.cfg().spec;
-        //disab dbg!("debjit debug > spec: {:?}", sp, sp.is_enabled_in(SpecId::PRAGUE));
-        let cfg = self.cfg();
-        //disab dbg!("debjit debug > cfgenv: {:?}", cfg);
-
-        // //disab dbg!("debjit debug >", self.spec.is_cancun_active_at_timestamp(self.evm.block().timestamp), self.spec.is_prague_active_at_timestamp(self.evm.block().timestamp));
-
-        //disab dbg!("debjit debug > before transact_system_call: {:?}", &tx);
         let res = self.transact(tx);
-        // //disab dbg!("debjit debug > after transact_system_call: {:?}", &res);
 
         // swap back to the previous gas limit
         core::mem::swap(&mut self.block.gas_limit, &mut gas_limit);
@@ -168,7 +157,9 @@ where
 /// Custom EVM configuration.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
-pub struct GnosisEvmFactory;
+pub struct GnosisEvmFactory {
+    pub fee_collector_address: Address,
+}
 
 impl EvmFactory for GnosisEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> =
@@ -186,7 +177,8 @@ impl EvmFactory for GnosisEvmFactory {
                     .with_db(db)
                     .with_cfg(input.cfg_env)
                     .with_block(input.block_env)
-                    .build_mainnet_with_inspector(NoOpInspector {})
+                    .build_mainnet_with_inspector(NoOpInspector {}),
+                1: self.fee_collector_address,
             },
             inspect: false,
         }
@@ -198,14 +190,14 @@ impl EvmFactory for GnosisEvmFactory {
         input: EvmEnv,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        // GnosisEvm::new(self.create_evm(db, input).into_inner().with_inspector(inspector), true)
         GnosisEvm {
             inner: super::gnosis_evm::GnosisEvm {
                 0: Context::mainnet()
                     .with_db(db)
                     .with_cfg(input.cfg_env)
                     .with_block(input.block_env)
-                    .build_mainnet_with_inspector(inspector)
+                    .build_mainnet_with_inspector(inspector),
+                1: self.fee_collector_address,
             },
             inspect: true,
         }

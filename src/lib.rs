@@ -3,20 +3,15 @@ use evm_config::GnosisEvmConfig;
 use network::GnosisNetworkBuilder;
 use payload_builder::GnosisPayloadBuilder;
 use pool::GnosisPoolBuilder;
-use reth::{
-    api::{AddOnsContext, FullNodeComponents},
-    network::NetworkHandle,
-};
+use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
-use reth_engine_primitives::EngineValidator;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::{EthBuiltPayload, EthPayloadAttributes, EthPayloadBuilderAttributes};
 use reth_node_builder::{components::{BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder}, rpc::{EngineValidatorBuilder, RpcAddOns}, BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes, NodeTypesWithEngine, PayloadTypes};
-use reth_node_ethereum::{node::EthereumPayloadBuilder, BasicBlockExecutorProvider, EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder};
+use reth_node_ethereum::{BasicBlockExecutorProvider, EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder};
 use reth_primitives::EthPrimitives;
 use reth_provider::EthStorage;
-use reth_rpc::{eth::{core::EthApiFor, FullEthApiServer}, EthApi};
 use reth_trie_db::MerklePatriciaTrie;
 use spec::GnosisChainSpec;
 use std::sync::Arc;
@@ -70,13 +65,6 @@ impl GnosisNode {
         GnosisConsensusBuilder,
     >
     where
-    //     Node: FullNodeTypes<
-    //         Types: NodeTypesWithEngine<
-    //             Engine = EthEngineTypes,
-    //             ChainSpec = GnosisChainSpec,
-    //             Primitives = EthPrimitives,
-    //         >,
-    //     >,
         Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
         <Node::Types as NodeTypesWithEngine>::Engine: PayloadTypes<
             BuiltPayload = EthBuiltPayload,
@@ -106,17 +94,6 @@ impl NodeTypesWithEngine for GnosisNode {
     type Engine = EthEngineTypes;
 }
 
-/// Add-ons w.r.t. gnosis
-// pub type GnosisAddOns__<N> = RpcAddOns<
-//     N,
-//     EthApi<
-//         <N as FullNodeTypes>::Provider,
-//         <N as FullNodeComponents>::Pool,
-//         NetworkHandle,
-//         <N as FullNodeComponents>::Evm,
-//     >,
-//     GnosisEngineValidatorBuilder,
-// >;
 /// Add-ons w.r.t. gnosis
 pub type GnosisAddOns<N> = RpcAddOns<N, EthereumEthApiBuilder, GnosisEngineValidatorBuilder>;
 

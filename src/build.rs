@@ -32,7 +32,7 @@ impl<ChainSpec> Clone for GnosisBlockAssembler<ChainSpec> {
     }
 }
 
-// ref: https://github.com/paradigmxyz/reth/blob/91eb292e3ea1fae86accd6c887ba05b7b4fd045e/crates/optimism/evm/src/build.rs#L37
+// REF: https://github.com/paradigmxyz/reth/blob/91eb292e3ea1fae86accd6c887ba05b7b4fd045e/crates/optimism/evm/src/build.rs#L37
 impl<F, ChainSpec> BlockAssembler<F> for GnosisBlockAssembler<ChainSpec>
 where
     F: for<'a> BlockExecutorFactory<
@@ -90,7 +90,7 @@ where
             } else {
                 // for the first post-fork block, both parent.blob_gas_used and
                 // parent.excess_blob_gas are evaluated as 0
-                Some(alloy_eips::eip7840::BlobParams::cancun().next_block_excess_blob_gas(0, 0))
+                Some(crate::blobs::CANCUN_BLOB_PARAMS.next_block_excess_blob_gas(0, 0))
             };
         }
 

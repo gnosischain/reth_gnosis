@@ -14,7 +14,6 @@ use reth_cli_commands::node::NoArgs;
 use reth_db::DatabaseEnv;
 use reth_eth_wire_types::EthNetworkPrimitives;
 use reth_ethereum_consensus::EthBeaconConsensus;
-use reth_node_ethereum::BasicBlockExecutorProvider;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
 
@@ -149,11 +148,6 @@ where
             }
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::Import(command) => {
-                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(
-                //     |chain_spec| -> BasicBlockExecutorProvider<GnosisExecutionStrategyFactory> {
-                //         GnosisExecutorProvider::new(chain_spec)
-                //     },
-                // ))
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(components))
             }
             Commands::Debug(_command) => todo!(),
