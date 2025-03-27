@@ -4,7 +4,8 @@ set -e
 # first input or $PWD/data
 DATA_DIR=$PWD/${1:-data}
 
-echo -e "Data directory: $DATA_DIR\n"
+echo -e "State directory: \033[0;32m$DATA_DIR\033[0m"
+echo -e "(This is where the state files will be downloaded and imported)\n"
 
 STATE_FILE=$DATA_DIR/state_at_700000.jsonl
 HEADER_FILE=$DATA_DIR/header_700000.rlp
@@ -31,4 +32,4 @@ if [ ! -f $IMPORT_SUCCESS_FILE ]; then
     touch $IMPORT_SUCCESS_FILE
 fi
 
-echo -e "Setup complete\n"
+echo "Setup complete\n"
