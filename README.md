@@ -33,7 +33,7 @@ This will build the project in debug mode.
 This is the step where Reth differs from other clients. You need to import the state at merge since we don't support the pre-merge block format yet. To do so, you need to download the state and the header at the last block (till which you're importing the state). All this is taken care of by the `setup.sh` script. You can run it by running the following command:
 
 ```bash
-./setup.sh
+./scripts/setup.sh
 ```
 
 ### Running the node

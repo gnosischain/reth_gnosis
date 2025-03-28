@@ -1,35 +1,35 @@
-git clone https://github.com/gnosischain/reth_gnosis.git
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+#!/bin/bash
+set -e
 
-sudo apt update
-sudo apt install pipx
+# first input or $PWD/data
+DATA_DIR=$PWD/${1:-data}
 
-pipx ensurepath
-pipx install gdown
-pipx ensurepath
+echo -e "State directory: \033[0;32m$DATA_DIR\033[0m"
+echo -e "(This is where the state files will be downloaded and imported)\n"
 
-cargo install jwt-cli
+STATE_FILE=$DATA_DIR/state_at_700000.jsonl
+HEADER_FILE=$DATA_DIR/header_700000.rlp
+IMPORT_SUCCESS_FILE=$DATA_DIR/import_success
+DOWNLOAD_SUCCESS_FILE=$DATA_DIR/download_success
 
-sudo apt install build-essential
-sudo apt install manpages-dev
-sudo apt install build-essential libc6-dev clang libclang-dev pkg-config
-sudo apt install libssl-dev libclang-dev
-sudo apt install supervisor
+# if either of the file is missing, delete the data directory, and download the files
+if [ ! -f $STATE_FILE ] || [ ! -f $HEADER_FILE ] || [ ! -f $DOWNLOAD_SUCCESS_FILE ]; then
+    echo "Either $STATE_FILE or $HEADER_FILE is missing. Deleting the data directory and downloading the files."
+    rm -rf $DATA_DIR
+    mkdir -p $DATA_DIR
+    wget https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/chiado/state_700000.jsonl -O $STATE_FILE
+    wget https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/chiado/header_700000.rlp -O $HEADER_FILE
+    touch $DOWNLOAD_SUCCESS_FILE
+fi
 
-cd reth_gnosis/
-cargo update
-cargo build
+# if import success file is missing, import the state
+if [ ! -f $IMPORT_SUCCESS_FILE ]; then
+    echo "Dropping existing database..."
+    yes | ./target/debug/reth --chain ./scripts/chiado_chainspec.json db drop || true
 
-gdown https://drive.google.com/file/d/1QLOrLaMe-_CI9OJEjIvoCua3ocvl1bCH/view?usp=sharing --fuzzy
-gdown https://drive.google.com/file/d/1OAQULMXt0QN46sEB3IV9KhKHi523Fexq/view?usp=drive_link --fuzzy
+    echo "Importing the state"
+    ./target/debug/reth --chain ./scripts/chiado_chainspec.json init-state $STATE_FILE --without-evm --header $HEADER_FILE --total-difficulty 231708131825107706987652208063906496124457284 --header-hash 08cf5eed684e84eccb9809d1d8de287b0bfad27e735c60e98709ab060106b04c
+    touch $IMPORT_SUCCESS_FILE
+fi
 
-# sudo nano /etc/supervisor/conf.d/gnosis-import.conf
-# [program:gnosis-import]
-# command=bash -c "cd /root/reth_gnosis && ./target/debug/reth --chain ./scripts/mainnet_post_merge.json init-state ../state_at_26478650.jsonl --without-evm --header ../block_26478650_selfencoded.rlp --total-difficulty 8626000110427540000000000000000000000000000000 --header-hash a133198478cb01b4585604d07f584633f1f147103b49672d2bd87a5a3ba2c06e"
-# autostart=false
-# autorestart=false
-# stderr_logfile=/var/log/gnosis-import.err.log
-# stdout_logfile=/var/log/gnosis-import.out.log
-# logfile_maxbytes=16MB ; (max main logfile bytes b4 rotation;default 50MB)
-
-sudo supervisorctl reread && sudo supervisorctl update
+echo -e "\033[0;32mSetup complete\033[0m"
