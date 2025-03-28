@@ -100,7 +100,7 @@ docker run --network host \
     -v $DATA_DIR:/data \
     reth node \
     -vvvv \
-    --chain chiado_chainspec.json \
+    --chain chainspecs/chiado.json \
     --datadir /data \
     --http \
     --http.port=8545 \
