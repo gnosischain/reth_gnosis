@@ -14,7 +14,7 @@ Refer to the Reth's documentation to run a node: https://reth.rs/
 
 # Installation
 
-## Build from source
+## Option 1: Build from source
 
 Currently the recommended way of running reth is by building it from source. To do so, you need to have Rust installed. You can install it by following the instructions on the [official website](https://www.rust-lang.org/tools/install).
 
@@ -66,7 +66,7 @@ You can see the default data directory using:
 > **Note:** This version of reth_gnosis is only for internal testing and is not recommended for production use.  
 > Please do not use it for validating purposes.
 
-## Docker image
+## Option 2: Docker image
 
 You can also build the Docker image yourself and run it.
 
