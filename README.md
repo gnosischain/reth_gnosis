@@ -22,7 +22,9 @@ After installing Rust, you can clone the repository and build the project by run
 
 ```bash
 git clone https://github.com/gnosischain/reth_gnosis.git
+cd reth_gnosis
 git checkout chiado-pectra
+
 cargo build
 ```
 
@@ -69,6 +71,10 @@ You can see the default data directory using:
 You can also build the Docker image yourself and run it.
 
 ```bash
+git clone https://github.com/gnosischain/reth_gnosis.git
+cd reth_gnosis
+git checkout chiado-pectra
+
 docker build -t reth .
 ```
 
