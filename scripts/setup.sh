@@ -41,7 +41,7 @@ if [ ! -f $IMPORT_SUCCESS_FILE ] || [ $CLEAR_FLAG = true ]; then
     ./target/debug/reth --chain ./scripts/chainspecs/chiado.json db drop -f || true
 
     echo "Importing the state"
-    ./target/debug/reth --chain ./scripts/chainspecs/chiado.json init-state $STATE_FILE --without-evm --header $HEADER_FILE --total-difficulty 231708131825107706987652208063906496124457284 --header-hash 08cf5eed684e84eccb9809d1d8de287b0bfad27e735c60e98709ab060106b04c
+    ./target/debug/reth --chain ./scripts/chainspecs/chiado.json init-state $STATE_FILE --without-evm --header $HEADER_FILE --total-difficulty 231708131825107706987652208063906496124457284 --header-hash cdc424294195555e53949b6043339a49b049b48caa8d85bc7d5f5d12a85964b6
     touch $IMPORT_SUCCESS_FILE
 fi
 
