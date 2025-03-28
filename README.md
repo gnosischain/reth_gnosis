@@ -95,6 +95,7 @@ Now it's ready to run the node.
 You can run it by running the following command:
 
 ```bash
+DATA_DIR=$(pwd)/data
 docker run --network host \
     -v $DATA_DIR:/data \
     reth node \
