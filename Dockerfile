@@ -45,8 +45,6 @@ WORKDIR /app
 # Copy reth over from the build stage
 COPY --from=builder /app/reth /usr/local/bin
 
-# Copy licenses
-COPY LICENSE-* ./
 COPY ./scripts/chainspecs ./chainspecs
 
 EXPOSE 30303 30303/udp 9001 8545 8546
