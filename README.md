@@ -45,7 +45,7 @@ After setting up the node, you can run it by running the following command:
 ```ocaml
 ./target/debug/reth node \
     -vvvv \
-    --chain ./scripts/chiado_chainspec.json \
+    --chain ./scripts/chainspecs/chiado.json \
     --http \
     --http.port=8545 \
     --http.addr=0.0.0.0 \
