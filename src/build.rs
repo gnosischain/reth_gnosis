@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 use alloy_consensus::{
     proofs, Block, BlockBody, BlockHeader, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH,
@@ -16,6 +16,7 @@ use reth_evm::{
 use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
+use revm_primitives::bytes;
 
 /// Block builder for Gnosis.
 #[derive(Debug)]
@@ -30,7 +31,7 @@ impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             chain_spec,
-            extra_data: Bytes::from_str("reth prerelease").unwrap(),
+            extra_data: bytes!("726574682070726572656c65617365"),
         }
     }
 }
