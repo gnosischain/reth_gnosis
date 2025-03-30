@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use alloy_consensus::{
     proofs, Block, BlockBody, BlockHeader, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH,
@@ -30,7 +30,7 @@ impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             chain_spec,
-            extra_data: Default::default(),
+            extra_data: Bytes::from_str("reth prerelease").unwrap(),
         }
     }
 }
