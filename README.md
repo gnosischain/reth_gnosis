@@ -38,6 +38,8 @@ This is the step where Reth differs from other clients. You need to import the s
 ./scripts/setup-chiado.sh --clear
 ```
 
+> **Note**: If the above script fails for any given reason (such as SSH disconnect, background PID killed, etc.), you have to re-run it mandatorily passing the --clear flag. This is because, if the db isn't initialized properly (i.e. the full import pipeline didn't run), the node cannot sync.
+
 ### Running the node
 
 After setting up the node, you can run it by running the following command:
@@ -86,8 +88,9 @@ You can do so by running the following command:
 ```bash
 ./scripts/docker-setup-chiado.sh --clear
 ```
-
 Optionally, you can specify the data directory by specifying it like `./scripts/docker-setup-chiado.sh /path/to/data`.
+
+> **Note**: If the above script fails for any given reason (such as SSH disconnect, background PID killed, etc.), you have to re-run it mandatorily passing the --clear flag. This is because, if the db isn't initialized properly (i.e. the full import pipeline didn't run), the node cannot sync.
 
 ### Running the node
 
