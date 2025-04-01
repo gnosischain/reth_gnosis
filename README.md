@@ -12,7 +12,7 @@ Refer to the Reth's documentation to run a node: https://reth.rs/
 - [x] [Gnosis withdrawals](https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md)
 
 
-# Installation
+# Installation for Chiado
 
 ## Option 1: Build from source
 
@@ -23,7 +23,7 @@ After installing Rust, you can clone the repository and build the project by run
 ```bash
 git clone https://github.com/gnosischain/reth_gnosis.git
 cd reth_gnosis
-git checkout chiado-pectra
+git checkout pectra-alphas
 
 cargo build
 ```
@@ -32,10 +32,10 @@ This will build the project in debug mode.
 
 ### Node setup
 
-This is the step where Reth differs from other clients. You need to import the state at merge since we don't support the pre-merge block format yet. To do so, you need to download the state and the header at the last block (till which you're importing the state). All this is taken care of by the `setup.sh` script. You can run it by running the following command:
+This is the step where Reth differs from other clients. You need to import the state at merge since we don't support the pre-merge block format yet. To do so, you need to download the state and the header at the last block (till which you're importing the state). All this is taken care of by the `setup-chiado.sh` script. You can run it by running the following command:
 
 ```bash
-./scripts/setup.sh --clear
+./scripts/setup-chiado.sh --clear
 ```
 
 ### Running the node
@@ -84,10 +84,10 @@ You can do so by running the following command:
 ### Docker setup
 
 ```bash
-./scripts/docker-setup.sh --clear
+./scripts/docker-setup-chiado.sh --clear
 ```
 
-Optionally, you can specify the data directory by specifying it like `./scripts/docker-setup.sh /path/to/data`.
+Optionally, you can specify the data directory by specifying it like `./scripts/docker-setup-chiado.sh /path/to/data`.
 
 ### Running the node
 
@@ -114,4 +114,66 @@ docker run --network host \
     --discovery.addr=0.0.0.0
 ```
 
-Here, the `$DATA_DIR` is the directory where you downloaded the state data in `./scripts/docker-setup.sh`. By default, it is `./data`.
+Here, the `$DATA_DIR` is the directory where you downloaded the state data in `./scripts/docker-setup-chiado.sh`. By default, it is `./data`.
+
+# Installation for Mainnet
+
+The same steps apply for the mainnet, but you need to use the mainnet and mainnet file downloader.
+
+## Option 1: Build from source
+
+### Node setup
+You can set up the node by running the following command:
+
+```bash
+./scripts/setup-gnosis.sh --clear
+```
+
+### Running the node
+After setting up the node, you can run it by running the following command:
+
+```ocaml
+./target/debug/reth node \
+    -vvvv \
+    --chain ./scripts/chainspecs/gnosis.json \
+    --http \
+    --http.port=8545 \
+    --http.addr=0.0.0.0 \
+    --http.corsdomain='*' \
+    --http.api=admin,net,eth,web3,debug,trace \
+    --authrpc.port=8546 \
+    --authrpc.jwtsecret=./scripts/networkdata/jwtsecret \
+    --authrpc.addr=0.0.0.0
+```
+
+## Option 2: Docker image
+
+### Docker setup
+You can set up the node by running the following command:
+
+```bash
+./scripts/docker-setup-gnosis.sh --clear
+```
+
+### Running the node
+After setting up the node, you can run it by running the following command:
+
+```bash
+DATA_DIR=$(pwd)/data
+docker run --network host \
+    -v $DATA_DIR:/data \
+    reth node \
+    -vvvv \
+    --chain chainspecs/gnosis.json \
+    --datadir /data \
+    --http \
+    --http.port=8545 \
+    --http.addr=0.0.0.0 \
+    --http.corsdomain='*' \
+    --http.api=admin,net,eth,web3,debug,trace \
+    --authrpc.port=8546 \
+    --authrpc.jwtsecret=/data/jwtsecret \
+    --authrpc.addr=0.0.0.0 \
+    --discovery.port=30303 \
+    --discovery.addr=0.0.0.0
+```
