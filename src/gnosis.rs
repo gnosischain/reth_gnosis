@@ -38,9 +38,7 @@ sol!(
     );
 );
 
-/// Applies the post-block call to the withdrawal / deposit contract, using the given block,
-/// [`GnosisChainSpec`], EVM.
-///
+/// Applies the post-block call to the withdrawal / deposit contract, using the given block.
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
 #[inline]
 fn apply_withdrawals_contract_call<SPEC>(
@@ -109,8 +107,6 @@ where
 }
 
 /// Applies the post-block call to the block rewards POSDAO contract, using the given block,
-/// [`GnosisChainSpec`], EVM.
-///
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
 #[inline]
 fn apply_block_rewards_contract_call<SPEC>(
@@ -231,17 +227,6 @@ where
 
     Ok(balance_increments)
 }
-
-// Post-pectra, the blob fee is collected by the fee collector contract instead of getting burned
-// pub(crate) fn add_blob_fee_collection_to_balance_increments(
-//     balance_increments: &mut HashMap<Address, u128>,
-//     fee_collector_contract: Address,
-//     blob_fee: u128,
-// ) {
-//     *balance_increments
-//         .entry(fee_collector_contract)
-//         .or_default() += blob_fee;
-// }
 
 // TODO: this can be simplified by using the existing apply_post_execution_changes
 // which does all of the same things

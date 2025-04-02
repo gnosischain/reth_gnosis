@@ -68,7 +68,7 @@ where
     Spec: Clone,
     R: ReceiptBuilder,
 {
-    /// Creates a new [`EthBlockExecutor`]
+    /// Creates a new [`GnosisBlockExecutor`]
     pub fn new(
         evm: Evm,
         ctx: EthBlockExecutionCtx<'a>,
@@ -321,7 +321,7 @@ pub struct GnosisBlockExecutorFactory<
 }
 
 impl<R, Spec, EvmFactory> GnosisBlockExecutorFactory<R, Spec, EvmFactory> {
-    /// Creates a new [`EthBlockExecutorFactory`] with the given spec, [`EvmFactory`], and
+    /// Creates a new [`GnosisBlockExecutorFactory`] with the given spec, [`EvmFactory`], and
     /// [`ReceiptBuilder`].
     pub const fn new(
         receipt_builder: R,
