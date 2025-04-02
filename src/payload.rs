@@ -76,10 +76,6 @@ where
         &self,
         args: BuildArguments<EthPayloadBuilderAttributes, EthBuiltPayload>,
     ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError> {
-        // let evm_env = self
-        //     .evm_env(&args.config, &args.config.parent_header)
-        //     .map_err(PayloadBuilderError::other)?;
-
         default_ethereum_payload(
             self.evm_config.clone(),
             self.client.clone(),

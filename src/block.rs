@@ -194,8 +194,6 @@ where
     fn finish(
         mut self,
     ) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
-        // self.evm.db_mut().set_state_clear_flag(false);
-
         let deposit_contract = self.spec.deposit_contract_address();
         let deposit_contract = deposit_contract.unwrap_or_else(|| {
             panic!("Deposit contract address is not set in the chain specification");

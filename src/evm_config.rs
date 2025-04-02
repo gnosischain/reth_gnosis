@@ -27,7 +27,7 @@ pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -
         .with_chain_id(chain_spec.chain().id())
         .with_spec(spec);
     cfg.set_blob_max_and_target_count(evm_env_blob_schedule());
-    // let mut cfg = cfg.;
+
     if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
         // EIP-170 is enabled at the Shanghai Fork on Gnosis Chain
         cfg.limit_contract_code_size = Some(usize::MAX);
