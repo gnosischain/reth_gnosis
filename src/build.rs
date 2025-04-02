@@ -31,7 +31,8 @@ impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             chain_spec,
-            extra_data: bytes!("726574682070726572656c65617365"),
+            // extra data representing "reth@v0.0.1-alpha0"
+            extra_data: bytes!("726574684076302e302e312d616c70686130"),
         }
     }
 }
