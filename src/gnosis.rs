@@ -38,9 +38,7 @@ sol!(
     );
 );
 
-/// Applies the post-block call to the withdrawal / deposit contract, using the given block,
-/// [`GnosisChainSpec`], EVM.
-///
+/// Applies the post-block call to the withdrawal / deposit contract, using the given block.
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
 #[inline]
 fn apply_withdrawals_contract_call<SPEC>(
@@ -109,8 +107,6 @@ where
 }
 
 /// Applies the post-block call to the block rewards POSDAO contract, using the given block,
-/// [`GnosisChainSpec`], EVM.
-///
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
 #[inline]
 fn apply_block_rewards_contract_call<SPEC>(
