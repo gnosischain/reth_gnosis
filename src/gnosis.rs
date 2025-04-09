@@ -91,18 +91,12 @@ where
 
     match result {
         ExecutionResult::Success { output, .. } => Ok(output.into_data()),
-        ExecutionResult::Revert { output, .. } => {
-            Err(BlockValidationError::ConsolidationRequestsContractCall {
-                message: format!("execution reverted: {output}"),
-            }
-            .into())
-        }
-        ExecutionResult::Halt { reason, .. } => {
-            Err(BlockValidationError::ConsolidationRequestsContractCall {
-                message: format!("execution halted: {reason:?}"),
-            }
-            .into())
-        }
+        ExecutionResult::Revert { output, .. } => Err(BlockExecutionError::Internal(
+            InternalBlockExecutionError::Other(format!("execution reverted: {output}").into()),
+        )),
+        ExecutionResult::Halt { reason, .. } => Err(BlockExecutionError::Internal(
+            InternalBlockExecutionError::Other(format!("execution halted: {reason:?}").into()),
+        )),
     }
 }
 
