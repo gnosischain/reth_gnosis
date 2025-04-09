@@ -5,7 +5,6 @@ use alloy_primitives::U256;
 use alloy_primitives::{map::HashMap, Address, Bytes};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
-use reth_errors::BlockValidationError;
 use reth_evm::{
     block::{StateChangePostBlockSource, StateChangeSource, SystemCaller},
     eth::spec::EthExecutorSpec,
