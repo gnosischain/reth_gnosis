@@ -13,12 +13,12 @@ use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::node::NoArgs;
 use reth_db::DatabaseEnv;
 use reth_eth_wire_types::EthNetworkPrimitives;
-use reth_node_ethereum::BasicBlockExecutorProvider;
+use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
 
 use crate::{
-    execute::{GnosisExecutionStrategyFactory, GnosisExecutorProvider},
+    execute::GnosisExecutorProvider,
     spec::{GnosisChainSpec, GnosisChainSpecParser},
     GnosisNode,
 };
@@ -92,7 +92,16 @@ where
     ///
     /// This accepts a closure that is used to launch the node via the
     /// [`NodeCommand`](reth_cli_commands::node::NodeCommand).
-    pub fn run<L, Fut>(mut self, launcher: L) -> eyre::Result<()>
+    pub fn run<L, Fut>(self, launcher: L) -> eyre::Result<()>
+    where
+        L: FnOnce(WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>, Ext) -> Fut,
+        Fut: Future<Output = eyre::Result<()>>,
+    {
+        self.with_runner(CliRunner::try_default_runtime()?, launcher)
+    }
+
+    /// Execute the configured cli command with the provided [`CliRunner`].
+    pub fn with_runner<L, Fut>(mut self, runner: CliRunner, launcher: L) -> eyre::Result<()>
     where
         L: FnOnce(WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
@@ -109,7 +118,13 @@ where
         // Install the prometheus recorder to be sure to record all metrics
         let _ = install_prometheus_recorder();
 
-        let runner = CliRunner::default();
+        let components = |spec: Arc<C::ChainSpec>| {
+            (
+                GnosisExecutorProvider::new(spec.clone()),
+                EthBeaconConsensus::new(spec),
+            )
+        };
+
         match self.command {
             Commands::Node(command) => {
                 runner.run_command_until_exit(|ctx| command.execute(ctx, launcher))
@@ -125,10 +140,7 @@ where
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
             Commands::Stage(command) => runner.run_command_until_exit(|ctx| {
-                command.execute::<GnosisNode, _, _, EthNetworkPrimitives>(
-                    ctx,
-                    GnosisExecutorProvider::gnosis,
-                )
+                command.execute::<GnosisNode, _, _, EthNetworkPrimitives>(ctx, components)
             }),
             Commands::P2P(command) => {
                 runner.run_until_ctrl_c(command.execute::<EthNetworkPrimitives>())
@@ -139,11 +151,7 @@ where
             }
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::Import(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(
-                    |chain_spec| -> BasicBlockExecutorProvider<GnosisExecutionStrategyFactory> {
-                        GnosisExecutorProvider::gnosis(chain_spec)
-                    },
-                ))
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(components))
             }
             Commands::Debug(_command) => todo!(),
         }

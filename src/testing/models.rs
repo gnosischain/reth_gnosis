@@ -253,11 +253,7 @@ impl Account {
 
         let mut storage_cursor = tx.cursor_dup_read::<tables::PlainStorageState>()?;
         dbg!("self.storage: {:?}", self.storage.clone());
-        // dbg!("printing all storage entries");
-        // let mut all = storage_cursor.walk(None).unwrap();
-        // while let Ok(entry) = all.next().unwrap() {
-        //     dbg!("Storage entries: {:?}", entry);
-        // }
+
         for (slot, value) in &self.storage {
             if let Some(entry) =
                 storage_cursor.seek_by_key_subkey(address, B256::new(slot.to_be_bytes()))?
