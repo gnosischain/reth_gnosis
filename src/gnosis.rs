@@ -5,7 +5,6 @@ use alloy_primitives::U256;
 use alloy_primitives::{map::HashMap, Address, Bytes};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
-use reth_errors::BlockValidationError;
 use reth_evm::{
     block::{StateChangePostBlockSource, StateChangeSource, SystemCaller},
     eth::spec::EthExecutorSpec,
@@ -91,18 +90,12 @@ where
 
     match result {
         ExecutionResult::Success { output, .. } => Ok(output.into_data()),
-        ExecutionResult::Revert { output, .. } => {
-            Err(BlockValidationError::ConsolidationRequestsContractCall {
-                message: format!("execution reverted: {output}"),
-            }
-            .into())
-        }
-        ExecutionResult::Halt { reason, .. } => {
-            Err(BlockValidationError::ConsolidationRequestsContractCall {
-                message: format!("execution halted: {reason:?}"),
-            }
-            .into())
-        }
+        ExecutionResult::Revert { output, .. } => Err(BlockExecutionError::Internal(
+            InternalBlockExecutionError::Other(format!("execution reverted: {output}").into()),
+        )),
+        ExecutionResult::Halt { reason, .. } => Err(BlockExecutionError::Internal(
+            InternalBlockExecutionError::Other(format!("execution halted: {reason:?}").into()),
+        )),
     }
 }
 

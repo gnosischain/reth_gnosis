@@ -143,16 +143,15 @@ where
         {
             let blob_gas = tx.blob_gas_used().unwrap_or(0) as u128;
             let blob_gasprice = self.evm.block().blob_gasprice().unwrap_or(0);
+
+            let balances_to_increase =
+                HashMap::<_, _, revm_primitives::map::foldhash::fast::RandomState>::from_iter(
+                    vec![(self.fee_collector_address, blob_gas * blob_gasprice)],
+                );
+
             self.evm
                 .db_mut()
-                .increment_balances(HashMap::<
-                    _,
-                    _,
-                    revm_primitives::map::foldhash::fast::RandomState,
-                >::from_iter(vec![(
-                    self.fee_collector_address,
-                    blob_gas * blob_gasprice,
-                )]))
+                .increment_balances(balances_to_increase)
                 .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
         }
         // Gnosis-specific // End
@@ -213,6 +212,7 @@ where
             &mut self.evm,
             &mut self.system_caller,
         )?;
+        // Gnosis-specific // End
 
         let requests = if self
             .spec
@@ -248,7 +248,6 @@ where
         } else {
             Requests::default()
         };
-        // Gnosis-specific // End
 
         // Add block rewards if they are enabled.
         if let Some(base_block_reward) = base_block_reward(&self.spec, self.evm.block().number) {
