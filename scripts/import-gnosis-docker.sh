@@ -9,13 +9,19 @@ EXPECTED_STATE_ROOT="0x95c4ecc49287d652e956b71ef82fb34a17da87fcbd6ab64f05542ddd3
 
 echo -e "\n\033[0;34mTrying to import state using Docker...\033[0m"
 
+# if imported, exit
+if [ -f "$DATA_DIR/imported" ]; then
+    echo -e "\033[0;32mAlready imported!\033[0m"
+    exit 0
+fi
+
 DB_PATH="$DATA_DIR/db"
 
 # if it exists, check state root
 if [ -d "$DB_PATH" ]; then
     echo -e "\033[0;34mChecking state root...\033[0m"
     
-    STATE_ROOT=$(docker run --rm -v "$DATA_DIR":/data reth \
+    STATE_ROOT=$(docker run --rm -v "$DATA_DIR":/data ghcr.io/gnosischain/reth_gnosis:master \
         --chain chainspecs/gnosis.json \
         db --datadir /data get static-file headers 26478650 | \
         grep stateRoot | sed -E 's/.*: "(0x[0-9a-f]+)".*/\1/') || {
@@ -27,7 +33,7 @@ if [ -d "$DB_PATH" ]; then
     if [ "$STATE_ROOT" != "$EXPECTED_STATE_ROOT" ]; then
         echo -e "\033[0;31mState root mismatch! Expected $EXPECTED_STATE_ROOT, got $STATE_ROOT\033[0m"
         echo -e "\033[0;31mClearing database...\033[0m"
-        docker run --rm -v "$DATA_DIR":/data reth \
+        docker run --rm -v "$DATA_DIR":/data ghcr.io/gnosischain/reth_gnosis:master \
             --chain chainspecs/gnosis.json \
             db --datadir /data drop -f || true
         echo -e "\033[0;34mDeleted existing DB due to corruption...\033[0m"
@@ -39,7 +45,7 @@ if [ -d "$DB_PATH" ]; then
 fi
 
 echo -e "\033[0;34mImporting the state...\033[0m"
-docker run --rm -v "$DATA_DIR":/data reth \
+docker run --rm -v "$DATA_DIR":/data ghcr.io/gnosischain/reth_gnosis:master \
     --chain chainspecs/gnosis.json \
     init-state /data/state_26478650.jsonl \
     --without-evm \
@@ -48,7 +54,7 @@ docker run --rm -v "$DATA_DIR":/data reth \
     --header-hash a133198478cb01b4585604d07f584633f1f147103b49672d2bd87a5a3ba2c06e \
     --datadir /data
 
-STATE_ROOT=$(docker run --rm -v "$DATA_DIR":/data reth \
+STATE_ROOT=$(docker run --rm -v "$DATA_DIR":/data ghcr.io/gnosischain/reth_gnosis:master \
     --chain chainspecs/gnosis.json \
     db --datadir /data get static-file headers 26478650 | \
     grep stateRoot | sed -E 's/.*: "(0x[0-9a-f]+)".*/\1/')

@@ -66,5 +66,13 @@ if [[ "$CHAIN" == "gnosis" ]]; then
     "$SCRIPT_DIR/download-data-gnosis.sh" "$DATA_DIR"
 
     # Import state
-    "$SCRIPT_DIR/import-gnosis.sh" "$DATA_DIR"
+    if [[ "$DOCKER" == true ]]; then
+        "$SCRIPT_DIR/import-gnosis-docker.sh" "$DATA_DIR"
+    else
+        "$SCRIPT_DIR/import-gnosis.sh" "$DATA_DIR"
+    fi
 fi
+
+echo -e "\n\033[0;32m###########\033[0m"
+echo -e "\033[0;32m## Done! ##\033[0m"
+echo -e "\033[0;32m###########\033[0m"

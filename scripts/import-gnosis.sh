@@ -9,6 +9,12 @@ SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 
 echo -e "\n\033[0;34mTrying to import state...\033[0m"
 
+# if imported, exit
+if [ -f "$DATA_DIR/imported" ]; then
+    echo -e "\033[0;32mAlready imported!\033[0m"
+    exit 0
+fi
+
 EXPECTED_STATE_ROOT="0x95c4ecc49287d652e956b71ef82fb34a17da87fcbd6ab64f05542ddd3b5cb44f"
 
 DB_PATH="$DATA_DIR/db"
