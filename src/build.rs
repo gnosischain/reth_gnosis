@@ -16,6 +16,7 @@ use reth_evm::{
 use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
+use revm_primitives::bytes;
 
 /// Block builder for Gnosis.
 #[derive(Debug)]
@@ -30,7 +31,8 @@ impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             chain_spec,
-            extra_data: Default::default(),
+            // extra data representing "reth@v0.0.1-alpha0"
+            extra_data: bytes!("726574684076302e302e312d616c70686130"),
         }
     }
 }
