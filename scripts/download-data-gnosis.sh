@@ -1,3 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+
+cleanup() {
+    echo -e "\033[0;31mInterrupted. Cleaning up temp files...\033[0m"
+    rm -f "$DATA_DIR/chunk_"*".part"
+    rm -f "$STATE_FILE.part"
+    exit 1
+}
+trap cleanup INT TERM
+
+# first input or $PWD/data
+DATA_DIR=$1
+
+find "$DATA_DIR" -name '*.part' -delete
+
+echo -e "\033[0;34mTrying to download files...\033[0m"
+
+get_file_size() {
+  if stat --version >/dev/null 2>&1; then
+    # GNU (Linux)
+    stat -c %s "$1"
+  else
+    # BSD/macOS
+    stat -f %z "$1"
+  fi
+}
+
 # GitHub organization and repository
 ORG="gnosischain"
 REPO="reth-init-state"
@@ -36,17 +64,17 @@ for i in {0..6}; do
 
   # Check if file exists and has the correct size
   if [[ -f "$OUTPUT_FILE" ]]; then
-    FILE_SIZE=$(stat -c %s "$OUTPUT_FILE")
+    FILE_SIZE=$(get_file_size "$OUTPUT_FILE")
     if [[ "$FILE_SIZE" -eq "$SIZE" ]]; then
-      echo "$OUTPUT_FILE already downloaded and complete. Skipping..."
+      echo -e "\033[0;32m$OUTPUT_FILE already downloaded and complete. Skipping...\033[0m"
       continue
     else
-      echo "$OUTPUT_FILE is incomplete. Re-downloading..."
+      echo -e "\033[0;31m$OUTPUT_FILE is incomplete. Re-downloading...\033[0m"
       rm "$OUTPUT_FILE"
     fi
   fi
 
-  echo "Requesting download URL for $CHUNK_FILE..."
+  echo -e "\033[0;34mRequesting download URL for $CHUNK_FILE...\033[0m"
 
   # Request download URL
   RESPONSE=$(curl -s -X POST \
@@ -59,45 +87,65 @@ for i in {0..6}; do
   DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r .objects[0].actions.download.href)
 
   if [[ -z "$DOWNLOAD_URL" || "$DOWNLOAD_URL" == "null" ]]; then
-    echo "Error: Could not retrieve download URL for $CHUNK_FILE"
+    echo -e "\033[0;31mError: Could not retrieve download URL for $CHUNK_FILE\033[0m"
     continue
   fi
 
-  echo "Downloading $CHUNK_FILE..."
-  wget -O "$OUTPUT_FILE" "$DOWNLOAD_URL"
+  echo -e "\033[0;34mDownloading $CHUNK_FILE...\033[0m"
+
+  TEMP_FILE="$OUTPUT_FILE.part"
+  wget --tries=3 -O "$TEMP_FILE" "$DOWNLOAD_URL"
+  mv "$TEMP_FILE" "$OUTPUT_FILE"
 
   # Verify file size after download
   if [[ -f "$OUTPUT_FILE" ]]; then
-    FILE_SIZE=$(stat -c %s "$OUTPUT_FILE")
+    FILE_SIZE=$(get_file_size "$OUTPUT_FILE")
     if [[ "$FILE_SIZE" -eq "$SIZE" ]]; then
-      echo "$CHUNK_FILE downloaded successfully."
+      echo -e "\033[0;32m$CHUNK_FILE downloaded successfully.\033[0m"
     else
-      echo "Warning: $CHUNK_FILE may be incomplete. Expected $SIZE bytes but got $FILE_SIZE bytes."
+      echo -e "\033[0;33mWarning: $CHUNK_FILE may be incomplete. Expected $SIZE bytes but got $FILE_SIZE bytes.\033[0m"
     fi
   fi
 done
 
-echo "All files downloaded!"
+echo -e "\033[0;32mAll state chunks downloaded!\033[0m"
 
 HEADER_FILE="$DATA_DIR/header_26478650.rlp"
-if [[ -f "$HEADER_FILE" ]]; then
-  wget https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/gnosis/header_26478650.rlp -O $HEADER_FILE
+if [[ ! -f "$HEADER_FILE" ]]; then
+  TEMP_HEADER_FILE="$HEADER_FILE.part"
+  wget https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/gnosis/header_26478650.rlp -O "$TEMP_HEADER_FILE"
+  mv "$TEMP_HEADER_FILE" "$HEADER_FILE"
+  echo -e "\033[0;32mDownloaded $HEADER_FILE\033[0m"
 fi
 
 STATE_FILE="$DATA_DIR/state_26478650.jsonl"
 STATE_SIZE=27498292407
 
+for i in {0..6}; do
+  CHUNK="$DATA_DIR/chunk_0$i"
+  if [[ ! -f "$CHUNK" ]]; then
+    echo -e "\033[0;31mError: Missing chunk $CHUNK, cannot combine. Re-run script.\033[0m"
+    exit 1
+  fi
+done
+
 # Check if file exists and has the correct size
 if [[ -f "$STATE_FILE" ]]; then
-  FILE_SIZE=$(stat -c %s "$STATE_FILE")
+  FILE_SIZE=$(get_file_size "$STATE_FILE")
   if [[ "$FILE_SIZE" -eq "$STATE_SIZE" ]]; then
-    echo "State already combined!"
+    echo -e "\033[0;32mState already combined!\033[0m"
   else
-    echo "Combining files to state"
+    echo -e "\033[0;34mCombining files to state...\033[0m"
     rm "$STATE_FILE"
-    cat chunk_* > "$STATE_FILE"
-    echo "State file combined!"
+    cat "$(printf "$DATA_DIR/chunk_%02d " {0..6})" > "$STATE_FILE.part" && mv "$STATE_FILE.part" "$STATE_FILE"
+    echo -e "\033[0;32mState file combined!\033[0m"
   fi
 fi
 
-echo "State file ready..."
+FINAL_SIZE=$(get_file_size "$STATE_FILE")
+if [[ "$FINAL_SIZE" -ne "$STATE_SIZE" ]]; then
+  echo -e "\033[0;31mError: Combined state file size mismatch!\033[0m"
+  exit 1
+fi
+
+echo -e "\033[0;32mFiles downloaded [state & header]\033[0m"
