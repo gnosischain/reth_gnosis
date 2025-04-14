@@ -16,7 +16,7 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
 # Build profile, release by default
-ARG BUILD_PROFILE=dev
+ARG BUILD_PROFILE=release
 ENV BUILD_PROFILE $BUILD_PROFILE
 
 # Extra Cargo flags
@@ -36,7 +36,7 @@ RUN cargo build --profile $BUILD_PROFILE --features "$FEATURES" --locked --bin r
 
 # ARG is not resolved in COPY so we have to hack around it by copying the
 # binary to a temporary location
-RUN cp /app/target/debug/reth /app/reth
+RUN cp /app/target/$BUILD_PROFILE/reth /app/reth
 
 # Use Ubuntu as the release image
 FROM ubuntu AS runtime
