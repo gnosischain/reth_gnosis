@@ -1,7 +1,8 @@
 use revm::{
     context::{
         result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, ResultAndState},
-        Block, Cfg, ContextSetters, ContextTr, Evm, JournalOutput, JournalTr,
+        Block, Cfg, ContextSetters, ContextTr, Evm, JournalOutput, JournalTr, Transaction,
+        TransactionType,
     },
     handler::{
         instructions::{EthInstructions, InstructionProvider},
@@ -68,6 +69,11 @@ where
                 .saturating_add(U256::from(basefee * gas_used));
         }
         Ok(())
+    }
+
+    #[inline]
+    fn deduct_caller(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
+        deduct_caller_gnosis(evm.ctx(), self.fee_collector).map_err(From::from)
     }
 }
 
@@ -227,4 +233,65 @@ where
         let mut h = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
         h.inspect_run(self)
     }
+}
+
+// REF: https://github.com/bluealloy/revm/blob/ce9be1ffa17d394397f58d0c693f8b36016b3fc7/crates/handler/src/pre_execution.rs#L72
+// Modification: Collects the blob gas fee (if pectra) after deducting from caller's account.
+#[inline]
+pub fn deduct_caller_gnosis<CTX: ContextTr>(
+    context: &mut CTX,
+    fee_collector: Address,
+) -> Result<(), <CTX::Db as Database>::Error> {
+    let basefee = context.block().basefee();
+    let blob_price = context.block().blob_gasprice().unwrap_or_default();
+    let effective_gas_price = context.tx().effective_gas_price(basefee as u128);
+    // Subtract gas costs from the caller's account.
+    // We need to saturate the gas cost to prevent underflow in case that `disable_balance_check` is enabled.
+    let mut gas_cost = (context.tx().gas_limit() as u128).saturating_mul(effective_gas_price);
+
+    let mut blob_gas_cost: u128 = 0;
+
+    // EIP-4844
+    if context.tx().tx_type() == TransactionType::Eip4844 {
+        let blob_gas = context.tx().total_blob_gas() as u128;
+        blob_gas_cost = blob_price.saturating_mul(blob_gas);
+        gas_cost = gas_cost.saturating_add(blob_gas_cost);
+    }
+
+    let is_call = context.tx().kind().is_call();
+    let caller = context.tx().caller();
+
+    // Load caller's account.
+    let caller_account = context.journal().load_account(caller)?.data;
+    // Set new caller account balance.
+    caller_account.info.balance = caller_account
+        .info
+        .balance
+        .saturating_sub(U256::from(gas_cost));
+
+    // Bump the nonce for calls. Nonce for CREATE will be bumped in `handle_create`.
+    if is_call {
+        // Nonce is already checked
+        caller_account.info.nonce = caller_account.info.nonce.saturating_add(1);
+    }
+
+    // Touch account so we know it is changed.
+    caller_account.mark_touch();
+
+    // GNOSIS-SPECIFIC // START
+    let spec: SpecId = context.cfg().spec().into();
+    if spec.is_enabled_in(SpecId::PRAGUE) {
+        let fee_collector_account = context.journal().load_account(fee_collector)?.data;
+        // Set new fee collector account balance.
+        fee_collector_account.info.balance = fee_collector_account
+            .info
+            .balance
+            .saturating_add(U256::from(blob_gas_cost));
+
+        // Touch account so we know it is changed.
+        fee_collector_account.mark_touch();
+    }
+    // GNOSIS-SPECIFIC // END
+
+    Ok(())
 }

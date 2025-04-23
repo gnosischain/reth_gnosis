@@ -78,7 +78,6 @@ impl GnosisEvmConfig {
                 GnosisEvmFactory {
                     fee_collector_address,
                 },
-                fee_collector_address,
                 block_rewards_address,
             ),
             chain_spec,

@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
 use alloy_eips::eip7002::WITHDRAWAL_REQUEST_TYPE;
@@ -59,7 +58,6 @@ pub struct GnosisBlockExecutor<'a, Evm, Spec, R: ReceiptBuilder> {
     gas_used: u64,
 
     // Gnosis-specific fields
-    fee_collector_address: Address,
     block_rewards_address: Address,
 }
 
@@ -74,7 +72,6 @@ where
         ctx: EthBlockExecutionCtx<'a>,
         spec: Spec,
         receipt_builder: R,
-        fee_collector_address: Address,
         block_rewards_address: Address,
     ) -> Self {
         Self {
@@ -85,7 +82,6 @@ where
             system_caller: SystemCaller::new(spec.clone()),
             spec,
             receipt_builder,
-            fee_collector_address,
             block_rewards_address,
         }
     }
@@ -135,26 +131,6 @@ where
                 .into(),
             );
         }
-
-        // Gnosis-specific // Start
-        if self
-            .spec
-            .is_prague_active_at_timestamp(self.evm.block().timestamp)
-        {
-            let blob_gas = tx.blob_gas_used().unwrap_or(0) as u128;
-            let blob_gasprice = self.evm.block().blob_gasprice().unwrap_or(0);
-
-            let balances_to_increase =
-                HashMap::<_, _, revm_primitives::map::foldhash::fast::RandomState>::from_iter(
-                    vec![(self.fee_collector_address, blob_gas * blob_gasprice)],
-                );
-
-            self.evm
-                .db_mut()
-                .increment_balances(balances_to_increase)
-                .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
-        }
-        // Gnosis-specific // End
 
         // Execute transaction.
         let result_and_state = self
@@ -313,7 +289,6 @@ pub struct GnosisBlockExecutorFactory<
     evm_factory: EvmFactory,
 
     // Gnosis-specific fields to be used in GnosisBlockExecutor
-    fee_collector_address: Address,
     block_rewards_address: Address,
 }
 
@@ -324,14 +299,12 @@ impl<R, Spec, EvmFactory> GnosisBlockExecutorFactory<R, Spec, EvmFactory> {
         receipt_builder: R,
         spec: Spec,
         evm_factory: EvmFactory,
-        fee_collector_address: Address,
         block_rewards_address: Address,
     ) -> Self {
         Self {
             receipt_builder,
             spec,
             evm_factory,
-            fee_collector_address,
             block_rewards_address,
         }
     }
@@ -382,7 +355,6 @@ where
             ctx,
             &self.spec,
             &self.receipt_builder,
-            self.fee_collector_address,
             self.block_rewards_address,
         )
     }
