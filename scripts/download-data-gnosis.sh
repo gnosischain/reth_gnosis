@@ -129,17 +129,24 @@ for i in {0..6}; do
   fi
 done
 
-# Check if file exists and has the correct size
+combine_chunks() {
+  echo -e "\033[0;34mCombining files to state...\033[0m"
+  cat $(printf "$DATA_DIR/chunk_%02d " {0..6}) > "$STATE_FILE.part" && mv "$STATE_FILE.part" "$STATE_FILE"
+}
+
 if [[ -f "$STATE_FILE" ]]; then
   FILE_SIZE=$(get_file_size "$STATE_FILE")
   if [[ "$FILE_SIZE" -eq "$STATE_SIZE" ]]; then
     echo -e "\033[0;32mState already combined!\033[0m"
+    exit 0
   else
-    echo -e "\033[0;34mCombining files to state...\033[0m"
-    rm "$STATE_FILE"
-    cat "$(printf "$DATA_DIR/chunk_%02d " {0..6})" > "$STATE_FILE.part" && mv "$STATE_FILE.part" "$STATE_FILE"
-    echo -e "\033[0;32mState file combined!\033[0m"
+    echo -e "\033[0;33mState file exists but size mismatch. Recombining...\033[0m"
+    rm -f "$STATE_FILE"
+    combine_chunks
   fi
+else
+  echo -e "\033[0;34mState file not found. Combining chunks...\033[0m"
+  combine_chunks
 fi
 
 FINAL_SIZE=$(get_file_size "$STATE_FILE")
