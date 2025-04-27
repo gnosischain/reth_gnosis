@@ -54,6 +54,12 @@ SIZES=(
   1728488631
 )
 
+if ! command -v jq &> /dev/null; then
+    echo -e "\033[0;31mError: 'jq' is not installed.\033[0m"
+    echo -e "\033[0;33mPlease install jq and try again.\033[0m"
+    exit 1
+fi
+
 # Loop through chunks 00 to 06
 for i in {0..6}; do
   CHUNK_FILE="chunk_0$i"
