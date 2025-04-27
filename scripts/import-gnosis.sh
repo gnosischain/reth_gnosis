@@ -40,7 +40,7 @@ if [ -d "$DB_PATH" ]; then
 fi
 
 echo -e "\033[0;34mImporting the state...\033[0m"
-./target/debug/reth --chain "$SCRIPT_DIR/chainspecs/mainnet.json" init-state $STATE_FILE --without-evm --header $HEADER_FILE --total-difficulty 8626000110427540000000000000000000000000000000 --header-hash a133198478cb01b4585604d07f584633f1f147103b49672d2bd87a5a3ba2c06e --datadir $DATA_DIR
+./target/debug/reth --chain "$SCRIPT_DIR/chainspecs/gnosis.json" init-state $STATE_FILE --without-evm --header $HEADER_FILE --total-difficulty 8626000110427540000000000000000000000000000000 --header-hash a133198478cb01b4585604d07f584633f1f147103b49672d2bd87a5a3ba2c06e --datadir $DATA_DIR
 
 STATE_ROOT=$(./target/debug/reth --chain "$SCRIPT_DIR/chainspecs/gnosis.json" db --datadir "$DATA_DIR" get static-file headers 26478650 | grep stateRoot | sed -E 's/.*: "(0x[0-9a-f]+)".*/\1/')
 if [ "$STATE_ROOT" != "$EXPECTED_STATE_ROOT" ]; then
