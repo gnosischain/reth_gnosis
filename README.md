@@ -91,7 +91,7 @@ git clone https://github.com/gnosischain/reth_gnosis.git
 cd reth_gnosis
 git checkout pectra-alphas
 
-cargo build
+cargo build --release
 ```
 
 This will build the project in debug mode.
@@ -121,7 +121,7 @@ cp /path/to/jwtsecret ./reth_data/jwtsecret
 ```
 
 ```bash
-./target/debug/reth node \
+./target/release/reth node \
     -vvvv \
     --chain ./scripts/chainspecs/chiado.json \
     --datadir ./reth_data \
