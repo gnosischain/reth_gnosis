@@ -22,7 +22,7 @@ DB_PATH="$DATA_DIR/db"
 if [ -d "$DB_PATH" ]; then
     echo -e "\033[0;34mChecking state root...\033[0m"
     
-    STATE_ROOT=$(./target/debug/reth --chain "$SCRIPT_DIR/chainspecs/gnosis.json" db --datadir "$DATA_DIR" get static-file headers 26478650 | grep stateRoot | sed -E 's/.*: "(0x[0-9a-f]+)".*/\1/') || {
+    STATE_ROOT=$(./target/release/reth --chain "$SCRIPT_DIR/chainspecs/gnosis.json" db --datadir "$DATA_DIR" get static-file headers 26478650 | grep stateRoot | sed -E 's/.*: "(0x[0-9a-f]+)".*/\1/') || {
         STATE_ROOT=""
     }
     echo -e "\033[0;34mState root: $STATE_ROOT\033[0m"
@@ -30,7 +30,7 @@ if [ -d "$DB_PATH" ]; then
     if [ "$STATE_ROOT" != "$EXPECTED_STATE_ROOT" ]; then
         echo -e "\033[0;31mState root mismatch! Expected $EXPECTED_STATE_ROOT, got $STATE_ROOT\033[0m"
         echo -e "\033[0;31mClearing database...\033[0m"
-        ./target/debug/reth --chain $SCRIPT_DIR/chainspecs/gnosis.json db --datadir "$DATA_DIR" drop -f || true
+        ./target/release/reth --chain $SCRIPT_DIR/chainspecs/gnosis.json db --datadir "$DATA_DIR" drop -f || true
         echo -e "\033[0;34mDeleted existing DB due to corruption...\033[0m"
     else
         echo -e "\033[0;32mAlready imported. State root matches!\033[0m"
@@ -40,9 +40,9 @@ if [ -d "$DB_PATH" ]; then
 fi
 
 echo -e "\033[0;34mImporting the state...\033[0m"
-./target/debug/reth --chain "$SCRIPT_DIR/chainspecs/gnosis.json" init-state $STATE_FILE --without-evm --header $HEADER_FILE --total-difficulty 8626000110427540000000000000000000000000000000 --header-hash a133198478cb01b4585604d07f584633f1f147103b49672d2bd87a5a3ba2c06e --datadir $DATA_DIR
+./target/release/reth --chain "$SCRIPT_DIR/chainspecs/gnosis.json" init-state $STATE_FILE --without-evm --header $HEADER_FILE --total-difficulty 8626000110427540000000000000000000000000000000 --header-hash a133198478cb01b4585604d07f584633f1f147103b49672d2bd87a5a3ba2c06e --datadir $DATA_DIR
 
-STATE_ROOT=$(./target/debug/reth --chain "$SCRIPT_DIR/chainspecs/gnosis.json" db --datadir "$DATA_DIR" get static-file headers 26478650 | grep stateRoot | sed -E 's/.*: "(0x[0-9a-f]+)".*/\1/')
+STATE_ROOT=$(./target/release/reth --chain "$SCRIPT_DIR/chainspecs/gnosis.json" db --datadir "$DATA_DIR" get static-file headers 26478650 | grep stateRoot | sed -E 's/.*: "(0x[0-9a-f]+)".*/\1/')
 if [ "$STATE_ROOT" != "$EXPECTED_STATE_ROOT" ]; then
     echo -e "\033[0;31mState root mismatch! Expected $EXPECTED_STATE_ROOT, got $STATE_ROOT\033[0m"
     exit 1
