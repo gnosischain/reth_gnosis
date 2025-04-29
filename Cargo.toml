@@ -90,6 +90,10 @@ alloy-serde = { version = "0.12.5", default-features = false }
 rayon = "1.7"
 
 tracing = "0.1.0"
+reqwest = "0.12"
+tokio = "1"
+anyhow = "1.0.98"
+indicatif = "0.17"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemalloc-ctl = "0.6"

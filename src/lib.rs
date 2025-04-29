@@ -31,6 +31,7 @@ mod blobs;
 mod block;
 mod build;
 pub mod cli;
+pub mod download_init_state;
 mod errors;
 mod evm;
 mod evm_config;
