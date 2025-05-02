@@ -27,7 +27,7 @@ use revm::context::Block;
 use revm_primitives::U256;
 use tracing::{debug, trace, warn};
 
-use crate::{blobs::get_blob_params, spec::GnosisChainSpec};
+use crate::{blobs::get_blob_params, spec::spec::GnosisChainSpec};
 
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,

@@ -9,7 +9,7 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
 
-use crate::spec::GnosisChainSpec;
+use crate::spec::spec::GnosisChainSpec;
 
 /// A basic ethereum payload service.
 #[derive(Debug, Default, Clone, Copy)]

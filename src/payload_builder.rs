@@ -10,7 +10,7 @@ use reth_node_builder::{
 use reth_primitives::EthPrimitives;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
-use crate::{evm_config::GnosisEvmConfig, spec::GnosisChainSpec};
+use crate::{evm_config::GnosisEvmConfig, spec::spec::GnosisChainSpec};
 
 /// A basic ethereum payload service.
 #[derive(Clone, Default, Debug)]

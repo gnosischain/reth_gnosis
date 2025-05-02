@@ -2,7 +2,7 @@
 
 use crate::{
     execute::GnosisExecutorProvider,
-    spec::GnosisChainSpec,
+    spec::spec::GnosisChainSpec,
     testing::{
         models::{BlockchainTest, ForkSpec},
         Case, Error, Suite,

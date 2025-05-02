@@ -4,6 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::{fs, io::AsyncWriteExt};
 
+#[derive(Debug, Clone, Copy)]
 pub struct DownloadStateSpec {
     pub expected_state_root: &'static str,
     pub block_num: &'static str,
@@ -25,17 +26,12 @@ pub const CHIADO_DOWNLOAD_SPEC: DownloadStateSpec = DownloadStateSpec {
     header_hash: "cdc424294195555e53949b6043339a49b049b48caa8d85bc7d5f5d12a85964b6",
 };
 
-// TODO: Include here the hardcoded state root
-// TODO: Move this hardcoded values to a flag
-// TODO: Include chiado, unify chiado data format with Gnosis data format
-// TODO: Standarize the format the of the URLs and pass as argument
-
 // ────────────────────────────────────────────────────────────
 // Download/combine Gnosis state before the node boots
 // ────────────────────────────────────────────────────────────
 const LFS_BATCH: &str = "https://github.com/gnosischain/reth-init-state.git/info/lfs/objects/batch";
 
-const OIDS: [&str; 7] = [
+const GNOSIS_OIDS: [&str; 7] = [
     "cd3b4b0edc6fc86bd9eee682ed0c6a1cc9ddc90fde12c855f960baf6ad74f11b",
     "3c591add3562c42baa113623418bb6f51fb73f183a866a30a372be52206d54c3",
     "4a7be543b8c2bd00e4a2b51ae35e065c29ddbb38becb62c42199a15d56f0d432",
@@ -45,7 +41,7 @@ const OIDS: [&str; 7] = [
     "ad2ecfba180f5da124d342134f766c4ab90280473e487f7f3eb73d19bf7598b1",
 ];
 
-const SIZES: [u64; 7] = [
+const GNOSIS_SIZES: [u64; 7] = [
     4_294_967_296,
     4_294_967_296,
     4_294_967_296,
@@ -55,14 +51,48 @@ const SIZES: [u64; 7] = [
     1_728_488_631,
 ];
 
-const HEADER_FILE: &str = "header_26478650.rlp";
-const HEADER_URL: &str = "https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/gnosis/header_26478650.rlp";
+const CHIADO_OIDS: [&str; 1] = ["11046652a6ec2c84c201503200bd0e8f05ce79d0399a677c7244471a21bac35f"];
 
-const STATE_FILE: &str = "state_26478650.jsonl";
-const STATE_SIZE: u64 = 27_498_292_407;
+const CHIADO_SIZES: [u64; 1] = [111_610_557];
+
+fn get_oids(chain: &str) -> &'static [&'static str] {
+    match chain {
+        "gnosis" => &GNOSIS_OIDS,
+        "chiado" => &CHIADO_OIDS,
+        _ => unreachable!(),
+    }
+}
+
+fn get_sizes(chain: &str) -> &'static [u64] {
+    match chain {
+        "gnosis" => &GNOSIS_SIZES,
+        "chiado" => &CHIADO_SIZES,
+        _ => unreachable!(),
+    }
+}
+
+const HEADER_FILE: &str = "header.rlp";
+
+fn get_header_url(chain: &str) -> &'static str {
+    match chain {
+        "gnosis" => "https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/gnosis/header_26478650.rlp",
+        "chiado" => "https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/chiado/header_700000.rlp",
+        _ => unreachable!(),
+    }
+}
+
+const STATE_FILE: &str = "state.jsonl";
+
+fn get_state_size(chain: &str) -> u64 {
+    match chain {
+        "gnosis" => 27_498_292_407,
+        "chiado" => 111_610_557,
+        _ => unreachable!(),
+    }
+}
 
 /// Downloads the initial state
-pub async fn ensure_state(data_dir: &Path) -> anyhow::Result<()> {
+pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
     fs::create_dir_all(data_dir).await?;
 
     // remove any *.part leftovers
@@ -78,7 +108,7 @@ pub async fn ensure_state(data_dir: &Path) -> anyhow::Result<()> {
         .build()?;
 
     // download/verify each chunk
-    for (idx, (&oid, &size)) in OIDS.iter().zip(&SIZES).enumerate() {
+    for (idx, (&oid, &size)) in get_oids(chain).iter().zip(get_sizes(chain)).enumerate() {
         let name = format!("chunk_{idx:02}");
         let out = data_dir.join(&name);
         if file_has_size(&out, size).await? {
@@ -157,7 +187,7 @@ pub async fn ensure_state(data_dir: &Path) -> anyhow::Result<()> {
     if !header_path.exists() {
         println!("⬇️   downloading header …");
         let bytes = client
-            .get(HEADER_URL)
+            .get(get_header_url(chain))
             .send()
             .await?
             .error_for_status()?
@@ -168,7 +198,7 @@ pub async fn ensure_state(data_dir: &Path) -> anyhow::Result<()> {
 
     // combine chunks
     let state_path = data_dir.join(STATE_FILE);
-    if file_has_size(&state_path, STATE_SIZE).await? {
+    if file_has_size(&state_path, get_state_size(chain)).await? {
         println!("✅  state already complete");
         return Ok(());
     }
@@ -176,13 +206,13 @@ pub async fn ensure_state(data_dir: &Path) -> anyhow::Result<()> {
     println!("🛠   combining chunks → {}", STATE_FILE);
     let tmp = state_path.with_extension("part");
     let mut out = fs::File::create(&tmp).await?;
-    for idx in 0..OIDS.len() {
+    for idx in 0..get_oids(chain).len() {
         let mut f = fs::File::open(data_dir.join(format!("chunk_{idx:02}"))).await?;
         tokio::io::copy(&mut f, &mut out).await?;
     }
     out.flush().await?;
     fs::rename(&tmp, &state_path).await?;
-    if !file_has_size(&state_path, STATE_SIZE).await? {
+    if !file_has_size(&state_path, get_state_size(chain)).await? {
         bail!("combined state size mismatch");
     }
 

@@ -19,7 +19,7 @@ use crate::blobs::{evm_env_blob_schedule, get_blob_params, next_blob_gas_and_pri
 use crate::block::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
-use crate::spec::GnosisChainSpec;
+use crate::spec::spec::GnosisChainSpec;
 
 /// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
 pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -> CfgEnv {

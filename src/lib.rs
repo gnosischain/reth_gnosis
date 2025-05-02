@@ -24,19 +24,19 @@ use reth_node_ethereum::{
 use reth_primitives::EthPrimitives;
 use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
-use spec::GnosisChainSpec;
+use spec::spec::GnosisChainSpec;
 use std::sync::Arc;
 
 mod blobs;
 mod block;
 mod build;
 pub mod cli;
-pub mod download_init_state;
 mod errors;
 mod evm;
 mod evm_config;
 pub mod execute;
 mod gnosis;
+pub mod initialize;
 mod network;
 mod payload;
 mod payload_builder;
