@@ -9,7 +9,7 @@ use reth_transaction_pool::{
     blobstore::DiskFileBlobStore, EthTransactionPool, TransactionValidationTaskExecutor,
 };
 
-use crate::spec::spec::GnosisChainSpec;
+use crate::spec::gnosis_spec::GnosisChainSpec;
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct GnosisPoolBuilder {}

@@ -19,7 +19,7 @@ use tracing::info;
 
 use crate::{
     execute::GnosisExecutorProvider,
-    spec::spec::{GnosisChainSpec, GnosisChainSpecParser},
+    spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
     GnosisNode,
 };
 

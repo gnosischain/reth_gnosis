@@ -1,2 +1,2 @@
 pub mod chains;
-pub mod spec;
+pub mod gnosis_spec;

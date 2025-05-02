@@ -2,7 +2,7 @@ use clap::{Args, Parser};
 use reth_cli_commands::common::EnvironmentArgs;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
-use reth_gnosis::{cli::Cli, spec::spec::GnosisChainSpecParser, GnosisNode};
+use reth_gnosis::{cli::Cli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
@@ -26,7 +26,7 @@ fn main() {
             datadir: node_cmd.datadir.clone(),
             config: node_cmd.config.clone(),
             chain: node_cmd.chain.clone(),
-            db: node_cmd.db.clone(),
+            db: node_cmd.db,
         };
 
         match node_cmd.chain.chain().id() {

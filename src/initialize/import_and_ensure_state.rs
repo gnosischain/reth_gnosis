@@ -1,5 +1,5 @@
 use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
-use crate::{spec::spec::GnosisChainSpecParser, GnosisNode};
+use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 use alloy_consensus::Header;
 use alloy_rlp::Decodable;
 use reth::tokio_runtime;
@@ -117,7 +117,7 @@ pub fn download_and_import_init_state(
 
     if let Err(e) = tokio_runtime()
         .expect("Unable to build runtime")
-        .block_on(ensure_state(&state_path, &chain))
+        .block_on(ensure_state(state_path, chain))
     {
         eprintln!("state setup failed: {e}");
         std::process::exit(1);

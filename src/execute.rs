@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use reth_evm::execute::BasicBlockExecutorProvider;
 
-use crate::{evm_config::GnosisEvmConfig, spec::spec::GnosisChainSpec};
+use crate::{evm_config::GnosisEvmConfig, spec::gnosis_spec::GnosisChainSpec};
 
 // REF: https://github.com/paradigmxyz/reth/blob/d3b299754fe79b051bec022e67e922f6792f2a17/crates/ethereum/evm/src/execute.rs
 /// Helper type with backwards compatible methods to obtain executor providers.
