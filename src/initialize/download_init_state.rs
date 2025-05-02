@@ -150,7 +150,9 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
             .error_for_status()?
             .json::<Batch>()
             .await?
-            .objects.first().map(|o| &o.actions.download.href)
+            .objects
+            .first()
+            .map(|o| &o.actions.download.href)
             .context("missing download URL")?
             .to_owned();
 
