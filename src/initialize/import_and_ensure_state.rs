@@ -162,26 +162,22 @@ pub fn download_and_import_init_state(
         .unwrap();
 
     match content {
-        Some(content) => {
-            match StaticFileSegment::Headers {
-                StaticFileSegment::Headers => {
-                    let header = Header::decompress(content[0].as_slice()).unwrap();
-                    let state_root = header.state_root.to_string();
-                    // let block_hash = BlockHash::decompress(content[1].as_slice()).unwrap();
-                    // let block_hash = serde_json::to_string_pretty(&block_hash).unwrap();
-                    if state_root != download_spec.expected_state_root {
-                        eprintln!(
-                            "reth::cli: Header hash mismatch, expected {}, got {}",
-                            download_spec.expected_state_root, state_root
-                        );
-                        std::process::exit(1);
-                    }
-                }
-                _ => {
-                    eprintln!("reth::cli: No content for the given table key.");
+        Some(content) => match StaticFileSegment::Headers {
+            StaticFileSegment::Headers => {
+                let header = Header::decompress(content[0].as_slice()).unwrap();
+                let state_root = header.state_root.to_string();
+                if state_root != download_spec.expected_state_root {
+                    eprintln!(
+                        "reth::cli: Header hash mismatch, expected {}, got {}",
+                        download_spec.expected_state_root, state_root
+                    );
+                    std::process::exit(1);
                 }
             }
-        }
+            _ => {
+                eprintln!("reth::cli: No content for the given table key.");
+            }
+        },
         None => {
             eprintln!("reth::cli: No content for the given table key.");
         }
