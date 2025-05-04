@@ -100,8 +100,10 @@ pub fn download_and_import_init_state(
 ) {
     let datadir = env.datadir.clone().resolve_datadir(env.chain.chain());
     let datadir = datadir.data_dir();
+    let db_dir = datadir.join("db");
 
-    if datadir.exists() {
+    if datadir.exists() && db_dir.exists() {
+        // DB is initialized, check if the state is imported
         let imported_flag_path = datadir.join(IMPORTED_FLAG);
         if imported_flag_path.exists() {
             println!("✅ State is imported, skipping import.");
