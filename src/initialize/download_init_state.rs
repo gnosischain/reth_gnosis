@@ -31,42 +31,47 @@ pub const CHIADO_DOWNLOAD_SPEC: DownloadStateSpec = DownloadStateSpec {
 // ────────────────────────────────────────────────────────────
 const LFS_BATCH: &str = "https://github.com/gnosischain/reth-init-state.git/info/lfs/objects/batch";
 
-const GNOSIS_OIDS: [&str; 7] = [
-    "cd3b4b0edc6fc86bd9eee682ed0c6a1cc9ddc90fde12c855f960baf6ad74f11b",
-    "3c591add3562c42baa113623418bb6f51fb73f183a866a30a372be52206d54c3",
-    "4a7be543b8c2bd00e4a2b51ae35e065c29ddbb38becb62c42199a15d56f0d432",
-    "c8ea30f3b2a065485cd568ae384f80abdb970ed99cf46666e106a613e7903743",
-    "db2a3aa71490295a9de55c80fcb8097981079c5acedb9fc01aebdf9a0fd7d480",
-    "eeec94bee7c49f0c2de2d2bf608d96ac0e870f9819e53edd738fff8467bde6ad",
-    "ad2ecfba180f5da124d342134f766c4ab90280473e487f7f3eb73d19bf7598b1",
+// Chunk OIDs and sizes
+const GNOSIS_CHUNKS: [(&str, u64); 7] = [
+    (
+        "cd3b4b0edc6fc86bd9eee682ed0c6a1cc9ddc90fde12c855f960baf6ad74f11b",
+        4_294_967_296,
+    ),
+    (
+        "3c591add3562c42baa113623418bb6f51fb73f183a866a30a372be52206d54c3",
+        4_294_967_296,
+    ),
+    (
+        "4a7be543b8c2bd00e4a2b51ae35e065c29ddbb38becb62c42199a15d56f0d432",
+        4_294_967_296,
+    ),
+    (
+        "c8ea30f3b2a065485cd568ae384f80abdb970ed99cf46666e106a613e7903743",
+        4_294_967_296,
+    ),
+    (
+        "db2a3aa71490295a9de55c80fcb8097981079c5acedb9fc01aebdf9a0fd7d480",
+        4_294_967_296,
+    ),
+    (
+        "eeec94bee7c49f0c2de2d2bf608d96ac0e870f9819e53edd738fff8467bde6ad",
+        4_294_967_296,
+    ),
+    (
+        "ad2ecfba180f5da124d342134f766c4ab90280473e487f7f3eb73d19bf7598b1",
+        1_728_488_631,
+    ),
 ];
 
-const GNOSIS_SIZES: [u64; 7] = [
-    4_294_967_296,
-    4_294_967_296,
-    4_294_967_296,
-    4_294_967_296,
-    4_294_967_296,
-    4_294_967_296,
-    1_728_488_631,
-];
+const CHIADO_CHUNKS: [(&str, u64); 1] = [(
+    "11046652a6ec2c84c201503200bd0e8f05ce79d0399a677c7244471a21bac35f",
+    111_610_557,
+)];
 
-const CHIADO_OIDS: [&str; 1] = ["11046652a6ec2c84c201503200bd0e8f05ce79d0399a677c7244471a21bac35f"];
-
-const CHIADO_SIZES: [u64; 1] = [111_610_557];
-
-fn get_oids(chain: &str) -> &'static [&'static str] {
+fn get_chunks(chain: &str) -> Vec<(&'static str, u64)> {
     match chain {
-        "gnosis" => &GNOSIS_OIDS,
-        "chiado" => &CHIADO_OIDS,
-        _ => unreachable!(),
-    }
-}
-
-fn get_sizes(chain: &str) -> &'static [u64] {
-    match chain {
-        "gnosis" => &GNOSIS_SIZES,
-        "chiado" => &CHIADO_SIZES,
+        "gnosis" => GNOSIS_CHUNKS.to_vec(),
+        "chiado" => CHIADO_CHUNKS.to_vec(),
         _ => unreachable!(),
     }
 }
@@ -108,10 +113,10 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
         .build()?;
 
     // download/verify each chunk
-    for (idx, (&oid, &size)) in get_oids(chain).iter().zip(get_sizes(chain)).enumerate() {
+    for (idx, (oid, size)) in get_chunks(chain).iter().enumerate() {
         let name = format!("chunk_{idx:02}");
         let out = data_dir.join(&name);
-        if file_has_size(&out, size).await? {
+        if file_has_size(&out, *size).await? {
             println!("✅  {name} already complete");
             continue;
         }
@@ -157,7 +162,7 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
             .to_owned();
 
         // total size is known beforehand (`size`), so build a bar with that length
-        let pb = ProgressBar::new(size);
+        let pb = ProgressBar::new(*size);
         pb.set_style(
             ProgressStyle::with_template(
                 "{spinner:.green} {bytes}/{total_bytes} [{bar:40.cyan/blue}] {bytes_per_sec} ETA {eta}",
@@ -175,7 +180,7 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
         }
         file.flush().await?;
         fs::rename(&tmp, &out).await?;
-        if !file_has_size(&out, size).await? {
+        if !file_has_size(&out, *size).await? {
             bail!("size mismatch for {name}");
         }
     }
@@ -206,7 +211,7 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
     println!("🛠   combining chunks → {}", STATE_FILE);
     let tmp = state_path.with_extension("part");
     let mut out = fs::File::create(&tmp).await?;
-    for idx in 0..get_oids(chain).len() {
+    for idx in 0..get_chunks(chain).len() {
         let mut f = fs::File::open(data_dir.join(format!("chunk_{idx:02}"))).await?;
         tokio::io::copy(&mut f, &mut out).await?;
     }

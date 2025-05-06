@@ -26,23 +26,15 @@ You can run the node using Docker. You can pull the image from the Docker Hub by
 docker pull ghcr.io/gnosischain/reth_gnosis:master
 ```
 
-### Node Setup
+### Running Reth for Gnosis
 
-You need to create a directory where you want all data files (state downloads, reth's database, configs, etc.) to be stored. For example, let's create `./reth_data` in the current folder.
+You might want to create a directory where you want all data files (reth's database, configs, etc.) to be stored, and to mount it as a volume to the image. For example, let's create `./reth_data` in the current folder.
+
+> Note that a temporary directory will be created (to download the post-merge state) where reth is executed, and this directory will be removed after the initialization is done.
 
 ```bash
 mkdir ./reth_data
 ```
-
-Now you can run the setup script using:
-
-```bash
-./scripts/setup.sh --datadir ./reth_data --chain chiado --docker
-```
-
-This configures the node for Chiado. You can use `--gnosis` for Gnosis Chain.
-
-### Running the node
 
 Before running the node, move your jwtsecret file to the `./reth_data` directory. You can run it by running the following command:
 
@@ -54,19 +46,19 @@ cp /path/to/jwtsecret ./reth_data/jwtsecret
 docker run \
     -v ./reth_data:/data \
     ghcr.io/gnosischain/reth_gnosis:master node \
-    --chain chainspecs/chiado.json \
+    --chain chiado \
     --datadir /data \
     --authrpc.jwtsecret=/data/jwtsecret
 ```
 
-This runs Chiado, and you can use `chainspecs/gnosis.json` for Gnosis Chain. A full command (along with network and config) would look like this:
+This runs Chiado, and you can use `--chain gnosis` for Gnosis Chain mainnet. A full command (along with network and config) would look like this:
 
 ```bash
 docker run --network host \
     -v $DATA_DIR:/data \
     ghcr.io/gnosischain/reth_gnosis:master node \
     -vvvv \
-    --chain chainspecs/gnosis.json \
+    --chain gnosis \
     --datadir /data \
     --http \
     --http.port=8545 \
@@ -89,7 +81,7 @@ After installing Rust, you can clone the repository and build the project by run
 ```bash
 git clone https://github.com/gnosischain/reth_gnosis.git
 cd reth_gnosis
-git checkout pectra-alphas
+git checkout master
 
 cargo build --release
 ```
@@ -98,21 +90,15 @@ This will build the project in debug mode.
 
 ### Node Setup
 
-You need to create a directory where you want all data files (state downloads, reth's database, configs, etc.) to be stored. For example, let's create `./reth_data` in the current folder.
+You might want to create a directory where you want all data files (reth's database, configs, etc.) to be stored. For example, let's create `./reth_data` in the current folder.
+
+> Note that a temporary directory will be created (to download the post-merge state) where reth is executed, and this directory will be removed after the initialization is done.
 
 ```bash
 mkdir ./reth_data
 ```
 
-Now you can run the setup script (from inside `.../reth_gnosis`) using:
-
-```bash
-./scripts/setup.sh --datadir ./reth_data --chain chiado
-```
-
-This configures the node for Chiado. You can use `--gnosis` for Gnosis Chain.
-
-### Running the node
+### Running Reth for Gnosis
 
 Before running the node, move your jwtsecret file to the `./reth_data` directory. Now you can run it by running the following command:
 
@@ -123,7 +109,7 @@ cp /path/to/jwtsecret ./reth_data/jwtsecret
 ```bash
 ./target/release/reth node \
     -vvvv \
-    --chain ./scripts/chainspecs/chiado.json \
+    --chain chiado \
     --datadir ./reth_data \
     --http \
     --http.port=8545 \
@@ -137,4 +123,11 @@ cp /path/to/jwtsecret ./reth_data/jwtsecret
     --discovery.addr=0.0.0.0
 ```
 
-This runs Chiado, and you can use `./scripts/chainspecs/gnosis.json` for Gnosis Chain.
+This runs Chiado, and you can use `--chain gnosis` for Gnosis Chain.
+
+### Data directory
+
+Providing a `--datadir` is optional, but recommended. If you don't provide it, the database will be created in the OS specific default location:
+- Linux: `$XDG_DATA_HOME/reth/` or `$HOME/.local/share/reth/`
+- Windows: `{FOLDERID_RoamingAppData}/reth/`
+- macOS: `$HOME/Library/Application Support/reth/`
