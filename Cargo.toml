@@ -34,6 +34,7 @@ reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth", rev = "a38c
 reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
 reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
+reth-fs-util = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
 reth-provider = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44", features = [
     "test-utils",
 ] }
@@ -41,6 +42,7 @@ reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", rev = "a
 reth-errors = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
+reth-db-common = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
 reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
 reth-rpc = { git = "https://github.com/paradigmxyz/reth", rev = "a38c991c363d241894867a89324b8670be2f6a44" }
@@ -90,6 +92,10 @@ alloy-serde = { version = "0.12.5", default-features = false }
 rayon = "1.7"
 
 tracing = "0.1.0"
+reqwest = "0.12"
+tokio = "1"
+anyhow = "1.0.98"
+indicatif = "0.17"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemalloc-ctl = "0.6"

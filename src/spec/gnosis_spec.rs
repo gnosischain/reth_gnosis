@@ -38,6 +38,8 @@ impl Chain {
 
 use crate::blobs::GNOSIS_BLOB_SCHEDULE;
 
+use super::chains::{CHIADO_GENESIS, GNOSIS_GENESIS};
+
 const GNOSIS_NODES: &[&str] = &[
     "enode://6765fff89db92aa8d923e28c438af626c8ae95a43093cdccbd6f550a7b6ce6ab5d1a3dc60dd79af3e6d2c2e6731bae629f0e54446a0d9da408c4eca7ebcd8485@3.75.159.31:30303",
     "enode://9a7c98e8ee8cdd3199db68092b48868847d4743a471b26afc2ff878bafaa829ed43ee405f9aff58ae13fce53b898f7c2e3c30cb80af8eb111682c3c13f686dbb@18.198.130.54:30303",
@@ -484,7 +486,7 @@ pub struct GnosisChainSpecParser;
 impl ChainSpecParser for GnosisChainSpecParser {
     type ChainSpec = GnosisChainSpec;
 
-    const SUPPORTED_CHAINS: &'static [&'static str] = &["dev"];
+    const SUPPORTED_CHAINS: &'static [&'static str] = &["dev", "chiado", "gnosis"];
 
     fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
         chain_value_parser(s)
@@ -500,6 +502,8 @@ pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::E
         // currently it's mandatory to specify the path to the chainspec file
         // TODO: allow for hardcoded built-in chains. using Genesis::default() because fallback needed for clap
         "dev" => Arc::new(GnosisChainSpec::from(Genesis::default())),
+        "chiado" => Arc::new(GnosisChainSpec::from(CHIADO_GENESIS.clone())),
+        "gnosis" => Arc::new(GnosisChainSpec::from(GNOSIS_GENESIS.clone())),
         _ => Arc::new(parse_genesis(s)?.into()),
     })
 }

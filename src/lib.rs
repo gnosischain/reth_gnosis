@@ -24,7 +24,7 @@ use reth_node_ethereum::{
 use reth_primitives::EthPrimitives;
 use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
-use spec::GnosisChainSpec;
+use spec::gnosis_spec::GnosisChainSpec;
 use std::sync::Arc;
 
 mod blobs;
@@ -36,6 +36,7 @@ mod evm;
 mod evm_config;
 pub mod execute;
 mod gnosis;
+pub mod initialize;
 mod network;
 mod payload;
 mod payload_builder;

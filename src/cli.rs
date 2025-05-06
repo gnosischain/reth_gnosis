@@ -19,7 +19,7 @@ use tracing::info;
 
 use crate::{
     execute::GnosisExecutorProvider,
-    spec::{GnosisChainSpec, GnosisChainSpecParser},
+    spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
     GnosisNode,
 };
 
@@ -164,5 +164,9 @@ where
     pub fn init_tracing(&self) -> eyre::Result<Option<FileWorkerGuard>> {
         let guard = self.logs.init_tracing()?;
         Ok(guard)
+    }
+
+    pub fn set_chain(&mut self, chain: Arc<GnosisChainSpec>) {
+        self.chain = chain;
     }
 }
