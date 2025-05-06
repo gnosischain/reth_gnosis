@@ -99,6 +99,7 @@ where
         Context = CTX,
         InterpreterTypes: InterpreterTypes<Output = InterpreterAction>,
     >,
+    P: PrecompileProvider<CTX>,
 {
     type Context = CTX;
     type Instructions = I;
@@ -194,6 +195,7 @@ where
         InterpreterTypes: InterpreterTypes<Output = InterpreterAction>,
     >,
     INSP: Inspector<CTX, I::InterpreterTypes>,
+    P: PrecompileProvider<CTX>,
 {
     type Inspector = INSP;
 

@@ -16,7 +16,7 @@ use reth_node_builder::{
     },
     rpc::{EngineValidatorBuilder, RpcAddOns},
     BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes,
-    NodeTypesWithEngine, PayloadTypes,
+    PayloadTypes,
 };
 use reth_node_ethereum::{
     BasicBlockExecutorProvider, EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder,
@@ -78,12 +78,15 @@ impl GnosisNode {
     >
     where
         Node: FullNodeTypes<
-            Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
-        >,
-        <Node::Types as NodeTypesWithEngine>::Engine: PayloadTypes<
-            BuiltPayload = EthBuiltPayload,
-            PayloadAttributes = EthPayloadAttributes,
-            PayloadBuilderAttributes = EthPayloadBuilderAttributes,
+            Types: NodeTypes<
+                ChainSpec = GnosisChainSpec,
+                Primitives = EthPrimitives,
+                Payload: PayloadTypes<
+                    BuiltPayload = EthBuiltPayload,
+                    PayloadAttributes = EthPayloadAttributes,
+                    PayloadBuilderAttributes = EthPayloadBuilderAttributes,
+                >,
+            >,
         >,
     {
         ComponentsBuilder::default()
@@ -102,10 +105,7 @@ impl NodeTypes for GnosisNode {
     type ChainSpec = GnosisChainSpec;
     type StateCommitment = MerklePatriciaTrie;
     type Storage = EthStorage;
-}
-
-impl NodeTypesWithEngine for GnosisNode {
-    type Engine = EthEngineTypes;
+    type Payload = EthEngineTypes;
 }
 
 /// Add-ons w.r.t. gnosis
@@ -114,8 +114,8 @@ pub type GnosisAddOns<N> = RpcAddOns<N, EthereumEthApiBuilder, GnosisEngineValid
 impl<N> Node<N> for GnosisNode
 where
     N: FullNodeTypes<
-        Types: NodeTypesWithEngine<
-            Engine = EthEngineTypes,
+        Types: NodeTypes<
+            Payload = EthEngineTypes,
             ChainSpec = GnosisChainSpec,
             Primitives = EthPrimitives,
             Storage = EthStorage,
@@ -150,10 +150,9 @@ where
 #[non_exhaustive]
 pub struct GnosisExecutorBuilder;
 
-impl<Types, Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
+impl<Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
 where
-    Types: NodeTypesWithEngine<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
-    Node: FullNodeTypes<Types = Types>,
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
 {
     type EVM = GnosisEvmConfig;
     type Executor = BasicBlockExecutorProvider<GnosisEvmConfig>;
@@ -192,9 +191,9 @@ pub struct GnosisEngineValidatorBuilder;
 
 impl<Node, Types> EngineValidatorBuilder<Node> for GnosisEngineValidatorBuilder
 where
-    Types: NodeTypesWithEngine<
+    Types: NodeTypes<
+        Payload = EthEngineTypes,
         ChainSpec = GnosisChainSpec,
-        Engine = EthEngineTypes,
         Primitives = EthPrimitives,
     >,
     Node: FullNodeComponents<Types = Types>,

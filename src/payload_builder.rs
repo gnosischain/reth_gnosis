@@ -4,8 +4,8 @@ use reth_ethereum_engine_primitives::{
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
-    components::PayloadBuilderBuilder, BuilderContext, FullNodeTypes, NodeTypesWithEngine,
-    PayloadTypes, PrimitivesTy, TxTy,
+    components::PayloadBuilderBuilder, BuilderContext, FullNodeTypes, NodeTypes, PayloadTypes,
+    PrimitivesTy, TxTy,
 };
 use reth_primitives::EthPrimitives;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
@@ -27,17 +27,20 @@ impl GnosisPayloadBuilder {
         pool: Pool,
     ) -> eyre::Result<crate::payload::GnosisPayloadBuilder<Pool, Node::Provider, Evm>>
     where
-        Types: NodeTypesWithEngine<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
+        Types: NodeTypes<
+            ChainSpec = GnosisChainSpec,
+            Primitives = EthPrimitives,
+            Payload: PayloadTypes<
+                BuiltPayload = EthBuiltPayload,
+                PayloadAttributes = EthPayloadAttributes,
+                PayloadBuilderAttributes = EthPayloadBuilderAttributes,
+            >,
+        >,
         Node: FullNodeTypes<Types = Types>,
         Evm: ConfigureEvm<Primitives = PrimitivesTy<Types>>,
         Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
             + Unpin
             + 'static,
-        Types::Engine: PayloadTypes<
-            BuiltPayload = EthBuiltPayload,
-            PayloadAttributes = EthPayloadAttributes,
-            PayloadBuilderAttributes = EthPayloadBuilderAttributes,
-        >,
     {
         let chain_spec = ctx.chain_spec();
 
@@ -55,16 +58,19 @@ impl GnosisPayloadBuilder {
 
 impl<Types, Node, Pool> PayloadBuilderBuilder<Node, Pool> for GnosisPayloadBuilder
 where
-    Types: NodeTypesWithEngine<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
+    Types: NodeTypes<
+        ChainSpec = GnosisChainSpec,
+        Primitives = EthPrimitives,
+        Payload: PayloadTypes<
+            BuiltPayload = EthBuiltPayload,
+            PayloadAttributes = EthPayloadAttributes,
+            PayloadBuilderAttributes = EthPayloadBuilderAttributes,
+        >,
+    >,
     Node: FullNodeTypes<Types = Types>,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
         + Unpin
         + 'static,
-    Types::Engine: PayloadTypes<
-        BuiltPayload = EthBuiltPayload,
-        PayloadAttributes = EthPayloadAttributes,
-        PayloadBuilderAttributes = EthPayloadBuilderAttributes,
-    >,
 {
     type PayloadBuilder =
         crate::payload::GnosisPayloadBuilder<Pool, Node::Provider, GnosisEvmConfig>;

@@ -208,7 +208,7 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("🛠   combining chunks → {}", STATE_FILE);
+    println!("🛠   combining chunks → {STATE_FILE}");
     let tmp = state_path.with_extension("part");
     let mut out = fs::File::create(&tmp).await?;
     for idx in 0..get_chunks(chain).len() {

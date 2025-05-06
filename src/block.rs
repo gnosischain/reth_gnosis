@@ -4,9 +4,11 @@ use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
 use alloy_eips::eip7002::WITHDRAWAL_REQUEST_TYPE;
 use alloy_eips::eip7251;
 use alloy_eips::{eip7685::Requests, Encodable2718};
+use alloy_evm::block::ExecutableTx;
 use alloy_evm::{
     block::state_changes::balance_increment_state,
     eth::eip6110::{self, parse_deposits_from_receipts},
+    FromTxWithEncoded,
 };
 use alloy_evm::{Database, Evm};
 use reth_errors::{BlockExecutionError, BlockValidationError};
@@ -23,7 +25,6 @@ use reth_evm::{
     },
     EvmFactory, FromRecoveredTx, OnStateHook,
 };
-use reth_primitives::Recovered;
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;
 use revm::{
@@ -92,7 +93,10 @@ where
 impl<'db, DB, E, Spec, R> BlockExecutor for GnosisBlockExecutor<'_, E, Spec, R>
 where
     DB: Database + 'db,
-    E: Evm<DB = &'db mut State<DB>, Tx: FromRecoveredTx<R::Transaction>>,
+    E: Evm<
+        DB = &'db mut State<DB>,
+        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
+    >,
     Spec: EthExecutorSpec,
     R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
 {
@@ -116,16 +120,16 @@ where
 
     fn execute_transaction_with_result_closure(
         &mut self,
-        tx: Recovered<&R::Transaction>,
+        tx: impl ExecutableTx<Self>,
         f: impl FnOnce(&ExecutionResult<<Self::Evm as Evm>::HaltReason>),
     ) -> Result<u64, BlockExecutionError> {
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
         // must be no greater than the block's gasLimit.
         let block_available_gas = self.evm.block().gas_limit - self.gas_used;
-        if tx.gas_limit() > block_available_gas {
+        if tx.tx().gas_limit() > block_available_gas {
             return Err(
                 BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
-                    transaction_gas_limit: tx.gas_limit(),
+                    transaction_gas_limit: tx.tx().gas_limit(),
                     block_available_gas,
                 }
                 .into(),
@@ -136,7 +140,7 @@ where
         let result_and_state = self
             .evm
             .transact(tx)
-            .map_err(|err| BlockExecutionError::evm(err, tx.trie_hash()))?;
+            .map_err(|err| BlockExecutionError::evm(err, tx.tx().trie_hash()))?;
         self.system_caller.on_state(
             StateChangeSource::Transaction(self.receipts.len()),
             &result_and_state.state,
@@ -153,7 +157,7 @@ where
         // Push transaction changeset and calculate header bloom filter for receipt.
         self.receipts
             .push(self.receipt_builder.build_receipt(ReceiptBuilderCtx {
-                tx: &tx,
+                tx: tx.tx(),
                 evm: &self.evm,
                 result,
                 state: &state,
@@ -272,6 +276,10 @@ where
     fn evm_mut(&mut self) -> &mut Self::Evm {
         &mut self.evm
     }
+
+    fn evm(&self) -> &Self::Evm {
+        &self.evm
+    }
 }
 
 /// Ethereum block executor factory.
@@ -329,7 +337,7 @@ impl<R, Spec, EvmF> BlockExecutorFactory for GnosisBlockExecutorFactory<R, Spec,
 where
     R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
     Spec: EthExecutorSpec,
-    EvmF: EvmFactory<Tx: FromRecoveredTx<R::Transaction>>,
+    EvmF: EvmFactory<Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
     Self: 'static,
 {
     type EvmFactory = EvmF;

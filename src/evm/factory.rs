@@ -104,6 +104,10 @@ where
         &self.block
     }
 
+    fn chain_id(&self) -> u64 {
+        self.cfg.chain_id
+    }
+
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
@@ -182,6 +186,10 @@ where
         } = self.inner.0.data.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
+    }
+
+    fn set_inspector_enabled(&mut self, enabled: bool) {
+        self.inspect = enabled;
     }
 }
 

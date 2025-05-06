@@ -1,6 +1,6 @@
 use reth_node_builder::{
     components::PoolBuilder,
-    node::{FullNodeTypes, NodeTypesWithEngine},
+    node::{FullNodeTypes, NodeTypes},
     BuilderContext,
 };
 use reth_primitives::EthPrimitives;
@@ -16,7 +16,7 @@ pub struct GnosisPoolBuilder {}
 
 impl<Types, Node> PoolBuilder<Node> for GnosisPoolBuilder
 where
-    Types: NodeTypesWithEngine<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
+    Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
     Node: FullNodeTypes<Types = Types>,
 {
     type Pool = EthTransactionPool<Node::Provider, DiskFileBlobStore>;

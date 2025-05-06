@@ -67,7 +67,7 @@ where
         Err(e) => {
             return Err(BlockExecutionError::Internal(
                 InternalBlockExecutionError::Other(
-                    format!("withdrawal contract system call revert: {}", e).into(),
+                    format!("withdrawal contract system call revert: {e}").into(),
                 ),
             ))
         }
@@ -126,7 +126,7 @@ where
         Err(e) => {
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call error: {}", e),
+                    message: format!("block rewards contract system call error: {e}"),
                 },
             ));
         }
@@ -145,20 +145,20 @@ where
         ExecutionResult::Revert { output, .. } => {
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call revert {}", output),
+                    message: format!("block rewards contract system call revert {output}"),
                 },
             ));
         }
         ExecutionResult::Halt { reason, .. } => {
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call halt {:?}", reason),
+                    message: format!("block rewards contract system call halt {reason:?}"),
                 },
             ));
         }
     };
 
-    let result = rewardCall::abi_decode_returns(output_bytes.as_ref(), true).map_err(|e| {
+    let result = rewardCall::abi_decode_returns(output_bytes.as_ref()).map_err(|e| {
         BlockExecutionError::from(GnosisBlockExecutionError::CustomErrorMessage {
             message: format!(
                 "error parsing block rewards contract system call return {:?}: {}",
