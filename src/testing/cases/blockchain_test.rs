@@ -62,11 +62,11 @@ impl Case for BlockchainTestCase {
                     path: path.into(),
                     error,
                 })?;
-                
+
                 serde_json::from_str(&s).map_err(|error| Error::CouldNotDeserialize {
-                        path: path.into(),
-                        error,
-                    })?
+                    path: path.into(),
+                    error,
+                })?
             },
             skip: should_skip(path),
         })
