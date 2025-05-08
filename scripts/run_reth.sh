@@ -17,7 +17,7 @@ DIR="$(dirname "$0")"
 # $PWD/target/release/reth \
 cargo run -- \
   node \
-  -vvvv \
+  -vvv \
   --chain=$DIR/chiado_genesis_alloc.json \
   --datadir=$DATA_DIR \
   --http \
@@ -29,5 +29,6 @@ cargo run -- \
   --authrpc.jwtsecret=$DIR/networkdata/jwtsecret \
   --authrpc.addr=0.0.0.0 \
   --port=0 \
-  --disable-discovery
+  --disable-discovery \
+  --color never
 

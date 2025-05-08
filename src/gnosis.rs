@@ -86,6 +86,7 @@ where
         );
     });
 
+    dbg!("reth debug state [withdrawals] {:?}", &state);
     evm.db_mut().commit(state);
 
     match result {
@@ -173,14 +174,29 @@ where
 
     // keeping this generalized, instead of only in block 1
     // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
-    let should_create =
-        state
-            .get(&alloy_eips::eip4788::SYSTEM_ADDRESS)
-            .is_none_or(|system_account| {
+    // let should_create =
+    //     state
+    //         .get(&alloy_eips::eip4788::SYSTEM_ADDRESS)
+    //         .is_none_or(|system_account| {
+    //             // true if account not in state (either None, or Touched | LoadedAsNotExisting)
+    //             system_account.status
+    //                 == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
+    //         });
+
+    let should_create = {
+        let acc = state
+            .get(&alloy_eips::eip4788::SYSTEM_ADDRESS);
+        dbg!("reth debug state [should_create.1] {:?}", &acc);
+            
+            let b = acc.is_none_or(|system_account| {
                 // true if account not in state (either None, or Touched | LoadedAsNotExisting)
                 system_account.status
                     == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
             });
+            dbg!("reth debug state [should_create.2] {:?}", &b);
+            b
+
+        };
 
     // this check needs to be there in every call, so instead of making it into a function which is called from post_execution, we can just include it in the rewards function
     if should_create {
@@ -205,6 +221,7 @@ where
         );
     });
 
+    dbg!("reth debug state [reward] {:?}", &state);
     evm.db_mut().commit(state);
 
     // TODO: How to get function return call from evm.transact()?

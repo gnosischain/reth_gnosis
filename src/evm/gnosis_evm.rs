@@ -181,6 +181,7 @@ where
 
     fn replay_commit(&mut self) -> Self::CommitOutput {
         self.replay().map(|r| {
+            dbg!("reth debug state [replay] {:?}", &r.state);
             self.ctx().db().commit(r.state);
             r.result
         })
@@ -253,11 +254,15 @@ pub fn deduct_caller_gnosis<CTX: ContextTr>(
 
     let mut blob_gas_cost: u128 = 0;
 
+    dbg!("reth debug state [blob gas] {:?}", context.tx().tx_type());
+
     // EIP-4844
     if context.tx().tx_type() == TransactionType::Eip4844 {
+        dbg!("reth debug state [blob gas] {:?}", context.tx().tx_type());
         let blob_gas = context.tx().total_blob_gas() as u128;
         blob_gas_cost = blob_price.saturating_mul(blob_gas);
         gas_cost = gas_cost.saturating_add(blob_gas_cost);
+        dbg!("reth debug state [blob gas] {:?}", blob_gas_cost);
     }
 
     let is_call = context.tx().kind().is_call();

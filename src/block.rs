@@ -165,6 +165,7 @@ where
             }));
 
         // Commit the state changes.
+        dbg!("reth debug state [block] {:?}", &state);
         self.evm.db_mut().commit(state);
 
         Ok(gas_used)
