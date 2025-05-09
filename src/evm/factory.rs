@@ -206,6 +206,8 @@ where
                 // clear the system address account from state transitions, else EIP-158/161 (impl in revm) removes it from state
                 res.state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
             }
+
+            res.state.remove(&self.block.beneficiary);
         }
 
         res
