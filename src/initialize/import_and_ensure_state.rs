@@ -110,7 +110,7 @@ pub fn download_and_import_init_state(
             return;
         } else {
             println!("❌ State looks misconfigured, please delete the following directory and try again:");
-            println!("{:?}", datadir);
+            println!("{datadir:?}");
             std::process::exit(1);
         }
     }

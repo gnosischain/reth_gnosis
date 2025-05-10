@@ -15,7 +15,6 @@ use revm::{
     context::result::{ExecutionResult, Output, ResultAndState},
     DatabaseCommit,
 };
-use revm_state::{Account, AccountInfo, AccountStatus};
 use std::fmt::Display;
 
 // Codegen from https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
@@ -67,7 +66,7 @@ where
         Err(e) => {
             return Err(BlockExecutionError::Internal(
                 InternalBlockExecutionError::Other(
-                    format!("withdrawal contract system call revert: {}", e).into(),
+                    format!("withdrawal contract system call revert: {e}").into(),
                 ),
             ))
         }
@@ -111,7 +110,7 @@ fn apply_block_rewards_contract_call<SPEC>(
 where
     SPEC: EthExecutorSpec,
 {
-    let ResultAndState { result, mut state } = match evm.transact_system_call(
+    let ResultAndState { result, state } = match evm.transact_system_call(
         alloy_eips::eip4788::SYSTEM_ADDRESS,
         block_rewards_contract,
         rewardCall {
@@ -126,7 +125,7 @@ where
         Err(e) => {
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call error: {}", e),
+                    message: format!("block rewards contract system call error: {e}"),
                 },
             ));
         }
@@ -145,20 +144,20 @@ where
         ExecutionResult::Revert { output, .. } => {
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call revert {}", output),
+                    message: format!("block rewards contract system call revert {output}"),
                 },
             ));
         }
         ExecutionResult::Halt { reason, .. } => {
             return Err(BlockExecutionError::from(
                 GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call halt {:?}", reason),
+                    message: format!("block rewards contract system call halt {reason:?}"),
                 },
             ));
         }
     };
 
-    let result = rewardCall::abi_decode_returns(output_bytes.as_ref(), true).map_err(|e| {
+    let result = rewardCall::abi_decode_returns(output_bytes.as_ref()).map_err(|e| {
         BlockExecutionError::from(GnosisBlockExecutionError::CustomErrorMessage {
             message: format!(
                 "error parsing block rewards contract system call return {:?}: {}",
@@ -167,36 +166,6 @@ where
             ),
         })
     })?;
-
-    // in gnosis aura, system account needs to be included in the state and not removed (despite EIP-158/161, even if empty)
-    // here we have a generalized check if system account is in state, or needs to be created
-
-    // keeping this generalized, instead of only in block 1
-    // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
-    let should_create =
-        state
-            .get(&alloy_eips::eip4788::SYSTEM_ADDRESS)
-            .is_none_or(|system_account| {
-                // true if account not in state (either None, or Touched | LoadedAsNotExisting)
-                system_account.status
-                    == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
-            });
-
-    // this check needs to be there in every call, so instead of making it into a function which is called from post_execution, we can just include it in the rewards function
-    if should_create {
-        let account = Account {
-            info: AccountInfo::default(),
-            storage: Default::default(),
-            // we force the account to be created by changing the status
-            status: AccountStatus::Touched | AccountStatus::Created,
-        };
-        state.insert(alloy_eips::eip4788::SYSTEM_ADDRESS, account);
-    } else {
-        // clear the system address account from state transitions, else EIP-158/161 (impl in revm) removes it from state
-        state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
-    }
-
-    state.remove(&evm.block().beneficiary);
 
     system_caller.invoke_hook_with(|hook| {
         hook.on_state(

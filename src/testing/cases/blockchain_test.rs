@@ -62,12 +62,11 @@ impl Case for BlockchainTestCase {
                     path: path.into(),
                     error,
                 })?;
-                let test =
-                    serde_json::from_str(&s).map_err(|error| Error::CouldNotDeserialize {
-                        path: path.into(),
-                        error,
-                    })?;
-                test
+
+                serde_json::from_str(&s).map_err(|error| Error::CouldNotDeserialize {
+                    path: path.into(),
+                    error,
+                })?
             },
             skip: should_skip(path),
         })
@@ -200,7 +199,7 @@ impl Case for BlockchainTestCase {
                 );
                 if let Err(e) = result {
                     return Err(Error::Custom(
-                        format!("error in execution stage {:?}", e).to_string(),
+                        format!("error in execution stage {e:?}").to_string(),
                     ));
                 }
 

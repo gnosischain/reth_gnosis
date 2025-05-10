@@ -23,7 +23,7 @@ pub const GNOSIS_BLOB_SCHEDULE: HardforkBlobParams = HardforkBlobParams {
 };
 
 // helper function to create the evm's CfgEnv in get_cfg_env
-pub fn evm_env_blob_schedule() -> Vec<(SpecId, u8, u8)> {
+pub fn evm_env_blob_schedule() -> Vec<(SpecId, u64, u64)> {
     vec![(SpecId::CANCUN, 1, 2), (SpecId::PRAGUE, 1, 2)]
 }
 

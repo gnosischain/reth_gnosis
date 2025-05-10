@@ -12,6 +12,7 @@ use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext,
 };
 use revm_primitives::{hardfork::SpecId, Address, Bytes, TxKind, U256};
+use revm_state::{Account, AccountInfo, AccountStatus};
 
 #[allow(missing_debug_implementations)] // missing revm::Context Debug impl
 pub struct GnosisEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
@@ -104,6 +105,10 @@ where
         &self.block
     }
 
+    fn chain_id(&self) -> u64 {
+        self.cfg.chain_id
+    }
+
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
@@ -157,7 +162,7 @@ where
         // disable the nonce check
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
 
-        let res = self.transact(tx);
+        let mut res = self.transact(tx);
 
         // swap back to the previous gas limit
         core::mem::swap(&mut self.block.gas_limit, &mut gas_limit);
@@ -165,6 +170,45 @@ where
         core::mem::swap(&mut self.block.basefee, &mut basefee);
         // swap back to the previous nonce check flag
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
+
+        // NOTE: We assume that only the contract storage is modified. Revm currently marks the
+        // caller and block beneficiary accounts as "touched" when we do the above transact calls,
+        // and includes them in the result.
+        //
+        // We're doing this state cleanup to make sure that changeset only includes the changed
+        // contract storage.
+        if let Ok(res) = &mut res {
+            // in gnosis aura, system account needs to be included in the state and not removed (despite EIP-158/161, even if empty)
+            // here we have a generalized check if system account is in state, or needs to be created
+
+            // keeping this generalized, instead of only in block 1
+            // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
+
+            let should_create = res
+                .state
+                .get(&alloy_eips::eip4788::SYSTEM_ADDRESS)
+                .is_none_or(|system_account| {
+                    // true if account not in state (either None, or Touched | LoadedAsNotExisting)
+                    system_account.status
+                        == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
+                });
+
+            if should_create {
+                let account = Account {
+                    info: AccountInfo::default(),
+                    storage: Default::default(),
+                    // we force the account to be created by changing the status
+                    status: AccountStatus::Touched | AccountStatus::Created,
+                };
+                res.state
+                    .insert(alloy_eips::eip4788::SYSTEM_ADDRESS, account);
+            } else {
+                // clear the system address account from state transitions, else EIP-158/161 (impl in revm) removes it from state
+                res.state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
+            }
+
+            res.state.remove(&self.block.beneficiary);
+        }
 
         res
     }
@@ -182,6 +226,10 @@ where
         } = self.inner.0.data.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
+    }
+
+    fn set_inspector_enabled(&mut self, enabled: bool) {
+        self.inspect = enabled;
     }
 }
 

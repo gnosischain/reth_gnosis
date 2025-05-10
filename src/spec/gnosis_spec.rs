@@ -17,8 +17,6 @@ use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use reth_primitives::SealedHeader;
 use revm_primitives::{b256, Address, B256, U256};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Chain {
