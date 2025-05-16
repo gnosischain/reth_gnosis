@@ -1,8 +1,10 @@
 use anyhow::{bail, Context};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::Path;
+use std::io::{BufReader, BufWriter, Read as _, Write as _};
 use std::time::Duration;
+use std::{fs::File, path::Path};
 use tokio::{fs, io::AsyncWriteExt};
+use zstd::Decoder;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DownloadStateSpec {
@@ -32,40 +34,20 @@ pub const CHIADO_DOWNLOAD_SPEC: DownloadStateSpec = DownloadStateSpec {
 const LFS_BATCH: &str = "https://github.com/gnosischain/reth-init-state.git/info/lfs/objects/batch";
 
 // Chunk OIDs and sizes
-const GNOSIS_CHUNKS: [(&str, u64); 7] = [
+const GNOSIS_CHUNKS: [(&str, u64); 2] = [
     (
-        "cd3b4b0edc6fc86bd9eee682ed0c6a1cc9ddc90fde12c855f960baf6ad74f11b",
+        "610f2c013d695a1f60ccbdc2b125436121ab71be050dd18ba31fbfa214e7072f",
         4_294_967_296,
     ),
     (
-        "3c591add3562c42baa113623418bb6f51fb73f183a866a30a372be52206d54c3",
-        4_294_967_296,
-    ),
-    (
-        "4a7be543b8c2bd00e4a2b51ae35e065c29ddbb38becb62c42199a15d56f0d432",
-        4_294_967_296,
-    ),
-    (
-        "c8ea30f3b2a065485cd568ae384f80abdb970ed99cf46666e106a613e7903743",
-        4_294_967_296,
-    ),
-    (
-        "db2a3aa71490295a9de55c80fcb8097981079c5acedb9fc01aebdf9a0fd7d480",
-        4_294_967_296,
-    ),
-    (
-        "eeec94bee7c49f0c2de2d2bf608d96ac0e870f9819e53edd738fff8467bde6ad",
-        4_294_967_296,
-    ),
-    (
-        "ad2ecfba180f5da124d342134f766c4ab90280473e487f7f3eb73d19bf7598b1",
-        1_728_488_631,
+        "a77414288d24c2e23685dbb3e6e53a21a6d1e5d6839c0cd60ed8a0eff3815cdd",
+        1_377_976_148,
     ),
 ];
 
 const CHIADO_CHUNKS: [(&str, u64); 1] = [(
-    "11046652a6ec2c84c201503200bd0e8f05ce79d0399a677c7244471a21bac35f",
-    111_610_557,
+    "3b30b1e0ace67b6f3ac1735fa19dc3ddc6327d04dabf748b8296dbb4b7c69fdf",
+    22_468_068,
 )];
 
 fn get_chunks(chain: &str) -> Vec<(&'static str, u64)> {
@@ -94,6 +76,32 @@ fn get_state_size(chain: &str) -> u64 {
         "chiado" => 111_610_557,
         _ => unreachable!(),
     }
+}
+
+fn decompress_zstd(input_path: &str, output_path: &str, expected_size: u64) -> std::io::Result<()> {
+    let input_file = File::open(input_path)?;
+    let reader = BufReader::new(input_file);
+    let mut decoder = Decoder::new(reader)?;
+
+    let pb = ProgressBar::new(expected_size);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.magenta/blue}] {bytes}/{total_bytes} ({eta})")
+        .unwrap()
+        .progress_chars("=>-"));
+
+    let mut output_file = BufWriter::new(File::create(output_path)?);
+    let mut buffer = [0u8; 8192];
+    loop {
+        let bytes_read = decoder.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        output_file.write_all(&buffer[..bytes_read])?;
+        pb.inc(bytes_read as u64);
+    }
+
+    pb.finish_with_message("✅ State Decompressed");
+    Ok(())
 }
 
 /// Downloads the initial state
@@ -209,14 +217,26 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
     }
 
     println!("🛠   combining chunks → {STATE_FILE}");
-    let tmp = state_path.with_extension("part");
+    let tmp = state_path.with_extension(".zst.part");
     let mut out = fs::File::create(&tmp).await?;
     for idx in 0..get_chunks(chain).len() {
         let mut f = fs::File::open(data_dir.join(format!("chunk_{idx:02}"))).await?;
         tokio::io::copy(&mut f, &mut out).await?;
     }
     out.flush().await?;
-    fs::rename(&tmp, &state_path).await?;
+    fs::rename(&tmp, &state_path.with_extension("zst")).await?;
+
+    println!("🛠   decompressing state");
+    decompress_zstd(
+        state_path.with_extension("zst").to_str().unwrap(),
+        state_path.with_extension("part").to_str().unwrap(),
+        get_state_size(chain),
+    )?;
+    println!("✅ full state written");
+
+    fs::remove_file(state_path.with_extension("zst")).await?;
+    fs::rename(state_path.with_extension("part"), &state_path).await?;
+
     if !file_has_size(&state_path, get_state_size(chain)).await? {
         bail!("combined state size mismatch");
     }
