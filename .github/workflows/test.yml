@@ -55,7 +55,7 @@ jobs:
           toolchain: ${{ matrix.rust || 'stable' }}
           targets: ${{ matrix.target }}
       - name: Downloading ethereum/tests
-        run: git clone https://github.com/ethereum/tests ethereum-tests && cd ethereum-tests && git checkout tags/v17.0 && cd ..
+        run: git clone https://github.com/ethereum/tests ethereum-tests
       - name: Downloading EELS fixtures released at Cancun
         run: curl -LO https://github.com/ethereum/execution-spec-tests/releases/download/v2.1.1/fixtures.tar.gz && tar -xzf fixtures.tar.gz
       - name: Test specs (EELS and ethereum/tests)
