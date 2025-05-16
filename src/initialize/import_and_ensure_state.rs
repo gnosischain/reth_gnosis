@@ -115,7 +115,8 @@ pub fn download_and_import_init_state(
         }
     }
 
-    let state_path = Path::new("./state");
+    let state_path_str = format!("./{}-state", chain);
+    let state_path = Path::new(&state_path_str);
 
     if let Err(e) = tokio_runtime()
         .expect("Unable to build runtime")

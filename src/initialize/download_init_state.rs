@@ -232,7 +232,7 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
         state_path.with_extension("part").to_str().unwrap(),
         get_state_size(chain),
     )?;
-    println!("✅ full state written");
+    println!("✅  full state written");
 
     fs::remove_file(state_path.with_extension("zst")).await?;
     fs::rename(state_path.with_extension("part"), &state_path).await?;
