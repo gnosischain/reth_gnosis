@@ -31,7 +31,7 @@ impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
         Self {
             chain_spec,
             // extra data representing "reth@v0.0.1-alpha0"
-            extra_data: Bytes::from("reth@v0.1.0-alpha0".as_bytes().to_vec()),
+            extra_data: Bytes::from("reth@v0.1.0".as_bytes().to_vec()),
         }
     }
 }
