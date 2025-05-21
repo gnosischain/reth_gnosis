@@ -3,7 +3,7 @@ use reth::{
     builder::{components::NetworkBuilder, BuilderContext},
     network::{NetworkHandle, NetworkManager, PeersInfo},
 };
-use reth_eth_wire_types::{EthNetworkPrimitives, Status};
+use reth_eth_wire_types::Status;
 use reth_primitives::{EthPrimitives, PooledTransaction};
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
@@ -25,7 +25,7 @@ where
         > + Unpin
         + 'static,
 {
-    type Primitives = EthNetworkPrimitives;
+    type Network = NetworkHandle;
 
     async fn build_network(
         self,

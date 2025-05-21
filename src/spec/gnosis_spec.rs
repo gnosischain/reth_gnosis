@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use core::fmt::Display;
 
+use crate::blobs::gnosis_blob_schedule;
 use alloy_consensus::Header;
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
@@ -33,8 +34,6 @@ impl Chain {
         }
     }
 }
-
-use crate::blobs::GNOSIS_BLOB_SCHEDULE;
 
 use super::chains::{CHIADO_GENESIS, GNOSIS_GENESIS};
 
@@ -468,7 +467,7 @@ impl From<Genesis> for GnosisChainSpec {
                 hardforks,
                 paris_block_and_final_difficulty,
                 deposit_contract,
-                blob_params: GNOSIS_BLOB_SCHEDULE,
+                blob_params: gnosis_blob_schedule(),
                 base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
                 ..Default::default()
             },

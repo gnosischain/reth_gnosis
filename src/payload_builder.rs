@@ -56,7 +56,7 @@ impl GnosisPayloadBuilder {
     }
 }
 
-impl<Types, Node, Pool> PayloadBuilderBuilder<Node, Pool> for GnosisPayloadBuilder
+impl<Types, Node, Pool> PayloadBuilderBuilder<Node, Pool, GnosisEvmConfig> for GnosisPayloadBuilder
 where
     Types: NodeTypes<
         ChainSpec = GnosisChainSpec,
@@ -79,7 +79,8 @@ where
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
+        evm_config: GnosisEvmConfig,
     ) -> eyre::Result<Self::PayloadBuilder> {
-        self.build(GnosisEvmConfig::new(ctx.chain_spec()), ctx, pool)
+        self.build(evm_config, ctx, pool)
     }
 }

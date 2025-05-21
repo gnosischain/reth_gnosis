@@ -47,6 +47,15 @@ where
     type Frame = FRAME;
     type HaltReason = HaltReason;
 
+    #[inline]
+    fn validate_against_state_and_deduct_caller(
+        &self,
+        evm: &mut Self::Evm,
+    ) -> Result<(), Self::Error> {
+        // TODO: is this equivalent to pre_execution::validate_against_state_and_deduct_caller(evm.ctx())
+        deduct_caller_gnosis(evm.ctx(), self.fee_collector).map_err(From::from)
+    }
+
     fn reward_beneficiary(
         &self,
         evm: &mut Self::Evm,
@@ -69,11 +78,6 @@ where
                 .saturating_add(U256::from(basefee * gas_used));
         }
         Ok(())
-    }
-
-    #[inline]
-    fn deduct_caller(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
-        deduct_caller_gnosis(evm.ctx(), self.fee_collector).map_err(From::from)
     }
 }
 
@@ -113,28 +117,28 @@ where
         >,
     ) -> <<Self::Instructions as InstructionProvider>::InterpreterTypes as InterpreterTypes>::Output
     {
-        let context = &mut self.0.data.ctx;
+        let context = &mut self.0.ctx;
         let instructions = &mut self.0.instruction;
         interpreter.run_plain(instructions.instruction_table(), context)
     }
     #[inline]
     fn ctx(&mut self) -> &mut Self::Context {
-        &mut self.0.data.ctx
+        &mut self.0.ctx
     }
 
     #[inline]
     fn ctx_ref(&self) -> &Self::Context {
-        &self.0.data.ctx
+        &self.0.ctx
     }
 
     #[inline]
     fn ctx_instructions(&mut self) -> (&mut Self::Context, &mut Self::Instructions) {
-        (&mut self.0.data.ctx, &mut self.0.instruction)
+        (&mut self.0.ctx, &mut self.0.instruction)
     }
 
     #[inline]
     fn ctx_precompiles(&mut self) -> (&mut Self::Context, &mut Self::Precompiles) {
-        (&mut self.0.data.ctx, &mut self.0.precompiles)
+        (&mut self.0.ctx, &mut self.0.precompiles)
     }
 }
 
@@ -153,17 +157,17 @@ where
 
     type Block = <CTX as ContextTr>::Block;
 
-    fn replay(&mut self) -> Self::Output {
-        let mut t = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
-        t.run(self)
-    }
-
     fn set_tx(&mut self, tx: Self::Tx) {
-        self.0.data.ctx.set_tx(tx);
+        self.0.ctx.set_tx(tx);
     }
 
     fn set_block(&mut self, block: Self::Block) {
-        self.0.data.ctx.set_block(block);
+        self.0.ctx.set_block(block);
+    }
+
+    fn replay(&mut self) -> Self::Output {
+        let mut t = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
+        t.run(self)
     }
 }
 
@@ -200,11 +204,11 @@ where
     type Inspector = INSP;
 
     fn inspector(&mut self) -> &mut Self::Inspector {
-        &mut self.0.data.inspector
+        &mut self.0.inspector
     }
 
     fn ctx_inspector(&mut self) -> (&mut Self::Context, &mut Self::Inspector) {
-        (&mut self.0.data.ctx, &mut self.0.data.inspector)
+        (&mut self.0.ctx, &mut self.0.inspector)
     }
 
     fn run_inspect_interpreter(
@@ -228,7 +232,7 @@ where
     type Inspector = INSP;
 
     fn set_inspector(&mut self, inspector: Self::Inspector) {
-        self.0.data.inspector = inspector;
+        self.0.inspector = inspector;
     }
 
     fn inspect_replay(&mut self) -> Self::Output {

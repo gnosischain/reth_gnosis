@@ -1,7 +1,7 @@
 //! Test runners for `BlockchainTests` in <https://github.com/ethereum/tests>
 
+use crate::evm_config::GnosisEvmConfig;
 use crate::{
-    execute::GnosisExecutorProvider,
     spec::gnosis_spec::GnosisChainSpec,
     testing::{
         models::{BlockchainTest, ForkSpec},
@@ -179,10 +179,9 @@ impl Case for BlockchainTestCase {
                     .commit_without_sync_all()
                     .unwrap();
 
-                let gnosis_executor_provider =
-                    GnosisExecutorProvider::new(Arc::new(GnosisChainSpec {
-                        inner: chain_spec.as_ref().clone(),
-                    }));
+                let gnosis_executor_provider = GnosisEvmConfig::new(Arc::new(GnosisChainSpec {
+                    inner: chain_spec.as_ref().clone(),
+                }));
 
                 // Execute the execution stage using the EVM processor factory for the test case
                 // network.

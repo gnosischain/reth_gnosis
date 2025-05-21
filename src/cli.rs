@@ -17,8 +17,8 @@ use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
 
+use crate::evm_config::GnosisEvmConfig;
 use crate::{
-    execute::GnosisExecutorProvider,
     spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
     GnosisNode,
 };
@@ -120,7 +120,7 @@ where
 
         let components = |spec: Arc<C::ChainSpec>| {
             (
-                GnosisExecutorProvider::new(spec.clone()),
+                GnosisEvmConfig::new(spec.clone()),
                 EthBeaconConsensus::new(spec),
             )
         };
@@ -154,6 +154,8 @@ where
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(components))
             }
             Commands::Debug(_command) => todo!(),
+            Commands::ImportEra(_) => unimplemented!(),
+            Commands::Download(_) => unimplemented!(),
         }
     }
 
