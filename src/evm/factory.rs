@@ -1,12 +1,14 @@
+use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::{Database, Evm};
 use core::ops::{Deref, DerefMut};
+use reth::revm::precompile::{PrecompileSpecId, Precompiles};
 use reth_evm::{eth::EthEvmContext, EvmEnv, EvmFactory};
 use revm::{
     context::{
         result::{EVMError, HaltReason, ResultAndState},
         BlockEnv, TxEnv,
     },
-    handler::{instructions::EthInstructions, EthPrecompiles, PrecompileProvider},
+    handler::{instructions::EthInstructions, PrecompileProvider},
     inspector::NoOpInspector,
     interpreter::{interpreter::EthInterpreter, InterpreterResult},
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext,
@@ -15,7 +17,7 @@ use revm_primitives::{hardfork::SpecId, Address, Bytes, TxKind, U256};
 use revm_state::{Account, AccountInfo, AccountStatus};
 
 #[allow(missing_debug_implementations)] // missing revm::Context Debug impl
-pub struct GnosisEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
+pub struct GnosisEvm<DB: Database, I, PRECOMPILE = PrecompilesMap> {
     inner: crate::evm::gnosis_evm::GnosisEvm<
         EthEvmContext<DB>,
         I,
@@ -59,17 +61,17 @@ impl<DB: Database, I, PRECOMPILE> GnosisEvm<DB, I, PRECOMPILE> {
 
     /// Provides a reference to the EVM context.
     pub const fn ctx(&self) -> &EthEvmContext<DB> {
-        &self.inner.0.data.ctx
+        &self.inner.0.ctx
     }
 
     /// Provides a mutable reference to the EVM context.
     pub fn ctx_mut(&mut self) -> &mut EthEvmContext<DB> {
-        &mut self.inner.0.data.ctx
+        &mut self.inner.0.ctx
     }
 
     /// Provides a mutable reference to the EVM inspector.
     pub fn inspector_mut(&mut self) -> &mut I {
-        &mut self.inner.0.data.inspector
+        &mut self.inner.0.inspector
     }
 }
 
@@ -100,6 +102,8 @@ where
     type Error = EVMError<DB::Error>;
     type HaltReason = HaltReason;
     type Spec = SpecId;
+    type Precompiles = PRECOMPILE;
+    type Inspector = I;
 
     fn block(&self) -> &BlockEnv {
         &self.block
@@ -223,13 +227,21 @@ where
             cfg: cfg_env,
             journaled_state,
             ..
-        } = self.inner.0.data.ctx;
+        } = self.inner.0.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
 
     fn set_inspector_enabled(&mut self, enabled: bool) {
         self.inspect = enabled;
+    }
+
+    fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
+        todo!()
+    }
+
+    fn inspector_mut(&mut self) -> &mut Self::Inspector {
+        todo!()
     }
 }
 
@@ -242,20 +254,25 @@ pub struct GnosisEvmFactory {
 
 impl EvmFactory for GnosisEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> = GnosisEvm<DB, I>;
+    type Context<DB: Database> = EthEvmContext<DB>;
     type Tx = TxEnv;
     type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
     type HaltReason = HaltReason;
-    type Context<DB: Database> = EthEvmContext<DB>;
     type Spec = SpecId;
+    type Precompiles = PrecompilesMap;
 
     fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
+        let spec_id = input.cfg_env.spec;
         GnosisEvm {
             inner: super::gnosis_evm::GnosisEvm(
                 Context::mainnet()
                     .with_db(db)
                     .with_cfg(input.cfg_env)
                     .with_block(input.block_env)
-                    .build_mainnet_with_inspector(NoOpInspector {}),
+                    .build_mainnet_with_inspector(NoOpInspector {})
+                    .with_precompiles(PrecompilesMap::from_static(Precompiles::new(
+                        PrecompileSpecId::from_spec_id(spec_id),
+                    ))),
                 self.fee_collector_address,
             ),
             inspect: false,
@@ -268,13 +285,17 @@ impl EvmFactory for GnosisEvmFactory {
         input: EvmEnv,
         inspector: I,
     ) -> Self::Evm<DB, I> {
+        let spec_id = input.cfg_env.spec;
         GnosisEvm {
             inner: super::gnosis_evm::GnosisEvm(
                 Context::mainnet()
                     .with_db(db)
                     .with_cfg(input.cfg_env)
                     .with_block(input.block_env)
-                    .build_mainnet_with_inspector(inspector),
+                    .build_mainnet_with_inspector(inspector)
+                    .with_precompiles(PrecompilesMap::from_static(Precompiles::new(
+                        PrecompileSpecId::from_spec_id(spec_id),
+                    ))),
                 self.fee_collector_address,
             ),
             inspect: true,
