@@ -237,11 +237,11 @@ where
     }
 
     fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
-        todo!()
+        &mut self.inner.0.precompiles
     }
 
     fn inspector_mut(&mut self) -> &mut Self::Inspector {
-        todo!()
+        &mut self.inner.0.inspector
     }
 }
 
