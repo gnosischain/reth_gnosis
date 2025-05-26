@@ -7,7 +7,7 @@ use revm::{
     handler::{
         instructions::{EthInstructions, InstructionProvider},
         post_execution,
-        pre_execution::validate_account_nonce_and_code,
+        pre_execution::{self},
         EthFrame, EvmTr, EvmTrError, Frame, FrameResult, Handler, PrecompileProvider,
     },
     inspector::{InspectorEvmTr, InspectorFrame, InspectorHandler, JournalExt},
@@ -53,8 +53,32 @@ where
         &self,
         evm: &mut Self::Evm,
     ) -> Result<(), Self::Error> {
-        // TODO: is this equivalent to pre_execution::validate_against_state_and_deduct_caller(evm.ctx())
-        deduct_caller_gnosis(evm.ctx(), self.fee_collector)
+        pre_execution::validate_against_state_and_deduct_caller::<EVM::Context, ERROR>(evm.ctx())?;
+
+        // GNOSIS-SPECIFIC // START
+        let spec: SpecId = evm.ctx().cfg().spec().into();
+        let mut blob_gas_cost = U256::ZERO;
+        // EIP-4844
+        if evm.ctx().tx().tx_type() == TransactionType::Eip4844 {
+            let blob_price = evm.ctx().block().blob_gasprice().unwrap_or_default();
+            let blob_gas = evm.ctx().tx().total_blob_gas() as u128;
+            blob_gas_cost = U256::from(blob_price).saturating_mul(U256::from(blob_gas));
+        }
+
+        if spec.is_enabled_in(SpecId::PRAGUE) {
+            let fee_collector_account = evm.ctx().journal().load_account(self.fee_collector)?.data;
+            // Set new fee collector account balance.
+            fee_collector_account.info.balance = fee_collector_account
+                .info
+                .balance
+                .saturating_add(blob_gas_cost);
+
+            // Touch account so we know it is changed.
+            fee_collector_account.mark_touch();
+        }
+        // GNOSIS-SPECIFIC // END
+
+        Ok(())
     }
 
     fn reward_beneficiary(
@@ -240,91 +264,4 @@ where
         let mut h = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
         h.inspect_run(self)
     }
-}
-
-// REF: https://github.com/bluealloy/revm/blob/ce9be1ffa17d394397f58d0c693f8b36016b3fc7/crates/handler/src/pre_execution.rs#L72
-// Modification: Collects the blob gas fee (if pectra) after deducting from caller's account.
-#[inline]
-pub fn deduct_caller_gnosis<
-    CTX: ContextTr,
-    ERROR: From<InvalidTransaction> + From<<CTX::Db as Database>::Error>,
->(
-    context: &mut CTX,
-    fee_collector: Address,
-) -> Result<(), ERROR> {
-    let basefee = context.block().basefee() as u128;
-    let blob_price = context.block().blob_gasprice().unwrap_or_default();
-    let is_balance_check_disabled = context.cfg().is_balance_check_disabled();
-    let is_eip3607_disabled = context.cfg().is_eip3607_disabled();
-    let is_nonce_check_disabled = context.cfg().is_nonce_check_disabled();
-
-    let spec: SpecId = context.cfg().spec().into();
-
-    let (tx, journal) = context.tx_journal();
-
-    // GNOSIS-SPECIFIC // START
-    let mut blob_gas_cost = U256::ZERO;
-    // EIP-4844
-    if tx.tx_type() == TransactionType::Eip4844 {
-        let blob_gas = tx.total_blob_gas() as u128;
-        blob_gas_cost = U256::from(blob_price).saturating_mul(U256::from(blob_gas));
-    }
-    // GNOSIS-SPECIFIC // END
-
-    // Load caller's account.
-    let caller_account = journal.load_account(tx.caller())?.data;
-
-    validate_account_nonce_and_code(
-        &mut caller_account.info,
-        tx.nonce(),
-        tx.kind().is_call(),
-        is_eip3607_disabled,
-        is_nonce_check_disabled,
-    )?;
-
-    let max_balance_spending = tx.max_balance_spending()?;
-
-    // Check if account has enough balance for `gas_limit * max_fee`` and value transfer.
-    // Transfer will be done inside `*_inner` functions.
-    if is_balance_check_disabled {
-        // Make sure the caller's balance is at least the value of the transaction.
-        caller_account.info.balance = caller_account.info.balance.max(tx.value());
-    } else if max_balance_spending > caller_account.info.balance {
-        return Err(InvalidTransaction::LackOfFundForMaxFee {
-            fee: Box::new(max_balance_spending),
-            balance: Box::new(caller_account.info.balance),
-        }
-        .into());
-    } else {
-        let effective_balance_spending = tx
-            .effective_balance_spending(basefee, blob_price)
-            .expect("effective balance is always smaller than max balance so it can't overflow");
-
-        // subtracting max balance spending with value that is going to be deducted later in the call.
-        let gas_balance_spending = effective_balance_spending - tx.value();
-
-        caller_account.info.balance = caller_account
-            .info
-            .balance
-            .saturating_sub(gas_balance_spending);
-    }
-
-    // Touch account so we know it is changed.
-    caller_account.mark_touch();
-
-    // GNOSIS-SPECIFIC // START
-    if spec.is_enabled_in(SpecId::PRAGUE) {
-        let fee_collector_account = journal.load_account(fee_collector)?.data;
-        // Set new fee collector account balance.
-        fee_collector_account.info.balance = fee_collector_account
-            .info
-            .balance
-            .saturating_add(blob_gas_cost);
-
-        // Touch account so we know it is changed.
-        fee_collector_account.mark_touch();
-    }
-    // GNOSIS-SPECIFIC // END
-
-    Ok(())
 }
