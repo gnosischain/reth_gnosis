@@ -18,9 +18,7 @@ use reth_node_builder::{
     BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes,
     PayloadTypes,
 };
-use reth_node_ethereum::{
-    BasicBlockExecutorProvider, EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder,
-};
+use reth_node_ethereum::{EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder};
 use reth_primitives::EthPrimitives;
 use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
@@ -34,7 +32,6 @@ pub mod cli;
 mod errors;
 mod evm;
 mod evm_config;
-pub mod execute;
 mod gnosis;
 pub mod initialize;
 mod network;
@@ -92,9 +89,9 @@ impl GnosisNode {
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(GnosisPoolBuilder::default())
+            .executor(GnosisExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::default())
             .network(GnosisNetworkBuilder::default())
-            .executor(GnosisExecutorBuilder::default())
             .consensus(GnosisConsensusBuilder::default())
     }
 }
@@ -155,16 +152,11 @@ where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
 {
     type EVM = GnosisEvmConfig;
-    type Executor = BasicBlockExecutorProvider<GnosisEvmConfig>;
 
-    async fn build_evm(
-        self,
-        ctx: &BuilderContext<Node>,
-    ) -> eyre::Result<(Self::EVM, Self::Executor)> {
+    async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         let evm_config = GnosisEvmConfig::new(ctx.chain_spec());
-        let executor = BasicBlockExecutorProvider::new(evm_config.clone());
 
-        Ok((evm_config, executor))
+        Ok(evm_config)
     }
 }
 

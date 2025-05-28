@@ -1,5 +1,5 @@
 use alloy_eips::eip7840::BlobParams;
-use reth_chainspec::HardforkBlobParams;
+use alloy_eips::BlobScheduleBlobParams;
 use revm::context_interface::block::BlobExcessGasAndPrice;
 use revm_primitives::hardfork::SpecId;
 
@@ -17,10 +17,14 @@ pub static PRAGUE_BLOB_PARAMS: BlobParams = BlobParams {
     min_blob_fee: 1000000000,
 };
 
-pub const GNOSIS_BLOB_SCHEDULE: HardforkBlobParams = HardforkBlobParams {
-    cancun: CANCUN_BLOB_PARAMS,
-    prague: PRAGUE_BLOB_PARAMS,
-};
+pub fn gnosis_blob_schedule() -> BlobScheduleBlobParams {
+    BlobScheduleBlobParams {
+        cancun: CANCUN_BLOB_PARAMS,
+        prague: PRAGUE_BLOB_PARAMS,
+        osaka: PRAGUE_BLOB_PARAMS,
+        scheduled: vec![],
+    }
+}
 
 // helper function to create the evm's CfgEnv in get_cfg_env
 pub fn evm_env_blob_schedule() -> Vec<(SpecId, u64, u64)> {

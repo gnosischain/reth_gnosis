@@ -6,8 +6,9 @@ use revm::{
     },
     handler::{
         instructions::{EthInstructions, InstructionProvider},
-        post_execution, EthFrame, EvmTr, EvmTrError, Frame, FrameResult, Handler,
-        PrecompileProvider,
+        post_execution,
+        pre_execution::{self},
+        EthFrame, EvmTr, EvmTrError, Frame, FrameResult, Handler, PrecompileProvider,
     },
     inspector::{InspectorEvmTr, InspectorFrame, InspectorHandler, JournalExt},
     interpreter::{
@@ -47,6 +48,39 @@ where
     type Frame = FRAME;
     type HaltReason = HaltReason;
 
+    #[inline]
+    fn validate_against_state_and_deduct_caller(
+        &self,
+        evm: &mut Self::Evm,
+    ) -> Result<(), Self::Error> {
+        pre_execution::validate_against_state_and_deduct_caller::<EVM::Context, ERROR>(evm.ctx())?;
+
+        // GNOSIS-SPECIFIC // START
+        let spec: SpecId = evm.ctx().cfg().spec().into();
+        let mut blob_gas_cost = U256::ZERO;
+        // EIP-4844
+        if evm.ctx().tx().tx_type() == TransactionType::Eip4844 {
+            let blob_price = evm.ctx().block().blob_gasprice().unwrap_or_default();
+            let blob_gas = evm.ctx().tx().total_blob_gas() as u128;
+            blob_gas_cost = U256::from(blob_price).saturating_mul(U256::from(blob_gas));
+        }
+
+        if spec.is_enabled_in(SpecId::PRAGUE) {
+            let fee_collector_account = evm.ctx().journal().load_account(self.fee_collector)?.data;
+            // Set new fee collector account balance.
+            fee_collector_account.info.balance = fee_collector_account
+                .info
+                .balance
+                .saturating_add(blob_gas_cost);
+
+            // Touch account so we know it is changed.
+            fee_collector_account.mark_touch();
+        }
+        // GNOSIS-SPECIFIC // END
+
+        Ok(())
+    }
+
     fn reward_beneficiary(
         &self,
         evm: &mut Self::Evm,
@@ -69,11 +103,6 @@ where
                 .saturating_add(U256::from(basefee * gas_used));
         }
         Ok(())
-    }
-
-    #[inline]
-    fn deduct_caller(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
-        deduct_caller_gnosis(evm.ctx(), self.fee_collector).map_err(From::from)
     }
 }
 
@@ -113,28 +142,28 @@ where
         >,
     ) -> <<Self::Instructions as InstructionProvider>::InterpreterTypes as InterpreterTypes>::Output
     {
-        let context = &mut self.0.data.ctx;
+        let context = &mut self.0.ctx;
         let instructions = &mut self.0.instruction;
         interpreter.run_plain(instructions.instruction_table(), context)
     }
     #[inline]
     fn ctx(&mut self) -> &mut Self::Context {
-        &mut self.0.data.ctx
+        &mut self.0.ctx
     }
 
     #[inline]
     fn ctx_ref(&self) -> &Self::Context {
-        &self.0.data.ctx
+        &self.0.ctx
     }
 
     #[inline]
     fn ctx_instructions(&mut self) -> (&mut Self::Context, &mut Self::Instructions) {
-        (&mut self.0.data.ctx, &mut self.0.instruction)
+        (&mut self.0.ctx, &mut self.0.instruction)
     }
 
     #[inline]
     fn ctx_precompiles(&mut self) -> (&mut Self::Context, &mut Self::Precompiles) {
-        (&mut self.0.data.ctx, &mut self.0.precompiles)
+        (&mut self.0.ctx, &mut self.0.precompiles)
     }
 }
 
@@ -153,17 +182,17 @@ where
 
     type Block = <CTX as ContextTr>::Block;
 
-    fn replay(&mut self) -> Self::Output {
-        let mut t = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
-        t.run(self)
-    }
-
     fn set_tx(&mut self, tx: Self::Tx) {
-        self.0.data.ctx.set_tx(tx);
+        self.0.ctx.set_tx(tx);
     }
 
     fn set_block(&mut self, block: Self::Block) {
-        self.0.data.ctx.set_block(block);
+        self.0.ctx.set_block(block);
+    }
+
+    fn replay(&mut self) -> Self::Output {
+        let mut t = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
+        t.run(self)
     }
 }
 
@@ -200,11 +229,11 @@ where
     type Inspector = INSP;
 
     fn inspector(&mut self) -> &mut Self::Inspector {
-        &mut self.0.data.inspector
+        &mut self.0.inspector
     }
 
     fn ctx_inspector(&mut self) -> (&mut Self::Context, &mut Self::Inspector) {
-        (&mut self.0.data.ctx, &mut self.0.data.inspector)
+        (&mut self.0.ctx, &mut self.0.inspector)
     }
 
     fn run_inspect_interpreter(
@@ -228,72 +257,11 @@ where
     type Inspector = INSP;
 
     fn set_inspector(&mut self, inspector: Self::Inspector) {
-        self.0.data.inspector = inspector;
+        self.0.inspector = inspector;
     }
 
     fn inspect_replay(&mut self) -> Self::Output {
         let mut h = GnosisEvmHandler::<_, _, EthFrame<_, _, _>>::new(self.1);
         h.inspect_run(self)
     }
-}
-
-// REF: https://github.com/bluealloy/revm/blob/ce9be1ffa17d394397f58d0c693f8b36016b3fc7/crates/handler/src/pre_execution.rs#L72
-// Modification: Collects the blob gas fee (if pectra) after deducting from caller's account.
-#[inline]
-pub fn deduct_caller_gnosis<CTX: ContextTr>(
-    context: &mut CTX,
-    fee_collector: Address,
-) -> Result<(), <CTX::Db as Database>::Error> {
-    let basefee = context.block().basefee();
-    let blob_price = context.block().blob_gasprice().unwrap_or_default();
-    let effective_gas_price = context.tx().effective_gas_price(basefee as u128);
-    // Subtract gas costs from the caller's account.
-    // We need to saturate the gas cost to prevent underflow in case that `disable_balance_check` is enabled.
-    let mut gas_cost = (context.tx().gas_limit() as u128).saturating_mul(effective_gas_price);
-
-    let mut blob_gas_cost: u128 = 0;
-
-    // EIP-4844
-    if context.tx().tx_type() == TransactionType::Eip4844 {
-        let blob_gas = context.tx().total_blob_gas() as u128;
-        blob_gas_cost = blob_price.saturating_mul(blob_gas);
-        gas_cost = gas_cost.saturating_add(blob_gas_cost);
-    }
-
-    let is_call = context.tx().kind().is_call();
-    let caller = context.tx().caller();
-
-    // Load caller's account.
-    let caller_account = context.journal().load_account(caller)?.data;
-    // Set new caller account balance.
-    caller_account.info.balance = caller_account
-        .info
-        .balance
-        .saturating_sub(U256::from(gas_cost));
-
-    // Bump the nonce for calls. Nonce for CREATE will be bumped in `handle_create`.
-    if is_call {
-        // Nonce is already checked
-        caller_account.info.nonce = caller_account.info.nonce.saturating_add(1);
-    }
-
-    // Touch account so we know it is changed.
-    caller_account.mark_touch();
-
-    // GNOSIS-SPECIFIC // START
-    let spec: SpecId = context.cfg().spec().into();
-    if spec.is_enabled_in(SpecId::PRAGUE) {
-        let fee_collector_account = context.journal().load_account(fee_collector)?.data;
-        // Set new fee collector account balance.
-        fee_collector_account.info.balance = fee_collector_account
-            .info
-            .balance
-            .saturating_add(U256::from(blob_gas_cost));
-
-        // Touch account so we know it is changed.
-        fee_collector_account.mark_touch();
-    }
-    // GNOSIS-SPECIFIC // END
-
-    Ok(())
 }
