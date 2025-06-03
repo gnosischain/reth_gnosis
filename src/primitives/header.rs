@@ -9,6 +9,7 @@ use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable, RlpDecodable, Rl
 use alloy_trie::EMPTY_ROOT_HASH;
 use reth_chainspec::BaseFeeParams;
 use reth_codecs::Compact;
+use reth_db::{table::{Compress, Decompress}, DatabaseError};
 use reth_primitives_traits::InMemorySize;
 // use reth_codecs::Compact;
 // use reth_ethereum::primitives::{BlockHeader, InMemorySize};
@@ -887,5 +888,20 @@ impl Decodable for GnosisHeader {
             });
         }
         Ok(this)
+    }
+}
+
+impl Compress for GnosisHeader {
+    type Compressed = Vec<u8>;
+
+    fn compress_to_buf<B: alloy_primitives::bytes::BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
+        let _ = Compact::to_compact(self, buf);
+    }
+}
+
+impl Decompress for GnosisHeader {
+    fn decompress(value: &[u8]) -> Result<GnosisHeader, DatabaseError> {
+        let (obj, _) = Compact::from_compact(value, value.len());
+        Ok(obj)
     }
 }

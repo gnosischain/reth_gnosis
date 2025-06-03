@@ -65,7 +65,7 @@ fn import_state(
             &provider_rw,
             // &header,
             // header_hash,
-            SealedHeader::new(header, header_hash),
+            SealedHeader::new(header.into(), header_hash),
             total_difficulty,
             |number| Header {
                 number,
