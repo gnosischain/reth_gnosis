@@ -17,6 +17,7 @@ use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
 
+use crate::primitives::{block::Block as GnosisBlock, header::GnosisHeader};
 /// Block builder for Gnosis.
 #[derive(Debug)]
 pub struct GnosisBlockAssembler<ChainSpec> {
@@ -55,12 +56,12 @@ where
     >,
     ChainSpec: EthChainSpec + EthereumHardforks,
 {
-    type Block = Block<F::Transaction>;
+    type Block = GnosisBlock;
 
     fn assemble_block(
         &self,
-        input: BlockAssemblerInput<'_, '_, F>,
-    ) -> Result<Block<TransactionSigned>, BlockExecutionError> {
+        input: BlockAssemblerInput<'_, '_, F, GnosisHeader>,
+    ) -> Result<GnosisBlock, BlockExecutionError> {
         let BlockAssemblerInput {
             evm_env,
             execution_ctx: ctx,
@@ -147,8 +148,8 @@ where
             requests_hash,
         };
 
-        Ok(Block {
-            header,
+        Ok(GnosisBlock {
+            header: header.into(),
             body: BlockBody {
                 transactions,
                 ommers: Default::default(),

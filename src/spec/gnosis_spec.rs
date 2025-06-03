@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use core::fmt::Display;
 
-use crate::blobs::gnosis_blob_schedule;
+use crate::{blobs::gnosis_blob_schedule, primitives::header::GnosisHeader};
 use alloy_consensus::Header;
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
@@ -92,22 +92,17 @@ fn genesis_hash(chain_id: u64, chainspec_genesis_hash: B256) -> B256 {
     }
 }
 
-/// Chain spec builder for gnosis chain.
-#[derive(Debug, Default, From)]
-pub struct GnosisChainSpecBuilder {
-    /// [`ChainSpecBuilder`]
-    _inner: ChainSpecBuilder,
-}
-
 /// Gnosis chain spec type.
 #[derive(Debug, Clone, Default, Deref, Into, Constructor, PartialEq, Eq)]
 pub struct GnosisChainSpec {
     /// [`ChainSpec`].
+    #[deref]
     pub inner: ChainSpec,
+    pub genesis_header: SealedHeader<GnosisHeader>,
 }
 
 impl EthChainSpec for GnosisChainSpec {
-    type Header = Header;
+    type Header = GnosisHeader;
 
     fn chain(&self) -> alloy_chains::Chain {
         self.inner.chain()
@@ -130,7 +125,7 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn genesis_hash(&self) -> B256 {
-        self.inner.genesis_hash()
+        self.genesis_header.hash()
     }
 
     fn prune_delete_limit(&self) -> usize {
@@ -142,7 +137,7 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn genesis_header(&self) -> &Self::Header {
-        self.inner.genesis_header()
+        &self.genesis_header
     }
 
     fn genesis(&self) -> &Genesis {
@@ -457,6 +452,11 @@ impl From<Genesis> for GnosisChainSpec {
 
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
+        // TODO: fix this
+        let temp_header= SealedHeader::new_unhashed(GnosisHeader::from(make_genesis_header(
+            &genesis, &hardforks,
+        )));
+
         Self {
             inner: ChainSpec {
                 chain: genesis.config.chain_id.into(),
@@ -471,6 +471,7 @@ impl From<Genesis> for GnosisChainSpec {
                 base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
                 ..Default::default()
             },
+            genesis_header: temp_header,
         }
     }
 }

@@ -3,14 +3,27 @@ use reth::{
     builder::{components::NetworkBuilder, BuilderContext},
     network::{NetworkHandle, NetworkManager, PeersInfo},
 };
-use reth_eth_wire_types::UnifiedStatus;
 use reth_ethereum_primitives::PooledTransactionVariant;
-use reth_primitives::EthPrimitives;
+use reth_eth_wire_types::{NetworkPrimitives, Status, UnifiedStatus};
+use reth_primitives::{PooledTransaction, Receipt, TransactionSigned, EthPrimitives};
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
 
-use crate::spec::gnosis_spec::GnosisChainSpec;
+use crate::{primitives::{block::{Block as GnosisBlock, BlockBody}, header::GnosisHeader, GnosisNodePrimitives}, spec::gnosis_spec::GnosisChainSpec};
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct GnosisNetworkPrimitives;
+
+impl NetworkPrimitives for GnosisNetworkPrimitives {
+    type BlockHeader = GnosisHeader;
+    type BlockBody = BlockBody;
+    type Block = GnosisBlock;
+    type BroadcastedTransaction = TransactionSigned;
+    type PooledTransaction = PooledTransaction;
+    type Receipt = Receipt;
+}
 
 /// A basic ethereum payload service.
 #[derive(Debug, Default, Clone, Copy)]
@@ -20,7 +33,7 @@ pub struct GnosisNetworkBuilder {
 
 impl<Node, Pool> NetworkBuilder<Node, Pool> for GnosisNetworkBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>>,
     Pool: TransactionPool<
             Transaction: PoolTransaction<
                 Consensus = TxTy<Node::Types>,
@@ -29,13 +42,13 @@ where
         > + Unpin
         + 'static,
 {
-    type Network = NetworkHandle;
+    type Network = NetworkHandle<GnosisNetworkPrimitives>;
 
     async fn build_network(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-    ) -> eyre::Result<NetworkHandle> {
+    ) -> eyre::Result<NetworkHandle<GnosisNetworkPrimitives>> {
         let mut network_config = ctx.network_config()?;
 
         let spec = ctx.chain_spec();

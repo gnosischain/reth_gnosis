@@ -120,23 +120,33 @@ where
                 command.execute(ctx, FnLauncher::new::<C, Ext>(launcher))
             }),
             Commands::Init(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                unimplemented!()
             }
             Commands::InitState(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                unimplemented!()
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                unimplemented!()
             }
             Commands::Stage(_command) => unimplemented!(),
             Commands::P2P(_command) => unimplemented!(),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Recover(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
+                // runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
+                unimplemented!()
             }
-            Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
-            Commands::Import(_command) => unimplemented!(),
+            Commands::Prune(command) => {
+                // runner.run_until_ctrl_c(command.execute::<GnosisNode>())
+                unimplemented!()
+            },
+            Commands::Import(command) => {
+                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(components))
+                unimplemented!()
+            }
             Commands::Debug(_command) => todo!(),
             Commands::ImportEra(_) => unimplemented!(),
             Commands::Download(_) => unimplemented!(),

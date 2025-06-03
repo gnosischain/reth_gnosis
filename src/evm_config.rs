@@ -1,8 +1,6 @@
-use alloy_consensus::{BlockHeader, Header};
+use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
-use reth_ethereum_primitives::Block;
 use reth_evm::eth::EthBlockExecutionCtx;
-use reth_primitives::EthPrimitives;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 
 use core::fmt::Debug;
@@ -16,9 +14,11 @@ use std::borrow::Cow;
 use std::{convert::Infallible, sync::Arc};
 
 use crate::blobs::{get_blob_params, next_blob_gas_and_price};
-use crate::block::GnosisBlockExecutorFactory;
+use crate::block_executor::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
+use crate::primitives::header::GnosisHeader;
+use crate::primitives::{GnosisNodePrimitives, block::Block as GnosisBlock};
 use crate::spec::gnosis_spec::GnosisChainSpec;
 
 /// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
@@ -96,7 +96,7 @@ impl GnosisEvmConfig {
 }
 
 impl ConfigureEvm for GnosisEvmConfig {
-    type Primitives = EthPrimitives;
+    type Primitives = GnosisNodePrimitives;
     type Error = Infallible;
     type NextBlockEnvCtx = NextBlockEnvAttributes;
     type BlockExecutorFactory =
@@ -111,8 +111,9 @@ impl ConfigureEvm for GnosisEvmConfig {
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &Header) -> EvmEnv {
-        let spec = revm_spec(self.chain_spec(), header);
+    fn evm_env(&self, header: &GnosisHeader) -> EvmEnv {
+        let alloy_header = header.to_alloy_header();
+        let spec = revm_spec(self.chain_spec(), &alloy_header);
 
         // configure evm env based on parent block
         let cfg_env = get_cfg_env(self.chain_spec(), spec, header.timestamp);
@@ -144,7 +145,7 @@ impl ConfigureEvm for GnosisEvmConfig {
 
     fn next_evm_env(
         &self,
-        parent: &Header,
+        parent: &GnosisHeader,
         attributes: &NextBlockEnvAttributes,
     ) -> Result<EvmEnv, Self::Error> {
         // ensure we're not missing any timestamp based hardforks
@@ -189,18 +190,18 @@ impl ConfigureEvm for GnosisEvmConfig {
         Ok((cfg, block_env).into())
     }
 
-    fn context_for_block<'a>(&self, block: &'a SealedBlock<Block>) -> EthBlockExecutionCtx<'a> {
+    fn context_for_block<'a>(&self, block: &'a SealedBlock<GnosisBlock>) -> EthBlockExecutionCtx<'a> {
         EthBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
-            ommers: &block.body().ommers,
+            ommers: &[],
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
         }
     }
 
     fn context_for_next_block(
         &self,
-        parent: &SealedHeader,
+        parent: &SealedHeader<GnosisHeader>,
         attributes: Self::NextBlockEnvCtx,
     ) -> EthBlockExecutionCtx<'_> {
         EthBlockExecutionCtx {

@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
 use alloy_consensus::Transaction;
+use alloy_eips::{eip7685::Requests, Typed2718};
+use reth::rpc::types::engine::{BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV5, ExecutionPayloadFieldV2, ExecutionPayloadV3};
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
 };
 use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError};
+use reth_ethereum_engine_primitives::{BlobSidecars, BuiltPayloadConversionError};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
-use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
+use reth_ethereum_primitives::TransactionSigned;
 use reth_evm::{
     execute::{BlockBuilder, BlockBuilderOutcome},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
@@ -15,6 +18,10 @@ use reth_evm::{
 use reth_node_builder::{PayloadBuilderAttributes, PayloadBuilderError};
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload, EthPayloadBuilderAttributes};
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
+use reth_ethereum_engine_primitives::{EthPayloadAttributes, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4, ExecutionPayloadV1};
+use reth_node_builder::{BuiltPayload, PayloadBuilderAttributes, PayloadBuilderError};
+use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadId};
+use reth_primitives_traits::{transaction::error::InvalidTransactionError, SealedBlock};
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_transaction_pool::{
@@ -25,6 +32,7 @@ use reth_transaction_pool::{
 use revm::context::Block;
 use revm_primitives::U256;
 use tracing::{debug, trace, warn};
+use crate::primitives::{block::Block as GnosisBlock, header::GnosisHeader, GnosisNodePrimitives};
 
 use crate::{blobs::get_blob_params, spec::gnosis_spec::GnosisChainSpec};
 
@@ -64,17 +72,17 @@ impl<Pool, Client, EvmConfig> GnosisPayloadBuilder<Pool, Client, EvmConfig> {
 // Default implementation of [PayloadBuilder] for unit type
 impl<Pool, Client, EvmConfig> PayloadBuilder for GnosisPayloadBuilder<Pool, Client, EvmConfig>
 where
-    EvmConfig: ConfigureEvm<Primitives = EthPrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
+    EvmConfig: ConfigureEvm<Primitives = GnosisNodePrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec = GnosisChainSpec> + Clone,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TransactionSigned>>,
 {
     type Attributes = EthPayloadBuilderAttributes;
-    type BuiltPayload = EthBuiltPayload;
+    type BuiltPayload = GnosisBuiltPayload;
 
     fn try_build(
         &self,
-        args: BuildArguments<EthPayloadBuilderAttributes, EthBuiltPayload>,
-    ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError> {
+        args: BuildArguments<EthPayloadBuilderAttributes, GnosisBuiltPayload>,
+    ) -> Result<BuildOutcome<GnosisBuiltPayload>, PayloadBuilderError> {
         default_ethereum_payload(
             self.evm_config.clone(),
             self.client.clone(),
@@ -88,8 +96,8 @@ where
 
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes>,
-    ) -> Result<EthBuiltPayload, PayloadBuilderError> {
+        config: PayloadConfig<Self::Attributes, GnosisHeader>,
+    ) -> Result<GnosisBuiltPayload, PayloadBuilderError> {
         let args = BuildArguments::new(Default::default(), config, Default::default(), None);
 
         // let evm_env = self
@@ -126,11 +134,11 @@ pub fn default_ethereum_payload<EvmConfig, Pool, Client, F>(
     client: Client,
     pool: Pool,
     builder_config: EthereumBuilderConfig,
-    args: BuildArguments<EthPayloadBuilderAttributes, EthBuiltPayload>,
+    args: BuildArguments<EthPayloadBuilderAttributes, GnosisBuiltPayload>,
     best_txs: F,
-) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError>
+) -> Result<BuildOutcome<GnosisBuiltPayload>, PayloadBuilderError>
 where
-    EvmConfig: ConfigureEvm<Primitives = EthPrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
+    EvmConfig: ConfigureEvm<Primitives = GnosisNodePrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec = GnosisChainSpec>,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TransactionSigned>>,
     F: FnOnce(BestTransactionsAttributes) -> BestTransactionsIter<Pool>,
@@ -352,12 +360,214 @@ where
     let sealed_block = Arc::new(block.sealed_block().clone());
     debug!(target: "payload_builder", id=%attributes.id, sealed_block_header = ?sealed_block.sealed_header(), "sealed built block");
 
-    let payload = EthBuiltPayload::new(attributes.id, sealed_block, total_fees, requests)
-        // add blob sidecars from the executed txs
-        .with_sidecars(blob_sidecars);
+    let payload = GnosisBuiltPayload::new(attributes.id, sealed_block, total_fees, requests)
+        // extend the payload with the blob sidecars from the executed txs
+        .with_sidecars(
+            blob_sidecars
+                .into_iter()
+                .map(Arc::unwrap_or_clone)
+                .collect::<Vec<_>>(),
+        );
 
     Ok(BuildOutcome::Better {
         payload,
         cached_reads,
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct GnosisBuiltPayload {
+    /// Identifier of the payload
+    pub(crate) id: PayloadId,
+    /// The built block
+    pub(crate) block: Arc<SealedBlock<GnosisBlock>>,
+    /// The fees of the block
+    pub(crate) fees: U256,
+    /// The blobs, proofs, and commitments in the block. If the block is pre-cancun, this will be
+    /// empty.
+    pub(crate) sidecars: BlobSidecars,
+    /// The requests of the payload
+    pub(crate) requests: Option<Requests>,
+}
+
+// === impl BuiltPayload ===
+
+impl GnosisBuiltPayload {
+    /// Initializes the payload with the given initial block
+    ///
+    /// Caution: This does not set any [`BlobSidecars`].
+    pub const fn new(
+        id: PayloadId,
+        block: Arc<SealedBlock<GnosisBlock>>,
+        fees: U256,
+        requests: Option<Requests>,
+    ) -> Self {
+        Self { id, block, fees, requests, sidecars: BlobSidecars::Empty }
+    }
+
+    /// Returns the identifier of the payload.
+    pub const fn id(&self) -> PayloadId {
+        self.id
+    }
+
+    /// Returns the built block(sealed)
+    pub fn block(&self) -> &SealedBlock<GnosisBlock> {
+        &self.block
+    }
+
+    /// Fees of the block
+    pub const fn fees(&self) -> U256 {
+        self.fees
+    }
+
+    /// Returns the blob sidecars.
+    pub const fn sidecars(&self) -> &BlobSidecars {
+        &self.sidecars
+    }
+
+    /// Sets blob transactions sidecars on the payload.
+    pub fn with_sidecars(mut self, sidecars: impl Into<BlobSidecars>) -> Self {
+        self.sidecars = sidecars.into();
+        self
+    }
+
+    /// Try converting built payload into [`ExecutionPayloadEnvelopeV3`].
+    ///
+    /// Returns an error if the payload contains non EIP-4844 sidecar.
+    pub fn try_into_v3(self) -> Result<ExecutionPayloadEnvelopeV3, BuiltPayloadConversionError> {
+        let Self { block, fees, sidecars, .. } = self;
+
+        let blobs_bundle = match sidecars {
+            BlobSidecars::Empty => BlobsBundleV1::empty(),
+            BlobSidecars::Eip4844(sidecars) => BlobsBundleV1::from(sidecars),
+            BlobSidecars::Eip7594(_) => {
+                return Err(BuiltPayloadConversionError::UnexpectedEip7594Sidecars)
+            }
+        };
+
+        Ok(ExecutionPayloadEnvelopeV3 {
+            execution_payload: ExecutionPayloadV3::from_block_unchecked(
+                block.hash(),
+                &Arc::unwrap_or_clone(block).into_block(),
+            ),
+            block_value: fees,
+            // From the engine API spec:
+            //
+            // > Client software **MAY** use any heuristics to decide whether to set
+            // `shouldOverrideBuilder` flag or not. If client software does not implement any
+            // heuristic this flag **SHOULD** be set to `false`.
+            //
+            // Spec:
+            // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
+            should_override_builder: false,
+            blobs_bundle,
+        })
+    }
+
+    /// Try converting built payload into [`ExecutionPayloadEnvelopeV4`].
+    ///
+    /// Returns an error if the payload contains non EIP-4844 sidecar.
+    pub fn try_into_v4(self) -> Result<ExecutionPayloadEnvelopeV4, BuiltPayloadConversionError> {
+        Ok(ExecutionPayloadEnvelopeV4 {
+            execution_requests: self.requests.clone().unwrap_or_default(),
+            envelope_inner: self.try_into()?,
+        })
+    }
+
+    /// Try converting built payload into [`ExecutionPayloadEnvelopeV5`].
+    pub fn try_into_v5(self) -> Result<ExecutionPayloadEnvelopeV5, BuiltPayloadConversionError> {
+        let Self { block, fees, sidecars, requests, .. } = self;
+
+        let blobs_bundle = match sidecars {
+            BlobSidecars::Empty => BlobsBundleV2::empty(),
+            BlobSidecars::Eip7594(sidecars) => BlobsBundleV2::from(sidecars),
+            BlobSidecars::Eip4844(_) => {
+                return Err(BuiltPayloadConversionError::UnexpectedEip4844Sidecars)
+            }
+        };
+
+        Ok(ExecutionPayloadEnvelopeV5 {
+            execution_payload: ExecutionPayloadV3::from_block_unchecked(
+                block.hash(),
+                &Arc::unwrap_or_clone(block).into_block(),
+            ),
+            block_value: fees,
+            // From the engine API spec:
+            //
+            // > Client software **MAY** use any heuristics to decide whether to set
+            // `shouldOverrideBuilder` flag or not. If client software does not implement any
+            // heuristic this flag **SHOULD** be set to `false`.
+            //
+            // Spec:
+            // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
+            should_override_builder: false,
+            blobs_bundle,
+            execution_requests: requests.unwrap_or_default(),
+        })
+    }
+}
+
+impl BuiltPayload for GnosisBuiltPayload {
+    type Primitives = GnosisNodePrimitives;
+
+    fn block(&self) -> &SealedBlock<GnosisBlock> {
+        &self.block
+    }
+
+    fn fees(&self) -> U256 {
+        self.fees
+    }
+
+    fn requests(&self) -> Option<Requests> {
+        self.requests.clone()
+    }
+}
+
+// V1 engine_getPayloadV1 response
+impl From<GnosisBuiltPayload> for ExecutionPayloadV1 {
+    fn from(value: GnosisBuiltPayload) -> Self {
+        Self::from_block_unchecked(
+            value.block().hash(),
+            &Arc::unwrap_or_clone(value.block).into_block(),
+        )
+    }
+}
+
+// V2 engine_getPayloadV2 response
+impl From<GnosisBuiltPayload> for ExecutionPayloadEnvelopeV2 {
+    fn from(value: GnosisBuiltPayload) -> Self {
+        let GnosisBuiltPayload { block, fees, .. } = value;
+
+        Self {
+            block_value: fees,
+            execution_payload: ExecutionPayloadFieldV2::from_block_unchecked(
+                block.hash(),
+                &Arc::unwrap_or_clone(block).into_block(),
+            ),
+        }
+    }
+}
+
+impl TryFrom<GnosisBuiltPayload> for ExecutionPayloadEnvelopeV3 {
+    type Error = BuiltPayloadConversionError;
+
+    fn try_from(value: GnosisBuiltPayload) -> Result<Self, Self::Error> {
+        value.try_into_v3()
+    }
+}
+
+impl TryFrom<GnosisBuiltPayload> for ExecutionPayloadEnvelopeV4 {
+    type Error = BuiltPayloadConversionError;
+
+    fn try_from(value: GnosisBuiltPayload) -> Result<Self, Self::Error> {
+        value.try_into_v4()
+    }
+}
+
+impl TryFrom<GnosisBuiltPayload> for ExecutionPayloadEnvelopeV5 {
+    type Error = BuiltPayloadConversionError;
+
+    fn try_from(value: GnosisBuiltPayload) -> Result<Self, Self::Error> {
+        value.try_into_v5()
+    }
 }
