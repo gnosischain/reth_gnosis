@@ -130,28 +130,39 @@ where
                 runner.run_command_until_exit(|ctx| command.execute(ctx, launcher))
             }
             Commands::Init(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                unimplemented!()
             }
             Commands::InitState(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                unimplemented!()
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                unimplemented!()
             }
-            Commands::Stage(command) => runner.run_command_until_exit(|ctx| {
-                command.execute::<GnosisNode, _, _, EthNetworkPrimitives>(ctx, components)
-            }),
+            Commands::Stage(command) => {
+                // runner.run_command_until_exit(|ctx| {
+                //     command.execute::<GnosisNode, _, _, EthNetworkPrimitives>(ctx, components)
+                // })
+                unimplemented!()
+            },
             Commands::P2P(command) => {
                 runner.run_until_ctrl_c(command.execute::<EthNetworkPrimitives>())
             }
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Recover(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
+                // runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
+                unimplemented!()
             }
-            Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
+            Commands::Prune(command) => {
+                // runner.run_until_ctrl_c(command.execute::<GnosisNode>())
+                unimplemented!()
+            },
             Commands::Import(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(components))
+                // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(components))
+                unimplemented!()
             }
             Commands::Debug(_command) => todo!(),
             Commands::ImportEra(_) => unimplemented!(),
