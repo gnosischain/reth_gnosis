@@ -17,7 +17,6 @@ use tracing::info;
 
 use crate::{
     spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
-    GnosisNode,
 };
 
 /// The main reth_gnosis cli interface.

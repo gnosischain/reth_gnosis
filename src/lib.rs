@@ -21,11 +21,13 @@ use reth_node_builder::{
     BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes,
     PayloadTypes,
 };
-use reth_node_ethereum::{EthereumEthApiBuilder};
+use reth_node_ethereum::{EthereumAddOns, EthereumEthApiBuilder};
 use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
 use spec::gnosis_spec::GnosisChainSpec;
 use std::sync::Arc;
+
+use crate::primitives::GnosisEthApiBuilder;
 
 mod blobs;
 mod block_executor;
@@ -110,18 +112,11 @@ impl NodeTypes for GnosisNode {
 }
 
 /// Add-ons w.r.t. gnosis
-// pub type GnosisAddOns<N> = RpcAddOns<N, EthereumEthApiBuilder, GnosisEngineValidatorBuilder>;
+pub type GnosisAddOns<N> = RpcAddOns<N, GnosisEthApiBuilder, GnosisEngineValidatorBuilder>;
 
 impl<N> Node<N> for GnosisNode
 where
-    N: FullNodeTypes<
-        Types: NodeTypes<
-            Payload = GnosisEngineTypes,
-            ChainSpec = GnosisChainSpec,
-            Primitives = GnosisNodePrimitives,
-            Storage = EthStorage<TransactionSigned, GnosisHeader>,
-        >,
-    >,
+    N: FullNodeTypes<Types = Self>,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
@@ -132,9 +127,6 @@ where
         GnosisConsensusBuilder,
     >;
 
-    // type AddOns = GnosisAddOns<
-    //     NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
-    // >;
     type AddOns = ();
 
     fn components_builder(&self) -> Self::ComponentsBuilder {

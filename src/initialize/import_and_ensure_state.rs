@@ -1,4 +1,5 @@
 use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
+use crate::primitives::header::GnosisHeader;
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 use alloy_consensus::Header;
 use alloy_rlp::Decodable;

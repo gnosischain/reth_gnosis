@@ -6,24 +6,15 @@ use reth::{
 use reth_ethereum_primitives::PooledTransactionVariant;
 use reth_eth_wire_types::{NetworkPrimitives, Status, UnifiedStatus};
 use reth_primitives::{PooledTransaction, Receipt, TransactionSigned, EthPrimitives};
+use reth_eth_wire_types::{BasicNetworkPrimitives, UnifiedStatus};
+use reth_ethereum_primitives::PooledTransactionVariant;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
 
-use crate::{primitives::{block::{Block as GnosisBlock, BlockBody}, header::GnosisHeader, GnosisNodePrimitives}, spec::gnosis_spec::GnosisChainSpec};
+use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub struct GnosisNetworkPrimitives;
-
-impl NetworkPrimitives for GnosisNetworkPrimitives {
-    type BlockHeader = GnosisHeader;
-    type BlockBody = BlockBody;
-    type Block = GnosisBlock;
-    type BroadcastedTransaction = TransactionSigned;
-    type PooledTransaction = PooledTransaction;
-    type Receipt = Receipt;
-}
+pub type GnosisNetworkPrimitives = BasicNetworkPrimitives<GnosisNodePrimitives, PooledTransactionVariant>;
 
 /// A basic ethereum payload service.
 #[derive(Debug, Default, Clone, Copy)]

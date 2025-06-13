@@ -168,7 +168,7 @@ impl Case for BlockchainTestCase {
                 // Decode and insert blocks, creating a chain of blocks for the test case.
                 let last_block = case.blocks.iter().try_fold(None, |_, block| {
                     let decoded: reth_primitives_traits::SealedBlock<
-                        alloy_consensus::Block<reth_primitives::TransactionSigned>,
+                        alloy_consensus::Block<reth_primitives::TransactionSigned, GnosisHeader>,
                     > = SealedBlock::decode(&mut block.rlp.as_ref())?;
                     provider.insert_historical_block(decoded.clone().try_recover().unwrap())?;
                     Ok::<Option<SealedBlock>, Error>(Some(decoded))
