@@ -1,4 +1,5 @@
 use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
+use crate::primitives::header::GnosisHeader;
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 use alloy_consensus::Header;
 use alloy_rlp::Decodable;
@@ -67,6 +68,7 @@ fn import_state(
             // header_hash,
             SealedHeader::new(header.into(), header_hash),
             total_difficulty,
+            |number| GnosisHeader { number, ..Default::default() },
         )?;
 
         // SAFETY: it's safe to commit static files, since in the event of a crash, they

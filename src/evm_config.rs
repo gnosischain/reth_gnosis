@@ -14,7 +14,7 @@ use std::borrow::Cow;
 use std::{convert::Infallible, sync::Arc};
 
 use crate::blobs::{get_blob_params, next_blob_gas_and_price};
-use crate::block::GnosisBlockExecutorFactory;
+use crate::block_executor::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
 use crate::primitives::header::GnosisHeader;

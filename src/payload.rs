@@ -358,7 +358,7 @@ where
     let sealed_block = Arc::new(block.sealed_block().clone());
     debug!(target: "payload_builder", id=%attributes.id, sealed_block_header = ?sealed_block.sealed_header(), "sealed built block");
 
-    let payload = EthBuiltPayload::new(attributes.id, sealed_block, total_fees, requests)
+    let payload = GnosisBuiltPayload::new(attributes.id, sealed_block, total_fees, requests)
         // add blob sidecars from the executed txs
         .with_sidecars(blob_sidecars);
 
