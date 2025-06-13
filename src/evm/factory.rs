@@ -243,6 +243,14 @@ where
     fn inspector_mut(&mut self) -> &mut Self::Inspector {
         &mut self.inner.0.inspector
     }
+
+    fn precompiles(&self) -> &Self::Precompiles {
+        &self.inner.0.precompiles
+    }
+
+    fn inspector(&self) -> &Self::Inspector {
+        &self.inner.0.inspector
+    }
 }
 
 /// Custom EVM configuration.
