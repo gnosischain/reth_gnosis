@@ -1,15 +1,19 @@
 use std::sync::Arc;
 
 use reth::rpc::{api::eth::FromEvmError, builder::{config::RethRpcServerConfig, RethRpcModule}, server_types::eth::EthApiError};
+use reth_chainspec::Hardforks;
 use reth_evm::{ConfigureEvm, EvmFactory, EvmFactoryFor, NextBlockEnvAttributes};
 use reth_node_api::AddOnsContext;
 use reth_node_builder::{rpc::{BasicEngineApiBuilder, EngineValidatorAddOn, EngineValidatorBuilder, EthApiBuilder, EthApiCtx, RethRpcAddOns, RpcAddOns, RpcHandle}, FullNodeComponents, NodeAddOns, NodeTypes};
 use reth_node_ethereum::EthereumEngineValidator;
+use reth_provider::EthStorage;
 use reth_rpc::{eth::{EthApiFor, EthApiServer, FullEthApiServer}, ValidationApi};
 use revm::context::TxEnv;
 use reth::rpc::api::BlockSubmissionValidationApiServer;
 
-use crate::{engine::GnosisEngineValidator, primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec, GnosisEngineValidatorBuilder, GnosisNode};
+use crate::{engine::{GnosisEngineTypes, GnosisEngineValidator}, primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec, GnosisEngineValidatorBuilder, GnosisNode};
+
+use super::block::TransactionSigned;
 
 #[derive(Debug, Default)]
 #[non_exhaustive]
@@ -17,7 +21,7 @@ pub struct GnosisApiBuilder;
 
 impl<N> EthApiBuilder<N> for GnosisApiBuilder
 where
-    N: FullNodeComponents<Types = GnosisNodePrimitives>,
+    N: FullNodeComponents<Types = GnosisNode>,
     EthApiFor<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
     type EthApi = EthApiFor<N>;
@@ -43,8 +47,9 @@ where
 }
 
 #[derive(Debug)]
-pub struct GnosisAddOns<N: FullNodeComponents<Types = GnosisNodePrimitives>>
+pub struct GnosisAddOns<N>
 where
+    N: FullNodeComponents<Types = GnosisNode>,
     EthApiFor<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
     inner: RpcAddOns<
@@ -57,7 +62,14 @@ where
 
 impl<N> NodeAddOns<N> for GnosisAddOns<N>
 where
-    N: FullNodeComponents<Types = GnosisNodePrimitives>,
+    N: FullNodeComponents<
+        Types: NodeTypes<
+            ChainSpec = GnosisChainSpec,
+            Primitives = GnosisNodePrimitives,
+            Payload = GnosisEngineTypes,
+        >,
+        Evm: ConfigureEvm<NextBlockEnvCtx = NextBlockEnvAttributes>,
+    >,
     EthApiError: FromEvmError<N::Evm>,
     EvmFactoryFor<N::Evm>: EvmFactory<Tx = TxEnv>,
 {
@@ -91,7 +103,7 @@ where
     }
 }
 
-impl<N: FullNodeComponents<Types = GnosisNodePrimitives>> Default for GnosisAddOns<N>
+impl<N: FullNodeComponents<Types = GnosisNode>> Default for GnosisAddOns<N>
 where
     EthApiFor<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
@@ -102,7 +114,14 @@ where
 
 impl<N> RethRpcAddOns<N> for GnosisAddOns<N>
 where
-    N: FullNodeComponents<Types = GnosisNodePrimitives>,
+    N: FullNodeComponents<
+        Types: NodeTypes<
+            ChainSpec = GnosisChainSpec,
+            Primitives = GnosisNodePrimitives,
+            Payload = GnosisEngineTypes,
+        >,
+        Evm: ConfigureEvm<NextBlockEnvCtx = NextBlockEnvAttributes>,
+    >,
     EthApiError: FromEvmError<N::Evm>,
     EvmFactoryFor<N::Evm>: EvmFactory<Tx = TxEnv>,
 {
@@ -115,7 +134,7 @@ where
 
 impl<N> EngineValidatorAddOn<N> for GnosisAddOns<N>
 where
-    N: FullNodeComponents<Types = GnosisNodePrimitives>,
+    N: FullNodeComponents<Types = GnosisNode>,
     EthApiFor<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
     type Validator = GnosisEngineValidator;

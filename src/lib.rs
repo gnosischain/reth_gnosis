@@ -17,7 +17,7 @@ use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
     },
-    rpc::{EngineValidatorBuilder, RpcAddOns},
+    rpc::{BasicEngineApiBuilder, EngineValidatorBuilder, RpcAddOns},
     BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes,
     PayloadTypes,
 };
@@ -26,8 +26,6 @@ use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
 use spec::gnosis_spec::GnosisChainSpec;
 use std::sync::Arc;
-
-use crate::primitives::GnosisEthApiBuilder;
 
 mod blobs;
 mod block_executor;
@@ -112,7 +110,7 @@ impl NodeTypes for GnosisNode {
 }
 
 /// Add-ons w.r.t. gnosis
-pub type GnosisAddOns<N> = RpcAddOns<N, GnosisEthApiBuilder, GnosisEngineValidatorBuilder>;
+// pub type GnosisAddOns<N> = RpcAddOns<N, GnosisApiBuilder, GnosisEngineValidatorBuilder>;
 
 impl<N> Node<N> for GnosisNode
 where
