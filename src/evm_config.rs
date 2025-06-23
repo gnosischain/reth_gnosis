@@ -15,7 +15,7 @@ use revm_primitives::Bytes;
 use std::borrow::Cow;
 use std::{convert::Infallible, sync::Arc};
 
-use crate::blobs::{evm_env_blob_schedule, get_blob_params, next_blob_gas_and_price};
+use crate::blobs::{get_blob_params, next_blob_gas_and_price};
 use crate::block::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
@@ -26,7 +26,7 @@ pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -
     let mut cfg = CfgEnv::new()
         .with_chain_id(chain_spec.chain().id())
         .with_spec(spec);
-    cfg.set_blob_max_and_target_count(evm_env_blob_schedule());
+    cfg.set_blob_max_count(get_blob_params(spec >= SpecId::PRAGUE).max_blob_count);
 
     if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
         // EIP-170 is enabled at the Shanghai Fork on Gnosis Chain

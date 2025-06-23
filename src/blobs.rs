@@ -1,7 +1,6 @@
 use alloy_eips::eip7840::BlobParams;
 use alloy_eips::BlobScheduleBlobParams;
 use revm::context_interface::block::BlobExcessGasAndPrice;
-use revm_primitives::hardfork::SpecId;
 
 pub static CANCUN_BLOB_PARAMS: BlobParams = BlobParams {
     target_blob_count: 1,
@@ -24,11 +23,6 @@ pub fn gnosis_blob_schedule() -> BlobScheduleBlobParams {
         osaka: PRAGUE_BLOB_PARAMS,
         scheduled: vec![],
     }
-}
-
-// helper function to create the evm's CfgEnv in get_cfg_env
-pub fn evm_env_blob_schedule() -> Vec<(SpecId, u64, u64)> {
-    vec![(SpecId::CANCUN, 1, 2), (SpecId::PRAGUE, 1, 2)]
 }
 
 pub fn get_blob_params(is_prague: bool) -> BlobParams {

@@ -3,8 +3,9 @@ use reth::{
     builder::{components::NetworkBuilder, BuilderContext},
     network::{NetworkHandle, NetworkManager, PeersInfo},
 };
-use reth_eth_wire_types::Status;
-use reth_primitives::{EthPrimitives, PooledTransaction};
+use reth_eth_wire_types::UnifiedStatus;
+use reth_ethereum_primitives::PooledTransactionVariant;
+use reth_primitives::EthPrimitives;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
@@ -21,7 +22,10 @@ impl<Node, Pool> NetworkBuilder<Node, Pool> for GnosisNetworkBuilder
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
     Pool: TransactionPool<
-            Transaction: PoolTransaction<Consensus = TxTy<Node::Types>, Pooled = PooledTransaction>,
+            Transaction: PoolTransaction<
+                Consensus = TxTy<Node::Types>,
+                Pooled = PooledTransactionVariant,
+            >,
         > + Unpin
         + 'static,
 {
@@ -48,11 +52,11 @@ where
             _ => spec.genesis_hash(),
         };
 
-        let status = Status::builder()
+        let status = UnifiedStatus::builder()
             .chain(spec.chain())
             .genesis(genesis_hash)
             .blockhash(head.hash)
-            .total_difficulty(head.total_difficulty)
+            .total_difficulty(Some(head.total_difficulty))
             .forkid(network_config.fork_filter.current())
             .build();
         network_config.status = status;
