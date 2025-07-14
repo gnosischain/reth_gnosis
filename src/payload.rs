@@ -3,12 +3,22 @@ use std::sync::Arc;
 use alloy_consensus::Transaction;
 use alloy_eips::{eip7685::Requests, Typed2718};
 use reth::rpc::types::engine::{BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV5, ExecutionPayloadFieldV2, ExecutionPayloadV3};
+use alloy_eips::eip7685::Requests;
+use reth::rpc::types::engine::{
+    BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV5, ExecutionPayloadFieldV2,
+    ExecutionPayloadV3,
+};
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
 };
 use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_ethereum_engine_primitives::{BlobSidecars, BuiltPayloadConversionError};
+// use reth_ethereum_engine_primitives::{BlobSidecars, BuiltPayloadConversionError};
+use reth_ethereum_engine_primitives::{
+    BuiltPayloadConversionError, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
+    ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
+};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_evm::{
@@ -22,6 +32,8 @@ use reth_ethereum_engine_primitives::{EthPayloadAttributes, ExecutionPayloadEnve
 use reth_node_builder::{BuiltPayload, PayloadBuilderAttributes, PayloadBuilderError};
 use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadId};
 use reth_primitives_traits::{transaction::error::InvalidTransactionError, SealedBlock};
+
+use crate::primitives::{block::Block as GnosisBlock, header::GnosisHeader, GnosisNodePrimitives};
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_transaction_pool::{
@@ -32,7 +44,6 @@ use reth_transaction_pool::{
 use revm::context::Block;
 use revm_primitives::U256;
 use tracing::{debug, trace, warn};
-use crate::primitives::{block::Block as GnosisBlock, header::GnosisHeader, GnosisNodePrimitives};
 
 use crate::{blobs::get_blob_params, spec::gnosis_spec::GnosisChainSpec};
 
@@ -72,7 +83,8 @@ impl<Pool, Client, EvmConfig> GnosisPayloadBuilder<Pool, Client, EvmConfig> {
 // Default implementation of [PayloadBuilder] for unit type
 impl<Pool, Client, EvmConfig> PayloadBuilder for GnosisPayloadBuilder<Pool, Client, EvmConfig>
 where
-    EvmConfig: ConfigureEvm<Primitives = GnosisNodePrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
+    EvmConfig:
+        ConfigureEvm<Primitives = GnosisNodePrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec = GnosisChainSpec> + Clone,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TransactionSigned>>,
 {
@@ -138,7 +150,8 @@ pub fn default_ethereum_payload<EvmConfig, Pool, Client, F>(
     best_txs: F,
 ) -> Result<BuildOutcome<GnosisBuiltPayload>, PayloadBuilderError>
 where
-    EvmConfig: ConfigureEvm<Primitives = GnosisNodePrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
+    EvmConfig:
+        ConfigureEvm<Primitives = GnosisNodePrimitives, NextBlockEnvCtx = NextBlockEnvAttributes>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec = GnosisChainSpec>,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TransactionSigned>>,
     F: FnOnce(BestTransactionsAttributes) -> BestTransactionsIter<Pool>,
@@ -402,7 +415,13 @@ impl GnosisBuiltPayload {
         fees: U256,
         requests: Option<Requests>,
     ) -> Self {
-        Self { id, block, fees, requests, sidecars: BlobSidecars::Empty }
+        Self {
+            id,
+            block,
+            fees,
+            requests,
+            sidecars: BlobSidecars::Empty,
+        }
     }
 
     /// Returns the identifier of the payload.
@@ -435,7 +454,12 @@ impl GnosisBuiltPayload {
     ///
     /// Returns an error if the payload contains non EIP-4844 sidecar.
     pub fn try_into_v3(self) -> Result<ExecutionPayloadEnvelopeV3, BuiltPayloadConversionError> {
-        let Self { block, fees, sidecars, .. } = self;
+        let Self {
+            block,
+            fees,
+            sidecars,
+            ..
+        } = self;
 
         let blobs_bundle = match sidecars {
             BlobSidecars::Empty => BlobsBundleV1::empty(),
@@ -476,7 +500,13 @@ impl GnosisBuiltPayload {
 
     /// Try converting built payload into [`ExecutionPayloadEnvelopeV5`].
     pub fn try_into_v5(self) -> Result<ExecutionPayloadEnvelopeV5, BuiltPayloadConversionError> {
-        let Self { block, fees, sidecars, requests, .. } = self;
+        let Self {
+            block,
+            fees,
+            sidecars,
+            requests,
+            ..
+        } = self;
 
         let blobs_bundle = match sidecars {
             BlobSidecars::Empty => BlobsBundleV2::empty(),

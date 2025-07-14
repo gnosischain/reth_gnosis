@@ -68,7 +68,7 @@ fn import_state(
             // header_hash,
             SealedHeader::new(header.into(), header_hash),
             total_difficulty,
-            |number| Header {
+            |number| GnosisHeader {
                 number,
                 ..Default::default()
             },

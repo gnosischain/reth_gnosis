@@ -5,6 +5,7 @@ use revm::context_interface::block::BlobExcessGasAndPrice;
 pub static CANCUN_BLOB_PARAMS: BlobParams = BlobParams {
     target_blob_count: 1,
     max_blob_count: 2,
+    max_blobs_per_tx: 2,
     update_fraction: 1112826,
     min_blob_fee: 1000000000,
     max_blobs_per_tx: 2,
@@ -13,6 +14,7 @@ pub static CANCUN_BLOB_PARAMS: BlobParams = BlobParams {
 pub static PRAGUE_BLOB_PARAMS: BlobParams = BlobParams {
     target_blob_count: 1,
     max_blob_count: 2,
+    max_blobs_per_tx: 2,
     update_fraction: 1112826,
     min_blob_fee: 1000000000,
     max_blobs_per_tx: 2,

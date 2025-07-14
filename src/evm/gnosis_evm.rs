@@ -1,16 +1,26 @@
 use revm::{
     context::{
         result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, ResultAndState},
+        result::{
+            EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
+            ResultAndState,
+        },
         Block, Cfg, ContextSetters, ContextTr, Evm, FrameStack, JournalTr, Transaction,
         TransactionType,
     },
     handler::{
         evm::{ContextDbError, FrameInitResult},
         instructions::InstructionProvider,
+        instructions::{EthInstructions, InstructionProvider},
         post_execution,
         pre_execution::{self},
         EthFrame, EvmTr, EvmTrError, FrameInitOrResult, FrameResult, FrameTr, Handler,
         PrecompileProvider,
+    },
+    inspector::{InspectorEvmTr, InspectorFrame, InspectorHandler, JournalExt},
+    interpreter::{
+        interpreter::EthInterpreter, interpreter_action::FrameInit, FrameInput, Interpreter,
+        InterpreterAction, InterpreterResult, InterpreterTypes,
     },
     inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
     interpreter::{interpreter::EthInterpreter, interpreter_action::FrameInit, InterpreterResult},
@@ -18,6 +28,7 @@ use revm::{
     Database, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectEvm, Inspector,
 };
 use revm_primitives::{hardfork::SpecId, Address, U256};
+use revm_state::EvmState;
 
 // REF 1: https://github.com/bluealloy/revm/blob/24162b7ddbf467f4541f49c3e93bcff6e704b198/book/src/framework.md
 // REF 2: https://github.com/bluealloy/revm/blob/dff454328b2932937803f98adb546aa7e6f8bec2/examples/erc20_gas/src/handler.rs#L148
@@ -64,6 +75,9 @@ where
             blob_gas_cost = U256::from(blob_price).saturating_mul(U256::from(blob_gas));
         }
 
+        let ctx = evm.ctx();
+        let (_, journal) = ctx.tx_journal_mut();
+
         if spec.is_enabled_in(SpecId::PRAGUE) {
             let fee_collector_account = evm
                 .ctx()
@@ -97,7 +111,10 @@ where
             let gas_used =
                 (exec_result.gas().spent() - exec_result.gas().refunded() as u64) as u128;
 
-            let mut collector_account = evm.ctx().journal_mut().load_account(self.fee_collector)?;
+            let ctx = evm.ctx();
+            let (_, journal) = ctx.tx_journal_mut();
+
+            let mut collector_account = journal.load_account(self.fee_collector)?;
             collector_account.mark_touch();
             collector_account.data.info.balance = collector_account
                 .data
@@ -136,6 +153,75 @@ where
     type Instructions = I;
     type Precompiles = P;
     type Frame = EthFrame<EthInterpreter>;
+
+    #[inline]
+    fn frame_stack(&mut self) -> &mut FrameStack<Self::Frame> {
+        &mut self.0.frame_stack
+    }
+
+    /// Initializes the frame for the given frame input. Frame is pushed to the frame stack.
+    #[inline]
+    fn frame_init(
+        &mut self,
+        frame_input: <Self::Frame as FrameTr>::FrameInit,
+    ) -> Result<FrameInitResult<'_, Self::Frame>, ContextDbError<CTX>> {
+        let is_first_init = self.0.frame_stack.index().is_none();
+        let new_frame = if is_first_init {
+            self.0.frame_stack.start_init()
+        } else {
+            self.0.frame_stack.get_next()
+        };
+
+        let ctx = &mut self.0.ctx;
+        let precompiles = &mut self.0.precompiles;
+        let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
+
+        Ok(res.map_frame(|token| {
+            if is_first_init {
+                self.0.frame_stack.end_init(token);
+            } else {
+                self.0.frame_stack.push(token);
+            }
+            self.0.frame_stack.get()
+        }))
+    }
+
+    /// Run the frame from the top of the stack. Returns the frame init or result.
+    #[inline]
+    fn frame_run(&mut self) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<CTX>> {
+        let frame = self.0.frame_stack.get();
+        let context = &mut self.0.ctx;
+        let instructions = &mut self.0.instruction;
+
+        let action = frame
+            .interpreter
+            .run_plain(instructions.instruction_table(), context);
+
+        frame.process_next_action(context, action).inspect(|i| {
+            if i.is_result() {
+                frame.set_finished(true);
+            }
+        })
+    }
+
+    /// Returns the result of the frame to the caller. Frame is popped from the frame stack.
+    #[inline]
+    fn frame_return_result(
+        &mut self,
+        result: <Self::Frame as FrameTr>::FrameResult,
+    ) -> Result<Option<<Self::Frame as FrameTr>::FrameResult>, ContextDbError<Self::Context>> {
+        if self.0.frame_stack.get().is_finished() {
+            self.0.frame_stack.pop();
+        }
+        if self.0.frame_stack.index().is_none() {
+            return Ok(Some(result));
+        }
+        self.0
+            .frame_stack
+            .get()
+            .return_result::<_, ContextDbError<Self::Context>>(&mut self.0.ctx, result)?;
+        Ok(None)
+    }
 
     #[inline]
     fn ctx(&mut self) -> &mut Self::Context {
@@ -239,24 +325,27 @@ where
     type Tx = <CTX as ContextTr>::Tx;
     type Block = <CTX as ContextTr>::Block;
 
-    fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
-        self.0.ctx.set_tx(tx);
-        GnosisEvmHandler::new(self.1).run(self)
-    }
-
-    fn finalize(&mut self) -> Self::State {
-        self.0.ctx.journal_mut().finalize()
-    }
-
     fn set_block(&mut self, block: Self::Block) {
         self.0.ctx.set_block(block);
     }
 
-    fn replay(&mut self) -> Result<ResultAndState<HaltReason>, Self::Error> {
-        let mut t = GnosisEvmHandler::new(self.1);
-        t.run(self).map(|result| {
+    fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        self.0.ctx.set_tx(tx);
+        let mut handler = GnosisEvmHandler::new(self.1);
+        handler.run(self)
+    }
+
+    fn finalize(&mut self) -> Self::State {
+        self.ctx().journal_mut().finalize()
+    }
+
+    fn replay(
+        &mut self,
+    ) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
+        let mut handler = GnosisEvmHandler::new(self.1);
+        handler.run(self).map(|result| {
             let state = self.finalize();
-            ResultAndState::new(result, state)
+            ExecResultAndState::new(result, state)
         })
     }
 }

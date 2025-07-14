@@ -200,6 +200,7 @@ where
                 let account = Account {
                     info: AccountInfo::default(),
                     storage: Default::default(),
+                    transaction_id: 0,
                     // we force the account to be created by changing the status
                     status: AccountStatus::Touched | AccountStatus::Created,
                     transaction_id: 0,

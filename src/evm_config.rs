@@ -18,7 +18,7 @@ use crate::block_executor::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
 use crate::primitives::header::GnosisHeader;
-use crate::primitives::{GnosisNodePrimitives, block::Block as GnosisBlock};
+use crate::primitives::{block::Block as GnosisBlock, GnosisNodePrimitives};
 use crate::spec::gnosis_spec::GnosisChainSpec;
 
 /// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
@@ -190,7 +190,10 @@ impl ConfigureEvm for GnosisEvmConfig {
         Ok((cfg, block_env).into())
     }
 
-    fn context_for_block<'a>(&self, block: &'a SealedBlock<GnosisBlock>) -> EthBlockExecutionCtx<'a> {
+    fn context_for_block<'a>(
+        &self,
+        block: &'a SealedBlock<GnosisBlock>,
+    ) -> EthBlockExecutionCtx<'a> {
         EthBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,

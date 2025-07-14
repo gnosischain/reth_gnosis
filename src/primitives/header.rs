@@ -1,22 +1,27 @@
 use std::mem;
 
 use alloy_consensus::{Block, BlockBody, Header, Sealed, EMPTY_OMMER_ROOT_HASH};
-use alloy_eips::{calc_next_block_base_fee, eip1898::BlockWithParent, eip7840::BlobParams, BlockNumHash};
+use alloy_eips::{
+    calc_next_block_base_fee, eip1898::BlockWithParent, eip7840::BlobParams, BlockNumHash,
+};
 use alloy_primitives::{
     private::derive_more, Address, BlockNumber, Bloom, Bytes, Sealable, B256, B64, U256,
 };
-use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable, RlpDecodable, RlpDecodableWrapper, RlpEncodable};
+use alloy_rlp::{
+    length_of_length, BufMut, Decodable, Encodable, RlpDecodable, RlpDecodableWrapper, RlpEncodable,
+};
 use alloy_trie::EMPTY_ROOT_HASH;
 use reth_chainspec::BaseFeeParams;
 use reth_codecs::Compact;
-use reth_db::{table::{Compress, Decompress}, DatabaseError};
+use reth_db::{
+    table::{Compress, Decompress},
+    DatabaseError,
+};
 use reth_primitives_traits::InMemorySize;
 // use reth_codecs::Compact;
 // use reth_ethereum::primitives::{BlockHeader, InMemorySize};
 use revm_primitives::keccak256;
 use serde::{Deserialize, Serialize};
-
-
 
 /// The header type of this node
 ///
@@ -103,7 +108,10 @@ pub struct GnosisHeader {
     pub base_fee_per_gas: Option<u64>,
     /// The Keccak 256-bit hash of the withdrawals list portion of this block.
     /// <https://eips.ethereum.org/EIPS/eip-4895>
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub withdrawals_root: Option<B256>,
     /// The total amount of blob gas consumed by the transactions within the block, added in
     /// EIP-4844.
@@ -135,31 +143,31 @@ pub struct GnosisHeader {
     /// and more.
     ///
     /// The beacon roots contract handles root storage, enhancing Ethereum's functionalities.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub parent_beacon_block_root: Option<B256>,
     /// The Keccak 256-bit hash of the an RLP encoded list with each
     /// [EIP-7685] request in the block body.
     ///
     /// [EIP-7685]: https://eips.ethereum.org/EIPS/eip-7685
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub requests_hash: Option<B256>,
     /// The extra fields for pre-merge blocks
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub pre_merge_fields: Option<PreMergeFields>,
 }
 
 /// Fields specific to pre-merge blocks
 #[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
-    RlpEncodable,
-    RlpDecodable,
+    Clone, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, RlpEncodable, RlpDecodable,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct PreMergeFields {
@@ -307,14 +315,20 @@ impl GnosisHeader {
     ///
     /// Note: for the genesis block the parent number is 0 and the parent hash is the zero hash.
     pub const fn parent_num_hash(&self) -> BlockNumHash {
-        BlockNumHash { number: self.number.saturating_sub(1), hash: self.parent_hash }
+        BlockNumHash {
+            number: self.number.saturating_sub(1),
+            hash: self.parent_hash,
+        }
     }
 
     /// Returns the block's number and hash.
     ///
     /// Note: this hashes the header.
     pub fn num_hash_slow(&self) -> BlockNumHash {
-        BlockNumHash { number: self.number, hash: self.hash_slow() }
+        BlockNumHash {
+            number: self.number,
+            hash: self.hash_slow(),
+        }
     }
 
     /// Returns the block's number and hash with the parent hash.
@@ -383,7 +397,7 @@ impl GnosisHeader {
 // derive from alloy_consensus::Header
 impl From<Header> for GnosisHeader {
     fn from(inner: Header) -> Self {
-        Self { 
+        Self {
             parent_hash: inner.parent_hash,
             ommers_hash: inner.ommers_hash,
             beneficiary: inner.beneficiary,
@@ -399,13 +413,13 @@ impl From<Header> for GnosisHeader {
             extra_data: inner.extra_data,
             mix_hash: inner.mix_hash,
             nonce: inner.nonce,
-            base_fee_per_gas: None, // Set later if needed
-            withdrawals_root: None, // Set later if needed
-            blob_gas_used: None, // Set later if needed
-            excess_blob_gas: None, // Set later if needed
+            base_fee_per_gas: None,         // Set later if needed
+            withdrawals_root: None,         // Set later if needed
+            blob_gas_used: None,            // Set later if needed
+            excess_blob_gas: None,          // Set later if needed
             parent_beacon_block_root: None, // Set later if needed
-            requests_hash: None, // Set later if needed
-            pre_merge_fields: None, // Set later if needed
+            requests_hash: None,            // Set later if needed
+            pre_merge_fields: None,         // Set later if needed
         }
     }
 }
@@ -559,64 +573,64 @@ impl reth_codecs::Compact for GnosisHeader {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: alloy_rlp::bytes::BufMut + AsMut<[u8]>,
-        {
-            // let extra_fields = HeaderExt { requests_hash: self.requests_hash };
-    
-            let header = GnosisHeader {
-                parent_hash: self.parent_hash,
-                ommers_hash: self.ommers_hash,
-                beneficiary: self.beneficiary,
-                state_root: self.state_root,
-                transactions_root: self.transactions_root,
-                receipts_root: self.receipts_root,
-                withdrawals_root: self.withdrawals_root,
-                logs_bloom: self.logs_bloom,
-                difficulty: self.difficulty,
-                number: self.number,
-                gas_limit: self.gas_limit,
-                gas_used: self.gas_used,
-                timestamp: self.timestamp,
-                mix_hash: self.mix_hash,
-                nonce: self.nonce.into(),
-                base_fee_per_gas: self.base_fee_per_gas,
-                blob_gas_used: self.blob_gas_used,
-                excess_blob_gas: self.excess_blob_gas,
-                parent_beacon_block_root: self.parent_beacon_block_root,
-                requests_hash: self.requests_hash,
-                extra_data: self.extra_data.clone(),
-                pre_merge_fields: self.pre_merge_fields.clone(),
-            };
-            header.to_compact(buf)
-        }
+    {
+        // let extra_fields = HeaderExt { requests_hash: self.requests_hash };
 
-        fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
-            let (header, _) = GnosisHeader::from_compact(buf, len);
-            let alloy_header = Self {
-                parent_hash: header.parent_hash,
-                ommers_hash: header.ommers_hash,
-                beneficiary: header.beneficiary,
-                state_root: header.state_root,
-                transactions_root: header.transactions_root,
-                receipts_root: header.receipts_root,
-                withdrawals_root: header.withdrawals_root,
-                logs_bloom: header.logs_bloom,
-                difficulty: header.difficulty,
-                number: header.number,
-                gas_limit: header.gas_limit,
-                gas_used: header.gas_used,
-                timestamp: header.timestamp,
-                mix_hash: header.mix_hash,
-                nonce: header.nonce.into(),
-                base_fee_per_gas: header.base_fee_per_gas,
-                blob_gas_used: header.blob_gas_used,
-                excess_blob_gas: header.excess_blob_gas,
-                parent_beacon_block_root: header.parent_beacon_block_root,
-                requests_hash: header.requests_hash,
-                extra_data: header.extra_data,
-                pre_merge_fields: header.pre_merge_fields,
-            };
-            (alloy_header, buf)
-        }
+        let header = GnosisHeader {
+            parent_hash: self.parent_hash,
+            ommers_hash: self.ommers_hash,
+            beneficiary: self.beneficiary,
+            state_root: self.state_root,
+            transactions_root: self.transactions_root,
+            receipts_root: self.receipts_root,
+            withdrawals_root: self.withdrawals_root,
+            logs_bloom: self.logs_bloom,
+            difficulty: self.difficulty,
+            number: self.number,
+            gas_limit: self.gas_limit,
+            gas_used: self.gas_used,
+            timestamp: self.timestamp,
+            mix_hash: self.mix_hash,
+            nonce: self.nonce.into(),
+            base_fee_per_gas: self.base_fee_per_gas,
+            blob_gas_used: self.blob_gas_used,
+            excess_blob_gas: self.excess_blob_gas,
+            parent_beacon_block_root: self.parent_beacon_block_root,
+            requests_hash: self.requests_hash,
+            extra_data: self.extra_data.clone(),
+            pre_merge_fields: self.pre_merge_fields.clone(),
+        };
+        header.to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        let (header, _) = GnosisHeader::from_compact(buf, len);
+        let alloy_header = Self {
+            parent_hash: header.parent_hash,
+            ommers_hash: header.ommers_hash,
+            beneficiary: header.beneficiary,
+            state_root: header.state_root,
+            transactions_root: header.transactions_root,
+            receipts_root: header.receipts_root,
+            withdrawals_root: header.withdrawals_root,
+            logs_bloom: header.logs_bloom,
+            difficulty: header.difficulty,
+            number: header.number,
+            gas_limit: header.gas_limit,
+            gas_used: header.gas_used,
+            timestamp: header.timestamp,
+            mix_hash: header.mix_hash,
+            nonce: header.nonce.into(),
+            base_fee_per_gas: header.base_fee_per_gas,
+            blob_gas_used: header.blob_gas_used,
+            excess_blob_gas: header.excess_blob_gas,
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            requests_hash: header.requests_hash,
+            extra_data: header.extra_data,
+            pre_merge_fields: header.pre_merge_fields,
+        };
+        (alloy_header, buf)
+    }
 }
 
 impl reth_primitives_traits::BlockHeader for GnosisHeader {}
@@ -768,8 +782,10 @@ pub mod serde_bincode_compat {
 
 impl Encodable for GnosisHeader {
     fn encode(&self, out: &mut dyn BufMut) {
-        let list_header =
-            alloy_rlp::Header { list: true, payload_length: self.header_payload_length() };
+        let list_header = alloy_rlp::Header {
+            list: true,
+            payload_length: self.header_payload_length(),
+        };
         list_header.encode(out);
         self.parent_hash.encode(out);
         self.ommers_hash.encode(out);

@@ -1,6 +1,9 @@
 use block::{Block, BlockBody, TransactionSigned};
 use header::GnosisHeader;
-use reth_node_builder::{rpc::{EthApiBuilder, EthApiCtx}, FullNodeComponents, NodeTypes};
+use reth_node_builder::{
+    rpc::{EthApiBuilder, EthApiCtx},
+    FullNodeComponents, NodeTypes,
+};
 use reth_primitives::{NodePrimitives, Receipt};
 use reth_provider::EthStorage;
 use reth_rpc::eth::{EthApiFor, FullEthApiServer};

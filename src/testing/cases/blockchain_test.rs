@@ -7,7 +7,7 @@ use crate::{
     testing::{
         models::{BlockchainTest, ForkSpec},
         Case, Error, Suite,
-    }
+    },
 };
 use alloy_rlp::Decodable;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -182,7 +182,9 @@ impl Case for BlockchainTestCase {
 
                 let gnosis_executor_provider = GnosisEvmConfig::new(Arc::new(GnosisChainSpec {
                     inner: chain_spec.as_ref().clone(),
-                    genesis_header: SealedHeader::new_unhashed(GnosisHeader::from(chain_spec.genesis_header().clone())),
+                    genesis_header: SealedHeader::new_unhashed(GnosisHeader::from(
+                        chain_spec.genesis_header().clone(),
+                    )),
                 }));
 
                 // Execute the execution stage using the EVM processor factory for the test case

@@ -3,15 +3,27 @@ use std::sync::Arc;
 use derive_more::Deref;
 use reth::rpc::types::engine::{ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV5};
 use reth_chainspec::ChainSpec;
-use reth_ethereum_engine_primitives::{EthPayloadAttributes, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4, ExecutionPayloadV1};
+use reth_ethereum_engine_primitives::{
+    EthPayloadAttributes, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
+    ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
+};
 use reth_ethereum_payload_builder::EthereumExecutionPayloadValidator;
-use reth_node_builder::{validate_execution_requests, validate_version_specific_fields, BuiltPayload, EngineApiMessageVersion, EngineObjectValidationError, EngineTypes, EngineValidator, InvalidPayloadAttributesError, NewPayloadError, PayloadOrAttributes, PayloadTypes, PayloadValidator};
+use reth_node_builder::{
+    validate_execution_requests, validate_version_specific_fields, BuiltPayload,
+    EngineApiMessageVersion, EngineObjectValidationError, EngineTypes, EngineValidator,
+    InvalidPayloadAttributesError, NewPayloadError, PayloadOrAttributes, PayloadTypes,
+    PayloadValidator,
+};
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives::{NodePrimitives, RecoveredBlock};
 use reth_primitives_traits::SealedBlock;
 use serde::{Deserialize, Serialize};
 
-use crate::{payload::GnosisBuiltPayload, primitives::block::{Block as GnosisBlock, IntoBlock, TransactionSigned}, spec::gnosis_spec::GnosisChainSpec};
+use crate::{
+    payload::GnosisBuiltPayload,
+    primitives::block::{Block as GnosisBlock, IntoBlock, TransactionSigned},
+    spec::gnosis_spec::GnosisChainSpec,
+};
 
 /// Custom engine types - uses a custom payload attributes RPC type, but uses the default
 /// payload builder attributes type.
@@ -27,8 +39,8 @@ impl PayloadTypes for GnosisEngineTypes {
 
     fn block_to_payload(
         block: SealedBlock<
-                <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
-            >,
+            <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
+        >,
     ) -> ExecutionData {
         let (payload, sidecar) =
             ExecutionPayload::from_block_unchecked(block.hash(), &block.into_block());
@@ -53,7 +65,9 @@ pub struct GnosisEngineValidator {
 impl GnosisEngineValidator {
     /// Creates a new Gnosis engine validator.
     pub const fn new(chain_spec: Arc<ChainSpec>) -> Self {
-        Self { inner: EthereumExecutionPayloadValidator::new(chain_spec) }
+        Self {
+            inner: EthereumExecutionPayloadValidator::new(chain_spec),
+        }
     }
 
     /// Returns the chain spec used by the validator.
@@ -71,9 +85,13 @@ impl PayloadValidator for GnosisEngineValidator {
         &self,
         payload: ExecutionData,
     ) -> Result<RecoveredBlock<GnosisBlock>, NewPayloadError> {
-        let sealed_block = self.inner.ensure_well_formed_payload::<TransactionSigned>(payload)?;
-        let result = sealed_block.try_recover().map_err(|e| NewPayloadError::Other(e.into()));
-        
+        let sealed_block = self
+            .inner
+            .ensure_well_formed_payload::<TransactionSigned>(payload)?;
+        let result = sealed_block
+            .try_recover()
+            .map_err(|e| NewPayloadError::Other(e.into()));
+
         let block = result.unwrap();
         let senders = block.senders().to_owned();
         let hash = block.hash();

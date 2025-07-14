@@ -42,7 +42,10 @@ fn main() {
 
 fn run_reth(cli: CliGnosis) {
     if let Err(err) = cli.run(|builder, _| async move {
-        let handle = builder.node::<GnosisNode>(GnosisNode::new()).launch().await?;
+        let handle = builder
+            .node::<GnosisNode>(GnosisNode::new())
+            .launch()
+            .await?;
         handle.node_exit_future.await
     }) {
         eprintln!("Error: {err:?}");

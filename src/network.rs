@@ -14,7 +14,8 @@ use tracing::info;
 
 use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
 
-pub type GnosisNetworkPrimitives = BasicNetworkPrimitives<GnosisNodePrimitives, PooledTransactionVariant>;
+pub type GnosisNetworkPrimitives =
+    BasicNetworkPrimitives<GnosisNodePrimitives, PooledTransactionVariant>;
 
 /// A basic ethereum payload service.
 #[derive(Debug, Default, Clone, Copy)]
@@ -24,7 +25,9 @@ pub struct GnosisNetworkBuilder {
 
 impl<Node, Pool> NetworkBuilder<Node, Pool> for GnosisNetworkBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>>,
+    Node: FullNodeTypes<
+        Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+    >,
     Pool: TransactionPool<
             Transaction: PoolTransaction<
                 Consensus = TxTy<Node::Types>,

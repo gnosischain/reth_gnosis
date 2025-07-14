@@ -5,12 +5,10 @@ use super::header::GnosisHeader;
 pub type TransactionSigned = alloy_consensus::EthereumTxEnvelope<TxEip4844>;
 
 /// The Block type of this node
-pub type Block =
-    alloy_consensus::Block<TransactionSigned, GnosisHeader>;
+pub type Block = alloy_consensus::Block<TransactionSigned, GnosisHeader>;
 
 /// The body type of this node
-pub type BlockBody =
-    alloy_consensus::BlockBody<TransactionSigned, GnosisHeader>;
+pub type BlockBody = alloy_consensus::BlockBody<TransactionSigned, GnosisHeader>;
 
 /// A local trait to convert AlloyBlock<AlloyHeader> into Block
 pub trait IntoBlock {
@@ -23,7 +21,12 @@ impl IntoBlock for alloy_consensus::Block<TransactionSigned, alloy_consensus::He
             header: GnosisHeader::from(self.header),
             body: BlockBody {
                 transactions: self.body.transactions,
-                ommers: self.body.ommers.into_iter().map(|ommer| GnosisHeader::from(ommer)).collect(),
+                ommers: self
+                    .body
+                    .ommers
+                    .into_iter()
+                    .map(|ommer| GnosisHeader::from(ommer))
+                    .collect(),
                 withdrawals: self.body.withdrawals,
             },
         }

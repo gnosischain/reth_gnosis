@@ -18,6 +18,8 @@ use tracing::info;
 use crate::{
     spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
 };
+use crate::evm_config::GnosisEvmConfig;
+use crate::spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser};
 
 /// The main reth_gnosis cli interface.
 ///
@@ -141,7 +143,7 @@ where
             Commands::Prune(command) => {
                 // runner.run_until_ctrl_c(command.execute::<GnosisNode>())
                 unimplemented!()
-            },
+            }
             Commands::Import(command) => {
                 // runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(components))
                 unimplemented!()

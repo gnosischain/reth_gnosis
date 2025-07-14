@@ -10,9 +10,7 @@ use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
-use reth_ethereum_engine_primitives::{
-    EthPayloadAttributes, EthPayloadBuilderAttributes,
-};
+use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
 use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
@@ -27,12 +25,14 @@ use reth_trie_db::MerklePatriciaTrie;
 use spec::gnosis_spec::GnosisChainSpec;
 use std::sync::Arc;
 
+// use crate::primitives::rpc::GnosisApiBuilder;
+
 mod blobs;
 mod block_executor;
 mod build;
 pub mod cli;
-mod errors;
 mod engine;
+mod errors;
 mod evm;
 mod evm_config;
 mod gnosis;
@@ -110,7 +110,7 @@ impl NodeTypes for GnosisNode {
 }
 
 /// Add-ons w.r.t. gnosis
-// pub type GnosisAddOns<N> = RpcAddOns<N, GnosisApiBuilder, GnosisEngineValidatorBuilder>;
+pub type GnosisAddOns<N> = RpcAddOns<N, GnosisApiBuilder, GnosisEngineValidatorBuilder>;
 
 impl<N> Node<N> for GnosisNode
 where
@@ -144,7 +144,9 @@ pub struct GnosisExecutorBuilder;
 
 impl<Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>>,
+    Node: FullNodeTypes<
+        Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+    >,
 {
     type EVM = GnosisEvmConfig;
 
@@ -162,7 +164,9 @@ pub struct GnosisConsensusBuilder;
 
 impl<Node> ConsensusBuilder<Node> for GnosisConsensusBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>>,
+    Node: FullNodeTypes<
+        Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+    >,
 {
     type Consensus = Arc<dyn FullConsensus<GnosisNodePrimitives, Error = ConsensusError>>;
 

@@ -125,6 +125,7 @@ where
             &ExecutionResult<<Self::Evm as Evm>::HaltReason>,
         ) -> reth_evm::block::CommitChanges,
     ) -> Result<Option<u64>, BlockExecutionError> {
+        let mut altevm = self.evm().clone();
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
         // must be no greater than the block's gasLimit.
         let block_available_gas = self.evm.block().gas_limit - self.gas_used;

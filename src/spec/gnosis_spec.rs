@@ -453,7 +453,7 @@ impl From<Genesis> for GnosisChainSpec {
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
         // TODO: fix this
-        let temp_header= SealedHeader::new_unhashed(GnosisHeader::from(make_genesis_header(
+        let temp_header = SealedHeader::new_unhashed(GnosisHeader::from(make_genesis_header(
             &genesis, &hardforks,
         )));
 
