@@ -89,7 +89,7 @@ where
 }
 
 // REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/evm/src/eth/block.rs#L81
-// ALong with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
+// Along with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
 impl<'db, DB, E, Spec, R> BlockExecutor for GnosisBlockExecutor<'_, E, Spec, R>
 where
     DB: Database + 'db,
