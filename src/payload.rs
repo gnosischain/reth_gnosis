@@ -224,7 +224,7 @@ where
         // convert tx to a signed transaction
         let tx = pool_tx.to_consensus();
 
-        // There's only limited amount of blob space available per block, so we need to check if
+        // There's only a limited amount of blob space available per block, so we need to check if
         // the EIP-4844 can still fit in the block
         let mut blob_tx_sidecar = None;
         if let Some(blob_tx) = tx.as_eip4844() {
