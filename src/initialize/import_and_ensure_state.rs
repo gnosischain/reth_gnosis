@@ -67,6 +67,10 @@ fn import_state(
             // header_hash,
             SealedHeader::new(header, header_hash),
             total_difficulty,
+            |number| Header {
+                number,
+                ..Default::default()
+            },
         )?;
 
         // SAFETY: it's safe to commit static files, since in the event of a crash, they
@@ -115,7 +119,7 @@ pub fn download_and_import_init_state(
         }
     }
 
-    let state_path_str = format!("./{}-state", chain);
+    let state_path_str = format!("./{chain}-state");
     let state_path = Path::new(&state_path_str);
 
     if let Err(e) = tokio_runtime()

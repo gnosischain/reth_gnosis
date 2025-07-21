@@ -118,8 +118,7 @@ where
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         if self.inspect {
-            self.inner.set_tx(tx);
-            self.inner.inspect_replay()
+            self.inner.inspect_tx(tx)
         } else {
             self.inner.transact(tx)
         }
@@ -203,6 +202,7 @@ where
                     storage: Default::default(),
                     // we force the account to be created by changing the status
                     status: AccountStatus::Touched | AccountStatus::Created,
+                    transaction_id: 0,
                 };
                 res.state
                     .insert(alloy_eips::eip4788::SYSTEM_ADDRESS, account);

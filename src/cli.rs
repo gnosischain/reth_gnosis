@@ -12,12 +12,9 @@ use reth::{
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::{launcher::FnLauncher, node::NoArgs};
 use reth_db::DatabaseEnv;
-use reth_eth_wire_types::EthNetworkPrimitives;
-use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
 
-use crate::evm_config::GnosisEvmConfig;
 use crate::{
     spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
     GnosisNode,
@@ -118,13 +115,6 @@ where
         // Install the prometheus recorder to be sure to record all metrics
         let _ = install_prometheus_recorder();
 
-        let components = |spec: Arc<C::ChainSpec>| {
-            (
-                GnosisEvmConfig::new(spec.clone()),
-                EthBeaconConsensus::new(spec),
-            )
-        };
-
         match self.command {
             Commands::Node(command) => runner.run_command_until_exit(|ctx| {
                 command.execute(ctx, FnLauncher::new::<C, Ext>(launcher))
@@ -139,20 +129,14 @@ where
             Commands::Db(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
-            Commands::Stage(command) => runner.run_command_until_exit(|ctx| {
-                command.execute::<GnosisNode, _, _, EthNetworkPrimitives>(ctx, components)
-            }),
-            Commands::P2P(command) => {
-                runner.run_until_ctrl_c(command.execute::<EthNetworkPrimitives>())
-            }
+            Commands::Stage(_command) => unimplemented!(),
+            Commands::P2P(_command) => unimplemented!(),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Recover(command) => {
                 runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
             }
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
-            Commands::Import(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _, _>(components))
-            }
+            Commands::Import(_command) => unimplemented!(),
             Commands::Debug(_command) => todo!(),
             Commands::ImportEra(_) => unimplemented!(),
             Commands::Download(_) => unimplemented!(),

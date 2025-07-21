@@ -26,7 +26,6 @@ pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -
     let mut cfg = CfgEnv::new()
         .with_chain_id(chain_spec.chain().id())
         .with_spec(spec);
-    cfg.set_blob_max_count(get_blob_params(spec >= SpecId::PRAGUE).max_blob_count);
 
     if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
         // EIP-170 is enabled at the Shanghai Fork on Gnosis Chain
@@ -119,9 +118,9 @@ impl ConfigureEvm for GnosisEvmConfig {
         let cfg_env = get_cfg_env(self.chain_spec(), spec, header.timestamp);
 
         let block_env = BlockEnv {
-            number: header.number(),
+            number: U256::from(header.number()),
             beneficiary: header.beneficiary(),
-            timestamp: header.timestamp(),
+            timestamp: U256::from(header.timestamp()),
             difficulty: if spec >= SpecId::MERGE {
                 U256::ZERO
             } else {
@@ -175,9 +174,9 @@ impl ConfigureEvm for GnosisEvmConfig {
         let gas_limit = attributes.gas_limit;
 
         let block_env = BlockEnv {
-            number: parent.number + 1,
+            number: U256::from(parent.number + 1),
             beneficiary: attributes.suggested_fee_recipient,
-            timestamp: attributes.timestamp,
+            timestamp: U256::from(attributes.timestamp),
             difficulty: U256::ZERO,
             prevrandao: Some(attributes.prev_randao),
             gas_limit,
