@@ -1,9 +1,8 @@
 use revm::{
     context::{
-        result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, ResultAndState},
+        result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction},
         result::{
-            EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
-            ResultAndState,
+            ExecResultAndState
         },
         Block, Cfg, ContextSetters, ContextTr, Evm, FrameStack, JournalTr, Transaction,
         TransactionType,
@@ -11,7 +10,6 @@ use revm::{
     handler::{
         evm::{ContextDbError, FrameInitResult},
         instructions::InstructionProvider,
-        instructions::{EthInstructions, InstructionProvider},
         post_execution,
         pre_execution::{self},
         EthFrame, EvmTr, EvmTrError, FrameInitOrResult, FrameResult, FrameTr, Handler,
@@ -22,13 +20,10 @@ use revm::{
         interpreter::EthInterpreter, interpreter_action::FrameInit, FrameInput, Interpreter,
         InterpreterAction, InterpreterResult, InterpreterTypes,
     },
-    inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
-    interpreter::{interpreter::EthInterpreter, interpreter_action::FrameInit, InterpreterResult},
     state::EvmState,
     Database, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectEvm, Inspector,
 };
 use revm_primitives::{hardfork::SpecId, Address, U256};
-use revm_state::EvmState;
 
 // REF 1: https://github.com/bluealloy/revm/blob/24162b7ddbf467f4541f49c3e93bcff6e704b198/book/src/framework.md
 // REF 2: https://github.com/bluealloy/revm/blob/dff454328b2932937803f98adb546aa7e6f8bec2/examples/erc20_gas/src/handler.rs#L148
@@ -231,75 +226,6 @@ where
     #[inline]
     fn ctx_ref(&self) -> &Self::Context {
         &self.0.ctx
-    }
-
-    #[inline]
-    fn frame_stack(&mut self) -> &mut FrameStack<Self::Frame> {
-        &mut self.0.frame_stack
-    }
-
-    /// Initializes the frame for the given frame input. Frame is pushed to the frame stack.
-    #[inline]
-    fn frame_init(
-        &mut self,
-        frame_input: <Self::Frame as FrameTr>::FrameInit,
-    ) -> Result<FrameInitResult<'_, Self::Frame>, ContextDbError<CTX>> {
-        let is_first_init = self.0.frame_stack.index().is_none();
-        let new_frame = if is_first_init {
-            self.0.frame_stack.start_init()
-        } else {
-            self.0.frame_stack.get_next()
-        };
-
-        let ctx = &mut self.0.ctx;
-        let precompiles = &mut self.0.precompiles;
-        let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
-
-        Ok(res.map_frame(|token| {
-            if is_first_init {
-                self.0.frame_stack.end_init(token);
-            } else {
-                self.0.frame_stack.push(token);
-            }
-            self.0.frame_stack.get()
-        }))
-    }
-
-    /// Run the frame from the top of the stack. Returns the frame init or result.
-    #[inline]
-    fn frame_run(&mut self) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<CTX>> {
-        let frame = self.0.frame_stack.get();
-        let context = &mut self.0.ctx;
-        let instructions = &mut self.0.instruction;
-
-        let action = frame
-            .interpreter
-            .run_plain(instructions.instruction_table(), context);
-
-        frame.process_next_action(context, action).inspect(|i| {
-            if i.is_result() {
-                frame.set_finished(true);
-            }
-        })
-    }
-
-    /// Returns the result of the frame to the caller. Frame is popped from the frame stack.
-    #[inline]
-    fn frame_return_result(
-        &mut self,
-        result: <Self::Frame as FrameTr>::FrameResult,
-    ) -> Result<Option<<Self::Frame as FrameTr>::FrameResult>, ContextDbError<Self::Context>> {
-        if self.0.frame_stack.get().is_finished() {
-            self.0.frame_stack.pop();
-        }
-        if self.0.frame_stack.index().is_none() {
-            return Ok(Some(result));
-        }
-        self.0
-            .frame_stack
-            .get()
-            .return_result::<_, ContextDbError<Self::Context>>(&mut self.0.ctx, result)?;
-        Ok(None)
     }
 
     #[inline]

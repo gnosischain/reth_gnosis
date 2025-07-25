@@ -77,7 +77,7 @@ where
             ..
         } = input;
 
-        let timestamp = evm_env.block_env.timestamp.to();
+        let timestamp: u64 = evm_env.block_env.timestamp.to();
 
         let transactions_root = proofs::calculate_transaction_root(&transactions);
         let receipts_root = Receipt::calculate_receipt_root_no_memo(receipts);
@@ -85,7 +85,7 @@ where
 
         let withdrawals = self
             .chain_spec
-            .is_shanghai_active_at_timestamp(timestamp.to())
+            .is_shanghai_active_at_timestamp(timestamp.into())
             .then(|| ctx.withdrawals.map(|w| w.into_owned()).unwrap_or_default());
 
         let withdrawals_root = withdrawals
@@ -93,7 +93,7 @@ where
             .map(|w| proofs::calculate_withdrawals_root(w));
         let requests_hash = self
             .chain_spec
-            .is_prague_active_at_timestamp(timestamp.to())
+            .is_prague_active_at_timestamp(timestamp.into())
             .then(|| requests.requests_hash());
 
         let mut excess_blob_gas = None;
@@ -102,7 +102,7 @@ where
         // only determine cancun fields when active
         if self
             .chain_spec
-            .is_cancun_active_at_timestamp(timestamp.to())
+            .is_cancun_active_at_timestamp(timestamp.into())
         {
             blob_gas_used = Some(
                 transactions
@@ -115,7 +115,7 @@ where
                 .is_cancun_active_at_timestamp(parent.timestamp)
             {
                 parent.maybe_next_block_excess_blob_gas(
-                    self.chain_spec.blob_params_at_timestamp(timestamp.to()),
+                    self.chain_spec.blob_params_at_timestamp(timestamp.into()),
                 )
             } else {
                 // for the first post-fork block, both parent.blob_gas_used and
@@ -133,7 +133,7 @@ where
             receipts_root,
             withdrawals_root,
             logs_bloom,
-            timestamp: timestamp.to(),
+            timestamp: timestamp.into(),
             mix_hash: evm_env.block_env.prevrandao.unwrap_or_default(),
             nonce: BEACON_NONCE.into(),
             base_fee_per_gas: Some(evm_env.block_env.basefee),

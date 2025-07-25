@@ -3,11 +3,6 @@ use std::sync::Arc;
 use alloy_consensus::Transaction;
 use alloy_eips::{eip7685::Requests, Typed2718};
 use reth::rpc::types::engine::{BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV5, ExecutionPayloadFieldV2, ExecutionPayloadV3};
-use alloy_eips::eip7685::Requests;
-use reth::rpc::types::engine::{
-    BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV5, ExecutionPayloadFieldV2,
-    ExecutionPayloadV3,
-};
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
 };
@@ -16,7 +11,7 @@ use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_ethereum_engine_primitives::{BlobSidecars, BuiltPayloadConversionError};
 // use reth_ethereum_engine_primitives::{BlobSidecars, BuiltPayloadConversionError};
 use reth_ethereum_engine_primitives::{
-    BuiltPayloadConversionError, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
+    ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
     ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
 };
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
@@ -26,12 +21,12 @@ use reth_evm::{
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
 use reth_node_builder::{PayloadBuilderAttributes, PayloadBuilderError};
-use reth_payload_builder::{BlobSidecars, EthBuiltPayload, EthPayloadBuilderAttributes};
+use reth_payload_builder::{EthBuiltPayload, EthPayloadBuilderAttributes};
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
-use reth_ethereum_engine_primitives::{EthPayloadAttributes, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4, ExecutionPayloadV1};
-use reth_node_builder::{BuiltPayload, PayloadBuilderAttributes, PayloadBuilderError};
-use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadId};
-use reth_primitives_traits::{transaction::error::InvalidTransactionError, SealedBlock};
+use reth_ethereum_engine_primitives::{EthPayloadAttributes,};
+use reth_node_builder::{BuiltPayload};
+use reth_payload_builder::{PayloadId};
+use reth_primitives_traits::{SealedBlock};
 
 use crate::primitives::{block::Block as GnosisBlock, header::GnosisHeader, GnosisNodePrimitives};
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
@@ -375,12 +370,7 @@ where
 
     let payload = GnosisBuiltPayload::new(attributes.id, sealed_block, total_fees, requests)
         // extend the payload with the blob sidecars from the executed txs
-        .with_sidecars(
-            blob_sidecars
-                .into_iter()
-                .map(Arc::unwrap_or_clone)
-                .collect::<Vec<_>>(),
-        );
+        .with_sidecars(blob_sidecars);
 
     Ok(BuildOutcome::Better {
         payload,

@@ -110,7 +110,7 @@ impl NodeTypes for GnosisNode {
 }
 
 /// Add-ons w.r.t. gnosis
-pub type GnosisAddOns<N> = RpcAddOns<N, GnosisApiBuilder, GnosisEngineValidatorBuilder>;
+pub type GnosisAddOns<N> = RpcAddOns<N, EthereumEthApiBuilder, GnosisEngineValidatorBuilder>;
 
 impl<N> Node<N> for GnosisNode
 where
@@ -125,7 +125,7 @@ where
         GnosisConsensusBuilder,
     >;
 
-    type AddOns = ();
+    type AddOns = GnosisAddOns<NodeAdapter<N>>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         let Self { args } = self;
@@ -133,7 +133,7 @@ where
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        // GnosisAddOns::default()
+        GnosisAddOns::default()
     }
 }
 
