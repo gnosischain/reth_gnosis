@@ -37,6 +37,7 @@ mod evm;
 mod evm_config;
 mod gnosis;
 pub mod initialize;
+mod rpc;
 mod network;
 mod payload;
 mod payload_builder;
@@ -197,3 +198,4 @@ where
         )))
     }
 }
+
