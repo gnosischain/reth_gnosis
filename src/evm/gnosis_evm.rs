@@ -1,9 +1,7 @@
 use revm::{
     context::{
+        result::ExecResultAndState,
         result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction},
-        result::{
-            ExecResultAndState
-        },
         Block, Cfg, ContextSetters, ContextTr, Evm, FrameStack, JournalTr, Transaction,
         TransactionType,
     },

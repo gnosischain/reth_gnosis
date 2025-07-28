@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use alloy_consensus::Transaction;
 use alloy_eips::{eip7685::Requests, Typed2718};
-use reth::rpc::types::engine::{BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV5, ExecutionPayloadFieldV2, ExecutionPayloadV3};
+use reth::rpc::types::engine::{
+    BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV5, ExecutionPayloadFieldV2,
+    ExecutionPayloadV3,
+};
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
 };
@@ -10,9 +13,10 @@ use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_ethereum_engine_primitives::{BlobSidecars, BuiltPayloadConversionError};
 // use reth_ethereum_engine_primitives::{BlobSidecars, BuiltPayloadConversionError};
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_engine_primitives::{
-    ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
-    ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
+    ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4,
+    ExecutionPayloadV1,
 };
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_ethereum_primitives::TransactionSigned;
@@ -20,13 +24,12 @@ use reth_evm::{
     execute::{BlockBuilder, BlockBuilderOutcome},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
+use reth_node_builder::BuiltPayload;
 use reth_node_builder::{PayloadBuilderAttributes, PayloadBuilderError};
+use reth_payload_builder::PayloadId;
 use reth_payload_builder::{EthBuiltPayload, EthPayloadBuilderAttributes};
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
-use reth_ethereum_engine_primitives::{EthPayloadAttributes,};
-use reth_node_builder::{BuiltPayload};
-use reth_payload_builder::{PayloadId};
-use reth_primitives_traits::{SealedBlock};
+use reth_primitives_traits::SealedBlock;
 
 use crate::primitives::{block::Block as GnosisBlock, header::GnosisHeader, GnosisNodePrimitives};
 use reth_provider::{ChainSpecProvider, StateProviderFactory};

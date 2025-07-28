@@ -3,10 +3,10 @@ use reth::{
     builder::{components::NetworkBuilder, BuilderContext},
     network::{NetworkHandle, NetworkManager, PeersInfo},
 };
-use reth_ethereum_primitives::PooledTransactionVariant;
+use reth_eth_wire_types::BasicNetworkPrimitives;
 use reth_eth_wire_types::{NetworkPrimitives, Status, UnifiedStatus};
-use reth_primitives::{PooledTransaction, Receipt, TransactionSigned, EthPrimitives};
-use reth_eth_wire_types::{BasicNetworkPrimitives};
+use reth_ethereum_primitives::PooledTransactionVariant;
+use reth_primitives::{EthPrimitives, PooledTransaction, Receipt, TransactionSigned};
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
