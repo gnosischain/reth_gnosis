@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use derive_more::Deref;
 use reth::rpc::types::engine::{ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV5};
 use reth_chainspec::ChainSpec;
 use reth_ethereum_engine_primitives::{
@@ -18,6 +15,7 @@ use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives::{NodePrimitives, RecoveredBlock};
 use reth_primitives_traits::SealedBlock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::{
     payload::GnosisBuiltPayload,
@@ -77,9 +75,8 @@ impl GnosisEngineValidator {
     }
 }
 
-impl PayloadValidator for GnosisEngineValidator {
+impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
     type Block = GnosisBlock;
-    type ExecutionData = ExecutionData;
 
     fn ensure_well_formed_payload(
         &self,
@@ -101,14 +98,11 @@ impl PayloadValidator for GnosisEngineValidator {
     }
 }
 
-impl<T> EngineValidator<T> for GnosisEngineValidator
-where
-    T: PayloadTypes<PayloadAttributes = EthPayloadAttributes, ExecutionData = ExecutionData>,
-{
+impl EngineValidator<GnosisEngineTypes> for GnosisEngineValidator {
     fn validate_version_specific_fields(
         &self,
         version: EngineApiMessageVersion,
-        payload_or_attrs: PayloadOrAttributes<'_, Self::ExecutionData, EthPayloadAttributes>,
+        payload_or_attrs: PayloadOrAttributes<'_, ExecutionData, EthPayloadAttributes>,
     ) -> Result<(), EngineObjectValidationError> {
         payload_or_attrs
             .execution_requests()
@@ -126,7 +120,7 @@ where
         validate_version_specific_fields(
             self.chain_spec(),
             version,
-            PayloadOrAttributes::<Self::ExecutionData, EthPayloadAttributes>::PayloadAttributes(
+            PayloadOrAttributes::<ExecutionData, EthPayloadAttributes>::PayloadAttributes(
                 attributes,
             ),
         )
