@@ -1,6 +1,6 @@
 use engine::{GnosisEngineTypes, GnosisEngineValidator};
 // use consensus::GnosisBeaconConsensus;
-use evm_config::GnosisEvmConfig;
+use crate::rpc::GnosisNetwork;
 use network::GnosisNetworkBuilder;
 use payload::GnosisBuiltPayload;
 use payload_builder::GnosisPayloadBuilder;
@@ -15,11 +15,10 @@ use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
     },
-    rpc::{BasicEngineApiBuilder, EngineValidatorBuilder, RpcAddOns},
-    BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes,
-    PayloadTypes,
+    rpc::{EngineValidatorBuilder, RpcAddOns},
+    BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeTypes, PayloadTypes,
 };
-use reth_node_ethereum::{EthereumAddOns, EthereumEthApiBuilder};
+use reth_node_ethereum::EthereumEthApiBuilder;
 use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
 use spec::gnosis_spec::GnosisChainSpec;
@@ -30,19 +29,19 @@ use std::sync::Arc;
 mod blobs;
 mod block_executor;
 mod build;
-pub mod cli;
 mod engine;
 mod errors;
 mod evm;
 mod evm_config;
+pub use evm_config::GnosisEvmConfig;
 mod gnosis;
 pub mod initialize;
-mod rpc;
 mod network;
 mod payload;
 mod payload_builder;
 mod pool;
 mod primitives;
+mod rpc;
 pub mod spec;
 mod testing;
 
@@ -111,7 +110,8 @@ impl NodeTypes for GnosisNode {
 }
 
 /// Add-ons w.r.t. gnosis
-pub type GnosisAddOns<N> = RpcAddOns<N, EthereumEthApiBuilder, GnosisEngineValidatorBuilder>;
+pub type GnosisAddOns<N> =
+    RpcAddOns<N, EthereumEthApiBuilder<GnosisNetwork>, GnosisEngineValidatorBuilder>;
 
 impl<N> Node<N> for GnosisNode
 where
@@ -198,4 +198,3 @@ where
         )))
     }
 }
-

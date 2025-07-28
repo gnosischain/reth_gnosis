@@ -235,9 +235,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28de0dd1bbb0634ef7c3715e8e60176b77b82f8b6b15b2e35fe64cf6640f6550"
+checksum = "b2a3c4a8d217f8ac0d0e5f890979646037d59a85fd3fc8f5b03d2f7a59b8d134"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7510,7 +7510,6 @@ dependencies = [
  "reth-chainspec",
  "reth-engine-local",
  "reth-engine-primitives",
- "reth-engine-tree",
  "reth-ethereum-consensus",
  "reth-ethereum-engine-primitives",
  "reth-ethereum-payload-builder",
@@ -8045,7 +8044,6 @@ dependencies = [
  "parking_lot",
  "reth-chainspec",
  "reth-engine-primitives",
- "reth-engine-tree",
  "reth-metrics",
  "reth-payload-builder",
  "reth-payload-builder-primitives",

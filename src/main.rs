@@ -1,8 +1,11 @@
 use clap::{Args, Parser};
+use reth::beacon_consensus::EthBeaconConsensus;
+use reth::cli::Cli;
 use reth_cli_commands::common::EnvironmentArgs;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
-use reth_gnosis::{cli::Cli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
+use reth_gnosis::GnosisEvmConfig;
+use reth_gnosis::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
@@ -41,13 +44,21 @@ fn main() {
 }
 
 fn run_reth(cli: CliGnosis) {
-    if let Err(err) = cli.run(|builder, _| async move {
-        let handle = builder
-            .node::<GnosisNode>(GnosisNode::new())
-            .launch()
-            .await?;
-        handle.node_exit_future.await
-    }) {
+    if let Err(err) = cli.run_with_components::<GnosisNode>(
+        |chain_spec| {
+            (
+                GnosisEvmConfig::new(chain_spec.clone()),
+                EthBeaconConsensus::new(chain_spec),
+            )
+        },
+        async move |builder, _| {
+            let handle = builder
+                .node::<GnosisNode>(GnosisNode::new())
+                .launch()
+                .await?;
+            handle.node_exit_future.await
+        },
+    ) {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
