@@ -84,7 +84,7 @@ where
 
         let withdrawals = self
             .chain_spec
-            .is_shanghai_active_at_timestamp(timestamp)
+            .is_shanghai_active_at_timestamp(timestamp.to())
             .then(|| ctx.withdrawals.map(|w| w.into_owned()).unwrap_or_default());
 
         let withdrawals_root = withdrawals
@@ -92,14 +92,17 @@ where
             .map(|w| proofs::calculate_withdrawals_root(w));
         let requests_hash = self
             .chain_spec
-            .is_prague_active_at_timestamp(timestamp)
+            .is_prague_active_at_timestamp(timestamp.to())
             .then(|| requests.requests_hash());
 
         let mut excess_blob_gas = None;
         let mut blob_gas_used = None;
 
         // only determine cancun fields when active
-        if self.chain_spec.is_cancun_active_at_timestamp(timestamp) {
+        if self
+            .chain_spec
+            .is_cancun_active_at_timestamp(timestamp.to())
+        {
             blob_gas_used = Some(
                 transactions
                     .iter()
@@ -111,7 +114,7 @@ where
                 .is_cancun_active_at_timestamp(parent.timestamp)
             {
                 parent.maybe_next_block_excess_blob_gas(
-                    self.chain_spec.blob_params_at_timestamp(timestamp),
+                    self.chain_spec.blob_params_at_timestamp(timestamp.to()),
                 )
             } else {
                 // for the first post-fork block, both parent.blob_gas_used and
@@ -129,11 +132,11 @@ where
             receipts_root,
             withdrawals_root,
             logs_bloom,
-            timestamp,
+            timestamp: timestamp.to(),
             mix_hash: evm_env.block_env.prevrandao.unwrap_or_default(),
             nonce: BEACON_NONCE.into(),
             base_fee_per_gas: Some(evm_env.block_env.basefee),
-            number: evm_env.block_env.number,
+            number: evm_env.block_env.number.to(),
             gas_limit: evm_env.block_env.gas_limit,
             difficulty: evm_env.block_env.difficulty,
             gas_used: *gas_used,
