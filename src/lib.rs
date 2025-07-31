@@ -5,7 +5,7 @@ use network::GnosisNetworkBuilder;
 use payload::GnosisBuiltPayload;
 use payload_builder::GnosisPayloadBuilder;
 use pool::GnosisPoolBuilder;
-use primitives::{block::TransactionSigned, header::GnosisHeader, GnosisNodePrimitives};
+use primitives::{block::TransactionSigned, GnosisNodePrimitives};
 use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
 use reth_errors::ConsensusError;
@@ -22,6 +22,7 @@ use reth_node_ethereum::EthereumEthApiBuilder;
 use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
 use spec::gnosis_spec::GnosisChainSpec;
+use gnosis_primitives::header::GnosisHeader;
 use std::sync::Arc;
 
 // use crate::primitives::rpc::GnosisApiBuilder;

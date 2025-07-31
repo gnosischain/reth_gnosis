@@ -1,6 +1,5 @@
-use alloy_consensus::{TxEip4844, TxEnvelope};
-
-use super::header::GnosisHeader;
+use alloy_consensus::TxEip4844;
+use gnosis_primitives::header::GnosisHeader;
 
 pub type TransactionSigned = alloy_consensus::EthereumTxEnvelope<TxEip4844>;
 

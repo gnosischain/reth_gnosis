@@ -17,7 +17,8 @@ use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
 
-use crate::primitives::{block::Block as GnosisBlock, header::GnosisHeader};
+use crate::primitives::{block::Block as GnosisBlock};
+use gnosis_primitives::header::GnosisHeader;
 /// Block builder for Gnosis.
 #[derive(Debug)]
 pub struct GnosisBlockAssembler<ChainSpec> {

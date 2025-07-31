@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use core::fmt::Display;
 
-use crate::{blobs::gnosis_blob_schedule, primitives::header::GnosisHeader};
+use crate::{blobs::gnosis_blob_schedule};
 use alloy_consensus::Header;
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
@@ -18,6 +18,7 @@ use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use reth_primitives::SealedHeader;
 use revm_primitives::{b256, Address, B256, U256};
+use gnosis_primitives::header::GnosisHeader;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Chain {
@@ -456,6 +457,8 @@ impl From<Genesis> for GnosisChainSpec {
         let temp_header = SealedHeader::new_unhashed(GnosisHeader::from(make_genesis_header(
             &genesis, &hardforks,
         )));
+
+        // dbg!("Genesis header hash: {:?}", &temp_header);
 
         Self {
             inner: ChainSpec {

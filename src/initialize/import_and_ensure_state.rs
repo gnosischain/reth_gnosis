@@ -1,7 +1,6 @@
 use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
-use crate::primitives::header::GnosisHeader;
+use gnosis_primitives::header::GnosisHeader;
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
-use alloy_consensus::Header;
 use alloy_rlp::Decodable;
 use reth::tokio_runtime;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
@@ -29,12 +28,12 @@ fn table_key<T: Table>(key: &str) -> Result<T::Key, eyre::Error> {
 }
 
 /// Reads the header RLP from a file and returns the Header.
-fn read_header_from_file(path: PathBuf) -> Result<Header, eyre::Error> {
+fn read_header_from_file(path: PathBuf) -> Result<GnosisHeader, eyre::Error> {
     let mut file = File::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
 
-    let header = Header::decode(&mut &buf[..])?;
+    let header = GnosisHeader::decode(&mut &buf[..])?;
     Ok(header)
 }
 
@@ -172,7 +171,7 @@ pub fn download_and_import_init_state(
     match content {
         Some(content) => match StaticFileSegment::Headers {
             StaticFileSegment::Headers => {
-                let header = Header::decompress(content[0].as_slice()).unwrap();
+                let header = GnosisHeader::decompress(content[0].as_slice()).unwrap();
                 let state_root = header.state_root.to_string();
                 if state_root != download_spec.expected_state_root {
                     eprintln!(

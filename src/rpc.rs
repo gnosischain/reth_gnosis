@@ -1,4 +1,4 @@
-use crate::primitives::header::GnosisHeader;
+use gnosis_primitives::header::GnosisHeader;
 use alloy_eips::eip2930::AccessList;
 use alloy_network::{BuildResult, Network, NetworkWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind};

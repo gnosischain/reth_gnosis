@@ -17,7 +17,7 @@ use crate::blobs::{get_blob_params, next_blob_gas_and_price};
 use crate::block_executor::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
-use crate::primitives::header::GnosisHeader;
+use gnosis_primitives::header::GnosisHeader;
 use crate::primitives::{block::Block as GnosisBlock, GnosisNodePrimitives};
 use crate::spec::gnosis_spec::GnosisChainSpec;
 

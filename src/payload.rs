@@ -31,7 +31,7 @@ use reth_payload_builder::{EthBuiltPayload, EthPayloadBuilderAttributes};
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_primitives_traits::SealedBlock;
 
-use crate::primitives::{block::Block as GnosisBlock, header::GnosisHeader, GnosisNodePrimitives};
+use crate::primitives::{block::Block as GnosisBlock, GnosisNodePrimitives};
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_transaction_pool::{
@@ -44,6 +44,7 @@ use revm_primitives::U256;
 use tracing::{debug, trace, warn};
 
 use crate::{blobs::get_blob_params, spec::gnosis_spec::GnosisChainSpec};
+use gnosis_primitives::header::GnosisHeader;
 
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
