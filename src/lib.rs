@@ -30,6 +30,7 @@ use std::sync::Arc;
 mod blobs;
 mod block_executor;
 mod build;
+pub mod cli;
 mod engine;
 mod errors;
 mod evm;

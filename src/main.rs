@@ -1,7 +1,8 @@
-use clap::{Args, Parser};
+use clap::Parser;
 use reth::beacon_consensus::EthBeaconConsensus;
-use reth::cli::Cli;
 use reth_cli_commands::common::EnvironmentArgs;
+use reth_cli_commands::node::NoArgs;
+use reth_gnosis::cli::gnosis_cli::{Commands, GnosisCli};
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::GnosisEvmConfig;
@@ -12,19 +13,13 @@ use reth_gnosis::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-/// No Additional arguments
-#[derive(Debug, Clone, Copy, Default, Args)]
-#[non_exhaustive]
-pub struct NoArgs;
-
-type CliGnosis = Cli<GnosisChainSpecParser, NoArgs>;
-
 fn main() {
-    let user_cli = CliGnosis::parse();
+    let user_cli: GnosisCli<GnosisChainSpecParser, NoArgs> = GnosisCli::parse();
+
     let _guard = user_cli.init_tracing();
 
     // Fetch pre-merge state from a URL and load into the DB
-    if let reth::cli::Commands::Node(ref node_cmd) = user_cli.command {
+    if let Commands::Node(ref node_cmd) = user_cli.command {
         let env = EnvironmentArgs::<GnosisChainSpecParser> {
             datadir: node_cmd.datadir.clone(),
             config: node_cmd.config.clone(),
@@ -43,7 +38,7 @@ fn main() {
     run_reth(user_cli);
 }
 
-fn run_reth(cli: CliGnosis) {
+fn run_reth(cli: GnosisCli) {
     if let Err(err) = cli.run_with_components::<GnosisNode>(
         |chain_spec| {
             (

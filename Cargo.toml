@@ -17,8 +17,11 @@ reth-codecs = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-revm = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-node-api = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-node-core = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-node-metrics = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
@@ -27,9 +30,13 @@ reth-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" 
 reth-cli = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-cli-runner = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-etl = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-era-downloader = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-era-utils = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
@@ -49,6 +56,8 @@ reth-rpc = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-stages = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-stages-types = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-static-file-types = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-storage-api = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-tracing = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
@@ -71,6 +80,7 @@ revm-primitives = { version = "20.0.0", features = [
 ], default-features = false }
 revm-inspectors = "0.27.1"
 
+futures-util = { version = "0.3", default-features = false }
 serde = { version = "1.0", features = ["derive"], default-features = false }
 serde_json = "1.0.94"
 serde_with = "3.3.0"
