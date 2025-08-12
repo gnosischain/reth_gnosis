@@ -65,7 +65,7 @@
         "depositContractAddress": "0x0B98057eA310F4d31F2a452B414647007d1645d9"
     },
     "baseFeePerGas": "0x3b9aca00",
-    "difficulty": "0x01",
+    "difficulty": "0x20000",
     "gasLimit": "0x989680",
     "seal": {
         "authorityRound": {

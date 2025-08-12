@@ -3,13 +3,12 @@ use std::sync::Arc;
 use core::fmt::Display;
 
 use crate::{blobs::gnosis_blob_schedule};
-use alloy_consensus::Header;
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
-use derive_more::{Constructor, Deref, From, Into};
+use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, ChainHardforks, ChainSpec,
-    ChainSpecBuilder, DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks,
+    DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks,
     ForkCondition, ForkFilter, ForkFilterKey, ForkHash, ForkId, Hardfork, Hardforks, Head,
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
@@ -17,7 +16,7 @@ use reth_ethereum_forks::hardfork;
 use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use reth_primitives::SealedHeader;
-use revm_primitives::{b256, Address, B256, U256};
+use revm_primitives::{b256, Address, FixedBytes, B256, U256};
 use gnosis_primitives::header::GnosisHeader;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -454,11 +453,14 @@ impl From<Genesis> for GnosisChainSpec {
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
         // TODO: fix this
-        let temp_header = SealedHeader::new_unhashed(GnosisHeader::from(make_genesis_header(
+        let mut genesis_header = GnosisHeader::from(make_genesis_header(
             &genesis, &hardforks,
-        )));
-
-        // dbg!("Genesis header hash: {:?}", &temp_header);
+        ));
+        genesis_header.mix_hash = None;
+        genesis_header.nonce = None;
+        genesis_header.aura_seal = Some(FixedBytes::<65>::ZERO);
+        genesis_header.aura_step = Some(U256::ZERO);
+        let genesis_header = SealedHeader::new_unhashed(genesis_header);
 
         Self {
             inner: ChainSpec {
@@ -474,7 +476,7 @@ impl From<Genesis> for GnosisChainSpec {
                 base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
                 ..Default::default()
             },
-            genesis_header: temp_header,
+            genesis_header,
         }
     }
 }

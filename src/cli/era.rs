@@ -16,7 +16,7 @@ use reth_storage_api::{
     NodePrimitivesProvider, StageCheckpointWriter,
 };
 use std::{
-    sync::mpsc,
+    sync::mpsc
 };
 
 const  ERA_STEP: u64 = 8192;
@@ -48,8 +48,6 @@ where
 {
     let (tx, rx) = mpsc::channel();
 
-    println!("Starting era import...");
-
     // Handle IO-bound async download in a background tokio task
     tokio::spawn(async move {
         while let Some(file) = downloader.next().await {
@@ -75,8 +73,6 @@ where
         let from = height;
         let provider = provider_factory.database_provider_rw()?;
 
-        dbg!("era height (pre-import)", height);
-
         let mut range = height..=(height+ERA_STEP);
         let mut stop = false;
         if let Some(max_height) = max_height {
@@ -86,7 +82,7 @@ where
             }
         }
 
-        dbg!("era range", &range);
+        dbg!("Importing {:?}", &range);
 
         height = process(
             &meta?,
@@ -96,8 +92,6 @@ where
             &mut td,
             range,
         )?;
-
-        dbg!("era height (post-import)", height);
 
         save_stage_checkpoints(&provider, from, height, height, height)?;
 
