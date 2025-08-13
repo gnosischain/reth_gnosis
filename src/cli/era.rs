@@ -82,6 +82,9 @@ where
             }
         }
 
+        let start = range.start().clone().max(1);
+        let end = range.end().clone();
+
         dbg!("Importing {:?}", &range);
 
         height = process(
@@ -92,6 +95,19 @@ where
             &mut td,
             range,
         )?;
+
+        // Increment the block end range of receipts directly in the current thread
+        for segment in [StaticFileSegment::Receipts] {
+            let mut writer = static_file_provider.latest_writer(segment)?;
+            let height = static_file_provider
+                .get_highest_static_file_block(StaticFileSegment::Receipts)
+                .unwrap_or_default();
+            for block_num in start..=end {
+                if block_num > height {
+                    writer.increment_block(block_num)?;
+                }
+            }
+        }
 
         save_stage_checkpoints(&provider, from, height, height, height)?;
 
