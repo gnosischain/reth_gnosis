@@ -42,7 +42,7 @@ mod network;
 mod payload;
 mod payload_builder;
 mod pool;
-mod primitives;
+pub mod primitives;
 mod rpc;
 pub mod spec;
 mod testing;

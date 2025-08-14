@@ -24,7 +24,7 @@ use reth_tracing::FileWorkerGuard;
 use std::{ffi::OsString, fmt, future::Future, sync::Arc};
 use tracing::info;
 
-use crate::{cli::import_era, spec::gnosis_spec::GnosisChainSpecParser};
+use crate::{cli::import_era, primitives::GnosisNodePrimitives, spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser}, GnosisEvmConfig, GnosisNode};
 
 /// The main reth cli interface.
 ///
@@ -105,7 +105,7 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> GnosisCli<C, Ext> {
     where
         L: FnOnce(WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
-        C: ChainSpecParser<ChainSpec = ChainSpec>,
+        C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
     {
         self.with_runner(CliRunner::try_default_runtime()?, launcher)
     }
@@ -125,7 +125,7 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> GnosisCli<C, Ext> {
         ) -> eyre::Result<()>,
     ) -> eyre::Result<()>
     where
-        N: CliNodeTypes<Primitives: NodePrimitives<BlockHeader: CliHeader>, ChainSpec: Hardforks>,
+        N: CliNodeTypes<Primitives = GnosisNodePrimitives, ChainSpec: Hardforks>,
         C: ChainSpecParser<ChainSpec = N::ChainSpec>,
     {
         self.with_runner_and_components(CliRunner::try_default_runtime()?, components, launcher)
@@ -154,13 +154,13 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> GnosisCli<C, Ext> {
     where
         L: FnOnce(WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
-        C: ChainSpecParser<ChainSpec = ChainSpec>,
+        C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
     {
         let components = |spec: Arc<C::ChainSpec>| {
-            (EthEvmConfig::ethereum(spec.clone()), EthBeaconConsensus::new(spec))
+            (GnosisEvmConfig::new(spec.clone()), EthBeaconConsensus::new(spec))
         };
 
-        self.with_runner_and_components::<EthereumNode>(
+        self.with_runner_and_components::<GnosisNode>(
             runner,
             components,
             async move |builder, ext| launcher(builder, ext).await,
@@ -179,7 +179,7 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> GnosisCli<C, Ext> {
         ) -> eyre::Result<()>,
     ) -> eyre::Result<()>
     where
-        N: CliNodeTypes<Primitives: NodePrimitives<BlockHeader: CliHeader>, ChainSpec: Hardforks>,
+        N: CliNodeTypes<Primitives = GnosisNodePrimitives, ChainSpec: Hardforks>,
         C: ChainSpecParser<ChainSpec = N::ChainSpec>,
     {
         // Add network name if available to the logs dir

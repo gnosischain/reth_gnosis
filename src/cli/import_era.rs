@@ -15,7 +15,7 @@ use reth_static_file_types::StaticFileSegment;
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
-use crate::cli::era;
+use crate::{cli::era, primitives::GnosisNodePrimitives};
 
 /// Syncs ERA encoded blocks from a local or remote source.
 #[derive(Debug, Parser)]
@@ -67,7 +67,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> ImportEraC
     /// Execute `import-era` command
     pub async fn execute<N>(self) -> eyre::Result<()>
     where
-        N: CliNodeTypes<ChainSpec = C::ChainSpec>,
+        N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = GnosisNodePrimitives>,
     {
         dbg!("Starting import era...");
         info!(target: "reth::cli", "reth {} starting", SHORT_VERSION);
