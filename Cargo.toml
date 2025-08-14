@@ -35,6 +35,7 @@ reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-etl = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
+reth-era = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-era-downloader = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-era-utils = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }
 reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth", rev = "f0051e1" }

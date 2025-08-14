@@ -8769,6 +8769,7 @@ dependencies = [
  "reth-db-api",
  "reth-db-common",
  "reth-engine-primitives",
+ "reth-era",
  "reth-era-downloader",
  "reth-era-utils",
  "reth-errors",
