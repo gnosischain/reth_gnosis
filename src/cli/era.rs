@@ -12,12 +12,13 @@ use reth_era_utils::{build_index, open, save_stage_checkpoints};
 use reth_etl::Collector;
 use reth_primitives_traits::{Block, FullBlockBody, FullBlockHeader, NodePrimitives, FullReceipt as ReceiptTrait};
 use reth_provider::{
-    providers::StaticFileProviderRWRefMut, writer::UnifiedStorageWriter, BlockWriter, ProviderError, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter, StorageLocation
+    providers::StaticFileProviderRWRefMut, writer::UnifiedStorageWriter, BlockBodyIndicesProvider, BlockWriter, ExecutionOutcome, ProviderError, StateWriter, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter, StorageLocation
 };
 use reth_storage_api::{
     DBProvider, DatabaseProviderFactory, HeaderProvider,
     NodePrimitivesProvider, StageCheckpointWriter,
 };
+use revm_database::OriginalValuesKnown;
 use revm_primitives::U256;
 use std::{
     error::Error, fmt::{Display, Formatter}, io::{Read, Seek}, iter::Map, ops::{Bound, RangeBounds}, sync::mpsc
@@ -47,6 +48,8 @@ where
         ProviderRW: BlockWriter<Block = B>
             + DBProvider
             + StaticFileProviderFactory<Primitives: NodePrimitives<Block = B, BlockHeader = BH, BlockBody = BB, Receipt = Receipt>>
+            + StateWriter<Receipt = Receipt>
+            + BlockBodyIndicesProvider
             + StageCheckpointWriter,
     > + StaticFileProviderFactory<Primitives = <<PF as DatabaseProviderFactory>::ProviderRW as NodePrimitivesProvider>::Primitives>,
 {
@@ -74,6 +77,11 @@ where
         .ok_or(ProviderError::TotalDifficultyNotFound(height))?;
 
     while let Some(meta) = rx.recv()? {
+        let receipt_height = static_file_provider
+            .get_highest_static_file_tx(StaticFileSegment::Receipts)
+            .unwrap_or_default();
+        println!("Receipt height: {}", receipt_height);
+
         let from = height;
         let provider = provider_factory.database_provider_rw()?;
 
@@ -101,6 +109,19 @@ where
             range,
         )?;
 
+        // PROBLEMATIC PART
+        // Increment the block end range of receipts directly in the current thread
+        // for segment in [StaticFileSegment::Receipts] {
+        //     let mut writer = static_file_provider.latest_writer(segment)?;
+        //     let height = static_file_provider
+        //         .get_highest_static_file_block(StaticFileSegment::Receipts)
+        //         .unwrap_or_default();
+        //     for block_num in start..=end {
+        //         if block_num > height {
+        //             writer.increment_block(block_num)?;
+        //         }
+        //     }
+        // }
 
         save_stage_checkpoints(&provider, from, height, height, height)?;
 
@@ -193,7 +214,7 @@ where
         OmmerHeader = BH,
     >,
     Era: EraMeta + ?Sized,
-    P: DBProvider<Tx: DbTxMut> + NodePrimitivesProvider + BlockWriter<Block = B>,
+    P: DBProvider<Tx: DbTxMut> + NodePrimitivesProvider + BlockWriter<Block = B> + StateWriter<Receipt = Receipt> + BlockBodyIndicesProvider,
     <P as NodePrimitivesProvider>::Primitives: NodePrimitives<BlockHeader = BH, BlockBody = BB, Receipt = Receipt>,
 {
     let reader = open(meta)?;
@@ -259,7 +280,7 @@ where
         Transaction = <<P as NodePrimitivesProvider>::Primitives as NodePrimitives>::SignedTx,
         OmmerHeader = BH,
     >,
-    P: DBProvider<Tx: DbTxMut> + NodePrimitivesProvider + BlockWriter<Block = B>,
+    P: DBProvider<Tx: DbTxMut> + NodePrimitivesProvider + BlockWriter<Block = B> + StateWriter<Receipt = Receipt> + BlockBodyIndicesProvider,
     <P as NodePrimitivesProvider>::Primitives: NodePrimitives<BlockHeader = BH, BlockBody = BB, Receipt = Receipt>,
 {
     let mut last_header_number = match block_numbers.start_bound() {
@@ -273,9 +294,18 @@ where
         Bound::Unbounded => None,
     };
 
+    // let mut all_receipts = vec![];
+    let mut first_block = 0;
+    let mut flag = true;
+
     for block in &mut iter {
         let (header, body, receipts) = block?;
         let number = header.number();
+
+        if flag {
+            first_block = number;
+            flag = false;
+        }
 
         if number <= last_header_number {
             continue;
@@ -298,13 +328,16 @@ where
         header_writer.append_header(&header, *total_difficulty, &hash)?;
 
         // Append to Receipts segment
-        if let Some(c) = receipts_writer.user_header().tx_range() {
-            let end = c.end();
-            receipts_writer.append_receipts(receipts_to_iter(receipts, end + 1))?;
-        } else {
-            panic!("Receipts writer must have a user header with tx range set");
-        }
-
+        // let mut i = 0;
+        // if let Some(tx_range) = receipts_writer.user_header().tx_range() {
+        //     i = tx_range.end()
+        // } else {
+        //     println!("No tx range found for receipts writer, starting from 0");
+        // }
+        // println!("Appending {} receipts for block {}: {}", receipts.len(), number, i);
+        // receipts_writer.append_receipts(receipts_to_iter(receipts, i))?;
+        // receipts_writer.increment_block(number)?;
+        
         // Write bodies to database.
         provider.append_block_bodies(
             vec![(header.number(), Some(body))],
@@ -312,8 +345,54 @@ where
             StorageLocation::StaticFiles,
         )?;
 
+        if number > 0 {
+            let idx = provider.block_body_indices(number);
+            if let Ok(Some(idx)) = idx {
+                let mut i = idx.first_tx_num();
+                for receipt in receipts {
+                    receipts_writer.append_receipt(i, &receipt.receipt)?;
+                    i += 1;
+                }
+            } else {
+                panic!("Failed to get block body indices for block {}", number);
+            }
+        }
+        receipts_writer.increment_block(number)?;
+
+        // all_receipts.push(
+        //     // push Vec<Receipts> (receipts.receipt) to all_receipts
+        //     receipts.iter()
+        //         .map(|r| r.receipt.clone())
+        //         .collect::<Vec<_>>(),
+        // );
+
         hash_collector.insert(hash, number)?;
     }
+
+    // dbg!("Last header number", last_header_number);
+
+    // if first_block == 0 {
+    //     // remove the first empty receipts
+    //     let genesis_receipts = all_receipts.remove(0);
+    //     debug_assert!(genesis_receipts.is_empty());
+    //     // this ensures the execution outcome and static file producer start at block 1
+    //     first_block = 1;
+    // }
+
+    // dbg!("First block", first_block);
+
+    // let execution_outcome =
+    //     ExecutionOutcome::new(Default::default(), all_receipts, first_block, Default::default());
+
+    // dbg!("Writing state for last header number", last_header_number);
+
+    // provider.write_state(
+    //     &execution_outcome,
+    //     OriginalValuesKnown::Yes,
+    //     StorageLocation::StaticFiles,
+    // )?;
+
+    // dbg!("Done writing state for last header number", last_header_number);
 
     Ok(last_header_number)
 }
