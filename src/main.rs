@@ -3,7 +3,7 @@ use reth_cli_commands::common::EnvironmentArgs;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{cli::Cli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
-
+use reth::rpc::api::EthApiServer; 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -42,7 +42,46 @@ fn main() {
 
 fn run_reth(cli: CliGnosis) {
     if let Err(err) = cli.run(|builder, _| async move {
-        let handle = builder.node(GnosisNode::new()).launch().await?;
+        let handle = builder
+        .node(GnosisNode::new())
+        .extend_rpc_modules(|mut ctx| {
+            use jsonrpsee::RpcModule;
+            // trait import must be visible here too (file-level import covers it)
+    
+            let eth = ctx.registry.eth_api().clone();
+            let mut m = RpcModule::new(());
+    
+         // eth_getBlockByNumber
+         m.register_async_method("eth_getBlockByNumber", {
+            let eth = eth.clone();
+            move |params, _conn, _ctx| {
+                let eth = eth.clone();
+                async move {
+                    use alloy_eips::BlockNumberOrTag;
+        
+                    let (number, full): (BlockNumberOrTag, bool) = params.parse()?;
+        
+                    // Call upstream first; this fixes type inference
+                    let res = eth.block_by_number(number, full).await?; // Option<reth::rpc::types::Block>
+        
+                    // Reject blocks below 1000
+                    let res = match res {
+                        Some(b) if b.header.number < 1000 => None,
+                        other => other,
+                    };
+        
+                    let out: jsonrpsee::core::RpcResult<Option<reth::rpc::types::Block>> = Ok(res);
+                    out
+                }
+            }
+        })?;
+
+    
+            ctx.modules.replace_configured(m)?;
+            Ok(())
+        })
+        .launch()
+        .await?;
         handle.node_exit_future.await
     }) {
         eprintln!("Error: {err:?}");

@@ -18,7 +18,7 @@ use reth_node_builder::{
     BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeComponentsBuilder, NodeTypes,
     PayloadTypes,
 };
-use reth_node_ethereum::{EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder};
+use reth_node_ethereum::{EthEngineTypes, EthereumEngineValidator};
 use reth_primitives::EthPrimitives;
 use reth_provider::EthStorage;
 use reth_trie_db::MerklePatriciaTrie;
@@ -38,6 +38,7 @@ mod network;
 mod payload;
 mod payload_builder;
 mod pool;
+mod rpc;
 pub mod spec;
 mod testing;
 
@@ -106,7 +107,7 @@ impl NodeTypes for GnosisNode {
 }
 
 /// Add-ons w.r.t. gnosis
-pub type GnosisAddOns<N> = RpcAddOns<N, EthereumEthApiBuilder, GnosisEngineValidatorBuilder>;
+pub type GnosisAddOns<N> = RpcAddOns<N, rpc::GnosisEthApiBuilder, GnosisEngineValidatorBuilder>;
 
 impl<N> Node<N> for GnosisNode
 where
