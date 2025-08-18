@@ -44,9 +44,8 @@ fn run_reth(cli: CliGnosis) {
     if let Err(err) = cli.run(|builder, _| async move {
         let handle = builder
         .node(GnosisNode::new())
-        .extend_rpc_modules(|mut ctx| {
+        .extend_rpc_modules(|ctx| {
             use jsonrpsee::RpcModule;
-            // trait import must be visible here too (file-level import covers it)
     
             let eth = ctx.registry.eth_api().clone();
             let mut m = RpcModule::new(());
@@ -61,17 +60,14 @@ fn run_reth(cli: CliGnosis) {
         
                     let (number, full): (BlockNumberOrTag, bool) = params.parse()?;
         
-                    // Call upstream first; this fixes type inference
-                    let res = eth.block_by_number(number, full).await?; // Option<reth::rpc::types::Block>
-        
-                    // Reject blocks below 1000
-                    let res = match res {
-                        Some(b) if b.header.number < 1000 => None,
-                        other => other,
-                    };
-        
-                    let out: jsonrpsee::core::RpcResult<Option<reth::rpc::types::Block>> = Ok(res);
-                    out
+                    match number {
+                        BlockNumberOrTag::Number(n) if n < 1000 => {
+                            return Ok(None);
+                        }
+                        _ => {
+                            return eth.block_by_number(number, full).await;
+                        }
+                    }
                 }
             }
         })?;
