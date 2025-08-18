@@ -61,7 +61,7 @@ fn run_reth(cli: CliGnosis) {
                     let (number, full): (BlockNumberOrTag, bool) = params.parse()?;
         
                     match number {
-                        BlockNumberOrTag::Number(n) if n < 1000 => {
+                        BlockNumberOrTag::Number(n) if n < 6306357 => {
                             return Ok(None);
                         }
                         _ => {
