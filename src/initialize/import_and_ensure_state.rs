@@ -43,6 +43,7 @@ fn import_state(
     header: PathBuf,
     header_hash: &str,
     total_difficulty: &str,
+    blank_premerge: bool,
 ) -> Result<(), eyre::Error> {
     let Environment {
         config,
@@ -53,36 +54,38 @@ fn import_state(
     let static_file_provider = provider_factory.static_file_provider();
     let provider_rw = provider_factory.database_provider_rw()?;
 
-    // ensure header, total difficulty and header hash are provided
-    let header = read_header_from_file(header)?;
-    let header_hash = B256::from_str(header_hash)?;
-    let total_difficulty = U256::from_str(total_difficulty)?;
-
-    let last_block_number = provider_rw.last_block_number()?;
-
-    if last_block_number == 0 {
-        without_evm::setup_without_evm(
-            &provider_rw,
-            // &header,
-            // header_hash,
-            SealedHeader::new(header.into(), header_hash),
-            total_difficulty,
-            |number| GnosisHeader {
-                number,
-                ..Default::default()
-            },
-        )?;
-
-        // SAFETY: it's safe to commit static files, since in the event of a crash, they
-        // will be unwound according to database checkpoints.
-        //
-        // Necessary to commit, so the header is accessible to provider_rw and
-        // init_state_dump
-        static_file_provider.commit()?;
-    } else if last_block_number > 0 && last_block_number < header.number {
-        return Err(eyre::eyre!(
-            "Data directory should be empty when calling init-state with --without-evm-history."
-        ));
+    if blank_premerge {
+        // ensure header, total difficulty and header hash are provided
+        let header = read_header_from_file(header)?;
+        let header_hash = B256::from_str(header_hash)?;
+        let total_difficulty = U256::from_str(total_difficulty)?;
+    
+        let last_block_number = provider_rw.last_block_number()?;
+    
+        if last_block_number == 0 {
+            without_evm::setup_without_evm(
+                &provider_rw,
+                // &header,
+                // header_hash,
+                SealedHeader::new(header.into(), header_hash),
+                total_difficulty,
+                |number| GnosisHeader {
+                    number,
+                    ..Default::default()
+                },
+            )?;
+    
+            // SAFETY: it's safe to commit static files, since in the event of a crash, they
+            // will be unwound according to database checkpoints.
+            //
+            // Necessary to commit, so the header is accessible to provider_rw and
+            // init_state_dump
+            static_file_provider.commit()?;
+        } else if last_block_number > 0 && last_block_number < header.number {
+            return Err(eyre::eyre!(
+                "Data directory should be empty when calling init-state with --without-evm-history."
+            ));
+        }
     }
 
     info!(target: "reth::cli", "Initiating state dump");
@@ -101,6 +104,7 @@ pub fn download_and_import_init_state(
     chain: &str,
     download_spec: DownloadStateSpec,
     env: EnvironmentArgs<GnosisChainSpecParser>,
+    blank_premerge: bool,
 ) {
     let datadir = env.datadir.clone().resolve_datadir(env.chain.chain());
     let datadir = datadir.data_dir();
@@ -146,6 +150,7 @@ pub fn download_and_import_init_state(
         header_file.clone(),
         download_spec.header_hash,
         download_spec.total_difficulty,
+        blank_premerge,
     )
     .unwrap();
 

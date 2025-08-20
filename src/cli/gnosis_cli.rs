@@ -26,6 +26,16 @@ use tracing::info;
 
 use crate::{cli::import_era, primitives::GnosisNodePrimitives, spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser}, GnosisEvmConfig, GnosisNode};
 
+#[derive(Debug, Clone, clap::Args)]
+pub struct GnosisNodeExt {
+    /// Skip downloading initial state
+    #[arg(long, help = "Skip downloading initial state")]
+    pub no_download: bool,
+    /// Include ERA files for pre-merge data
+    #[arg(long, help = "Include ERA files for pre-merge data")]
+    pub include_pre_merge: bool,
+}
+
 /// The main reth cli interface.
 ///
 /// This is the entrypoint to the executable.
