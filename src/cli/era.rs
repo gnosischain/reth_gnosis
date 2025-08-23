@@ -353,17 +353,15 @@ where
             StorageLocation::StaticFiles,
         )?;
 
-        if number > 0 {
-            let idx = provider.block_body_indices(number);
-            if let Ok(Some(idx)) = idx {
-                let mut i = idx.first_tx_num();
-                for receipt in receipts {
-                    receipts_writer.append_receipt(i, &receipt.receipt)?;
-                    i += 1;
-                }
-            } else {
-                panic!("Failed to get block body indices for block {}", number);
+        let idx = provider.block_body_indices(number);
+        if let Ok(Some(idx)) = idx {
+            let mut i = idx.first_tx_num();
+            for receipt in receipts {
+                receipts_writer.append_receipt(i, &receipt.receipt)?;
+                i += 1;
             }
+        } else {
+            panic!("Failed to get block body indices for block {}", number);
         }
         receipts_writer.increment_block(number)?;
 
