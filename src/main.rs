@@ -3,7 +3,7 @@ use reth_cli_commands::common::EnvironmentArgs;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{cli::Cli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
-use reth::rpc::api::EthApiServer; 
+
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -45,35 +45,13 @@ fn run_reth(cli: CliGnosis) {
         let handle = builder
         .node(GnosisNode::new())
         .extend_rpc_modules(|ctx| {
-            use jsonrpsee::RpcModule;
-    
-            let eth = ctx.registry.eth_api().clone();
-            let mut m = RpcModule::new(());
-    
-         // eth_getBlockByNumber
-         m.register_async_method("eth_getBlockByNumber", {
-            let eth = eth.clone();
-            move |params, _conn, _ctx| {
-                let eth = eth.clone();
-                async move {
-                    use alloy_eips::BlockNumberOrTag;
-        
-                    let (number, full): (BlockNumberOrTag, bool) = params.parse()?;
-        
-                    match number {
-                        BlockNumberOrTag::Number(n) if n < 6306357 => {
-                            return Ok(None);
-                        }
-                        _ => {
-                            return eth.block_by_number(number, full).await;
-                        }
-                    }
-                }
-            }
-        })?;
+            let eth   = ctx.registry.eth_api().clone();
+            let trace = ctx.registry.trace_api().clone();
+            let debug = ctx.registry.debug_api().clone();
 
-    
-            ctx.modules.replace_configured(m)?;
+            let m = reth_gnosis::rpc::build_guarded_module(eth, trace, debug)?;
+            ctx.modules.replace_configured(m)?; 
+            
             Ok(())
         })
         .launch()
