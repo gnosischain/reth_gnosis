@@ -1,8 +1,8 @@
 use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
+use crate::initialize::MAINNET_ERA_IMPORT_HEIGHT;
 use gnosis_primitives::header::GnosisHeader;
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 use alloy_rlp::Decodable;
-use reth::tokio_runtime;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_cli_commands::init_state::without_evm;
 use reth_db::table::{Decompress, Table};
@@ -103,43 +103,45 @@ fn import_state(
 pub fn download_and_import_init_state(
     chain: &str,
     download_spec: DownloadStateSpec,
-    env: EnvironmentArgs<GnosisChainSpecParser>,
+    env: &EnvironmentArgs<GnosisChainSpecParser>,
     blank_premerge: bool,
 ) {
     let datadir = env.datadir.clone().resolve_datadir(env.chain.chain());
     let datadir = datadir.data_dir();
     let db_dir = datadir.join("db");
 
+    let Environment {
+        provider_factory, ..
+    } = env.init::<GnosisNode>(AccessRights::RO).unwrap();
+
     if datadir.exists() && db_dir.exists() {
-        // DB is initialized, check if the state is imported
-        let imported_flag_path = datadir.join(IMPORTED_FLAG);
-        if imported_flag_path.exists() {
-            println!("✅ State is imported, skipping import.");
-            return;
-        } else {
-            println!("❌ State looks misconfigured, please delete the following directory and try again:");
-            println!("{datadir:?}");
-            std::process::exit(1);
+        // If era imports enabled, check if the highest height is present
+        let block_num = provider_factory.static_file_provider().get_highest_static_file_block(StaticFileSegment::Headers);
+        if let Some(height) = block_num {
+            if height == MAINNET_ERA_IMPORT_HEIGHT {
+                println!("✅ ERA files already imported.");
+            } else {
+                // DB is initialized, check if the state is imported
+                let imported_flag_path = datadir.join(IMPORTED_FLAG);
+                if imported_flag_path.exists() {
+                    println!("✅ State is imported, skipping import.");
+                    return;
+                } else {
+                    println!("❌ State looks misconfigured, please delete the following directory and try again:");
+                    println!("{datadir:?}");
+                    std::process::exit(1);
+                }
+            }
         }
     }
 
     let state_path_str = format!("./{chain}-state");
     let state_path = Path::new(&state_path_str);
 
-    if let Err(e) = tokio_runtime()
-        .expect("Unable to build runtime")
-        .block_on(ensure_state(state_path, chain))
-    {
-        eprintln!("state setup failed: {e}");
-        std::process::exit(1);
-    }
-
-    reth_cli_util::sigsegv_handler::install();
-
-    // Enable backtraces unless a RUST_BACKTRACE value has already been explicitly provided.
-    if std::env::var_os("RUST_BACKTRACE").is_none() {
-        std::env::set_var("RUST_BACKTRACE", "1");
-    }
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        ensure_state(state_path, chain).await.unwrap();
+    });
 
     let state_file: PathBuf = state_path.join("state.jsonl");
     let header_file: PathBuf = state_path.join("header.rlp");
@@ -154,9 +156,9 @@ pub fn download_and_import_init_state(
     )
     .unwrap();
 
-    let Environment {
-        provider_factory, ..
-    } = env.init::<GnosisNode>(AccessRights::RO).unwrap();
+    // let Environment {
+    //     provider_factory, ..
+    // } = env.init::<GnosisNode>(AccessRights::RO).unwrap();
     let tool = DbTool::new(provider_factory).unwrap();
     let (key, mask): (u64, usize) = (
         table_key::<tables::Headers>(download_spec.block_num).unwrap(),

@@ -1,8 +1,8 @@
 use clap::Parser;
 use reth::beacon_consensus::EthBeaconConsensus;
 use reth_cli_commands::common::EnvironmentArgs;
-use reth_cli_commands::node::NoArgs;
 use reth_gnosis::cli::gnosis_cli::{Commands, GnosisCli, GnosisNodeExt};
+use reth_gnosis::cli::import_era::execute_inner;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::GnosisEvmConfig;
@@ -33,11 +33,12 @@ fn main() {
             100 => {
                 if node_cmd.ext.include_pre_merge {
                     // TODO: Era file import
-                    unimplemented!("Pre-merge era file import is not implemented yet.");
+                    execute_inner::<GnosisChainSpecParser, GnosisNode>(&env).unwrap();
+                    // unimplemented!("Pre-merge era file import is not implemented yet.");
                 }
                 if !node_cmd.ext.no_download {
                     // Fetch pre-merge state from a URL and load into the DB
-                    download_and_import_init_state("gnosis", GNOSIS_DOWNLOAD_SPEC, env, !node_cmd.ext.include_pre_merge)
+                    download_and_import_init_state("gnosis", GNOSIS_DOWNLOAD_SPEC, &env, !node_cmd.ext.include_pre_merge)
                 }
             },
             10200 => {
@@ -47,7 +48,7 @@ fn main() {
                 }
                 if !node_cmd.ext.no_download {
                     // Fetch pre-merge state from a URL and load into the DB
-                    download_and_import_init_state("chiado", CHIADO_DOWNLOAD_SPEC, env, true) // no era files for Chiado
+                    download_and_import_init_state("chiado", CHIADO_DOWNLOAD_SPEC, &env, true) // no era files for Chiado
                 }
             }
             _ => {} // For other network do not download state
@@ -60,7 +61,7 @@ fn main() {
 }
 
 fn run_reth(cli: GnosisCli<GnosisChainSpecParser, GnosisNodeExt>) {
-    if let Err(err) = cli.run_with_components::<GnosisNode>(
+    if let Err(err) = cli.run_with_components(
         |chain_spec| {
             (
                 GnosisEvmConfig::new(chain_spec.clone()),

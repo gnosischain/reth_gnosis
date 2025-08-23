@@ -126,17 +126,16 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> GnosisCli<C, Ext> {
     /// [`NodeCommand`](node::NodeCommand).
     ///
     /// This command will be run on the [default tokio runtime](reth_cli_runner::tokio_runtime).
-    pub fn run_with_components<N>(
+    pub fn run_with_components(
         self,
-        components: impl CliComponentsBuilder<N>,
+        components: impl CliComponentsBuilder<GnosisNode>,
         launcher: impl AsyncFnOnce(
             WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>,
             Ext,
         ) -> eyre::Result<()>,
     ) -> eyre::Result<()>
     where
-        N: CliNodeTypes<Primitives = GnosisNodePrimitives, ChainSpec: Hardforks>,
-        C: ChainSpecParser<ChainSpec = N::ChainSpec>,
+        C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
     {
         self.with_runner_and_components(CliRunner::try_default_runtime()?, components, launcher)
     }
@@ -170,7 +169,7 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> GnosisCli<C, Ext> {
             (GnosisEvmConfig::new(spec.clone()), EthBeaconConsensus::new(spec))
         };
 
-        self.with_runner_and_components::<GnosisNode>(
+        self.with_runner_and_components(
             runner,
             components,
             async move |builder, ext| launcher(builder, ext).await,
@@ -179,18 +178,17 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> GnosisCli<C, Ext> {
 
     /// Execute the configured cli command with the provided [`CliRunner`] and
     /// [`CliComponentsBuilder`].
-    pub fn with_runner_and_components<N>(
+    pub fn with_runner_and_components(
         mut self,
         runner: CliRunner,
-        components: impl CliComponentsBuilder<N>,
+        components: impl CliComponentsBuilder<GnosisNode>,
         launcher: impl AsyncFnOnce(
             WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>,
             Ext,
         ) -> eyre::Result<()>,
     ) -> eyre::Result<()>
     where
-        N: CliNodeTypes<Primitives = GnosisNodePrimitives, ChainSpec: Hardforks>,
-        C: ChainSpecParser<ChainSpec = N::ChainSpec>,
+        C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
     {
         // Add network name if available to the logs dir
         if let Some(chain_spec) = self.command.chain_spec() {
@@ -207,33 +205,33 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> GnosisCli<C, Ext> {
             Commands::Node(command) => runner.run_command_until_exit(|ctx| {
                 command.execute(ctx, FnLauncher::new::<C, Ext>(launcher))
             }),
-            Commands::Init(command) => runner.run_blocking_until_ctrl_c(command.execute::<N>()),
+            Commands::Init(command) => runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::InitState(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<N>())
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
             Commands::Import(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<N, _>(components))
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _>(components))
             }
             Commands::ImportEra(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<N>())
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
             Commands::ExportEra(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<N>())
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
-            Commands::Db(command) => runner.run_blocking_until_ctrl_c(command.execute::<N>()),
-            Commands::Download(command) => runner.run_blocking_until_ctrl_c(command.execute::<N>()),
+            Commands::Db(command) => runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>()),
+            Commands::Download(command) => runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::Stage(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<N, _>(ctx, components))
+                runner.run_command_until_exit(|ctx| command.execute::<GnosisNode, _>(ctx, components))
             }
-            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<N>()),
+            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Recover(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<N>(ctx))
+                runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
             }
-            Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<N>()),
+            Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::ReExecute(command) => {
-                runner.run_until_ctrl_c(command.execute::<N>(components))
+                runner.run_until_ctrl_c(command.execute::<GnosisNode>(components))
             }
         }
     }

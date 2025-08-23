@@ -15,7 +15,7 @@ use reth_static_file_types::StaticFileSegment;
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
-use crate::{cli::era, primitives::GnosisNodePrimitives};
+use crate::{cli::era, initialize::MAINNET_ERA_IMPORT_HEIGHT, primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 
 /// Syncs ERA encoded blocks from a local or remote source.
 #[derive(Debug, Parser)]
@@ -69,56 +69,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> ImportEraC
     where
         N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = GnosisNodePrimitives>,
     {
-        dbg!("Starting import era...");
-        info!(target: "reth::cli", "reth {} starting", SHORT_VERSION);
-
-        let Environment {
-            provider_factory,
-            config,
-            ..
-        } = self.env.init::<N>(AccessRights::RW)?;
-
-        let mut hash_collector = Collector::new(config.stages.etl.file_size, config.stages.etl.dir);
-
-        let next_block = provider_factory
-            .static_file_provider()
-            .get_highest_static_file_block(StaticFileSegment::Headers)
-            .unwrap_or_default()
-            + 1;
-            
-        let max_height: Option<u64> = match self.env.chain.chain_id() {
-            // 100 => Some(26478650), // Gnosis mainnet
-            100 => Some(26478650), // Gnosis mainnet
-            _ => None,
-        };
-
-        if let Some(path) = self.import.path {
-            let stream = read_dir(path, next_block)?;
-
-
-            era::import(stream, &provider_factory, &mut hash_collector, max_height)?;
-        } else {
-            let url = match self.import.url {
-                Some(url) => url,
-                None => self.env.chain.chain().kind().try_to_url()?,
-            };
-            let folder = self
-                .env
-                .datadir
-                .resolve_datadir(self.env.chain.chain())
-                .data_dir()
-                .join("era");
-
-            fs::create_dir_all(&folder)?;
-
-            let config = EraStreamConfig::default().start_from(next_block);
-            let client = EraClient::new(Client::new(), url, folder);
-            let stream = EraStream::new(client, config);
-
-            era::import(stream, &provider_factory, &mut hash_collector, max_height)?;
-        }
-
-        Ok(())
+        execute_inner::<C, N>(&self.env)
     }
 }
 
@@ -127,4 +78,50 @@ impl<C: ChainSpecParser> ImportEraCommand<C> {
     pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
         Some(&self.env.chain)
     }
+}
+
+pub fn execute_inner<C, N>(env: &EnvironmentArgs<C>) -> eyre::Result<()> 
+where C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>,
+      N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = GnosisNodePrimitives>,
+{
+    dbg!("Starting import era...");
+    info!(target: "reth::cli", "reth {} starting", SHORT_VERSION);
+
+    let Environment {
+        provider_factory,
+        config,
+        ..
+    } = env.init::<N>(AccessRights::RW)?;
+
+    let mut hash_collector = Collector::new(config.stages.etl.file_size, config.stages.etl.dir);
+
+    let next_block = provider_factory
+        .static_file_provider()
+        .get_highest_static_file_block(StaticFileSegment::Headers)
+        .unwrap_or_default()
+        + 1;
+        
+    let max_height: Option<u64> = match env.chain.chain_id() {
+        // 100 => Some(MAINNET_ERA_IMPORT_HEIGHT), // Gnosis mainnet
+        100 => Some(MAINNET_ERA_IMPORT_HEIGHT), // Gnosis mainnet
+        _ => panic!("Era import not supported for chain id {}", env.chain.chain_id()),
+    };
+
+    let url = Url::parse("https://gc-era.gnosiscoredevs.io/").unwrap();
+    let folder = env
+        .datadir
+        .clone()
+        .resolve_datadir(env.chain.chain())
+        .data_dir()
+        .join("era");
+
+    fs::create_dir_all(&folder)?;
+
+    let config = EraStreamConfig::default().start_from(next_block);
+    let client = EraClient::new(Client::new(), url, folder);
+    let stream = EraStream::new(client, config);
+
+    era::import(stream, &provider_factory, &mut hash_collector, max_height)?;
+
+    Ok(())
 }
