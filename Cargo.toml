@@ -56,7 +56,13 @@ reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1
 eyre = "0.6"
 clap = { version = "4.5.6", features = ["derive"] }
 derive_more = { version = "2", default-features = false, features = ["full"] }
-
+reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+# RPC type crates
+alloy-rpc-types-eth = { version = "1" }
+alloy-rpc-types-trace = { version = "1" }
+reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
 # revm
 revm = { version = "27.0.2", features = ["std"], default-features = false }
 revm-database = { version = "7.0.1", default-features = false }

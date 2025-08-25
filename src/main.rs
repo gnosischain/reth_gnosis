@@ -43,19 +43,20 @@ fn main() {
 fn run_reth(cli: CliGnosis) {
     if let Err(err) = cli.run(|builder, _| async move {
         let handle = builder
-        .node(GnosisNode::new())
-        .extend_rpc_modules(|ctx| {
-            let eth   = ctx.registry.eth_api().clone();
-            let trace = ctx.registry.trace_api().clone();
-            let debug = ctx.registry.debug_api().clone();
+            .node(GnosisNode::new())
+            .extend_rpc_modules(|ctx| {
+                let eth = ctx.registry.eth_api().clone();
+                let trace = ctx.registry.trace_api().clone();
+                let debug = ctx.registry.debug_api().clone();
+                let eth_handlers = ctx.registry.eth_handlers().clone();
+                let filter = eth_handlers.filter;
+                let m = reth_gnosis::rpc::build_guarded_module(eth, trace, debug, filter)?;
+                ctx.modules.replace_configured(m)?;
 
-            let m = reth_gnosis::rpc::build_guarded_module(eth, trace, debug)?;
-            ctx.modules.replace_configured(m)?; 
-            
-            Ok(())
-        })
-        .launch()
-        .await?;
+                Ok(())
+            })
+            .launch()
+            .await?;
         handle.node_exit_future.await
     }) {
         eprintln!("Error: {err:?}");

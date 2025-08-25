@@ -38,9 +38,9 @@ mod network;
 mod payload;
 mod payload_builder;
 mod pool;
+pub mod rpc;
 pub mod spec;
 mod testing;
-pub mod rpc;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Gnosis")]

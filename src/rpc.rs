@@ -1,13 +1,34 @@
+use alloy_eips::BlockId;
 use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::{Address, Bytes, B256, U256, U64};
+use alloy_rpc_types_eth::{
+    state::StateOverride, BlockOverrides, Bundle, EIP1186AccountProofResponse, EthCallResponse,
+    FeeHistory, Filter, FilterId, Index, Log, StateContext, TransactionRequest,
+};
+use alloy_rpc_types_trace::filter::TraceFilter;
+use alloy_rpc_types_trace::geth::{
+    GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult,
+};
+use alloy_rpc_types_trace::parity::{
+    LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
+};
+
+use alloy_primitives::map::HashSet as AHashSet;
+use alloy_serde::JsonStorageKey;
 use eyre::Result;
 use jsonrpsee::{core::RpcResult, RpcModule};
+use reth_rpc_api::{DebugApiServer, TraceApiServer};
+use reth_rpc_eth_api::{
+    types::{EthApiTypes, RpcTransaction},
+    EthApiServer, EthFilterApiServer, FullEthApiServer,
+};
 use std::future::Future;
 
-pub const MIN_ALLOWED_BLOCK: u64 = 1000;
+pub const GENESIS_BLOCK: u64 = 6306357;
 
 fn is_block_disallowed(b: &BlockNumberOrTag) -> bool {
     match b {
-        BlockNumberOrTag::Number(n) => *n < MIN_ALLOWED_BLOCK,
+        BlockNumberOrTag::Number(n) => *n < GENESIS_BLOCK,
         BlockNumberOrTag::Earliest => true,
         _ => false,
     }
@@ -25,7 +46,9 @@ fn value_to_block_number_or_tag(v: &serde_json::Value) -> Option<BlockNumberOrTa
                 "safe" => Some(BlockNumberOrTag::Safe),
                 _ => {
                     if let Some(stripped) = s.strip_prefix("0x") {
-                        u64::from_str_radix(stripped, 16).ok().map(BlockNumberOrTag::Number)
+                        u64::from_str_radix(stripped, 16)
+                            .ok()
+                            .map(BlockNumberOrTag::Number)
                     } else {
                         s.parse::<u64>().ok().map(BlockNumberOrTag::Number)
                     }
@@ -75,48 +98,52 @@ where
     Ok(())
 }
 
-pub fn register_eth_get_transaction_by_block_number_and_index<F, Fut, R, I>(
+pub fn register_eth_get_transaction_by_block_number_and_index<F, Fut, R>(
     m: &mut RpcModule<()>,
     tx_by_block_number_and_index: F,
 ) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, I) -> Fut,
-    I: serde::de::DeserializeOwned + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, Index) -> Fut,
     Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
     R: serde::Serialize + Clone + Send + 'static,
 {
-    m.register_async_method("eth_getTransactionByBlockNumberAndIndex", move |params, _conn, _ctx| {
-        let call = tx_by_block_number_and_index.clone();
-        async move {
-            let (number, index): (BlockNumberOrTag, I) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+    m.register_async_method(
+        "eth_getTransactionByBlockNumberAndIndex",
+        move |params, _conn, _ctx| {
+            let call = tx_by_block_number_and_index.clone();
+            async move {
+                let (number, index): (BlockNumberOrTag, Index) = params.parse()?;
+                if is_block_disallowed(&number) {
+                    return Ok(None);
+                }
+                call(number, index).await
             }
-            call(number, index).await
-        }
-    })?;
+        },
+    )?;
     Ok(())
 }
 
-pub fn register_eth_get_block_transaction_count_by_number<F, Fut, R>(
+pub fn register_eth_get_block_transaction_count_by_number<F, Fut>(
     m: &mut RpcModule<()>,
     tx_count_by_block_number: F,
 ) -> Result<()>
 where
     F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag) -> Fut,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    Fut: Future<Output = RpcResult<Option<U256>>> + Send + 'static,
 {
-    m.register_async_method("eth_getBlockTransactionCountByNumber", move |params, _conn, _ctx| {
-        let call = tx_count_by_block_number.clone();
-        async move {
-            let (number,): (BlockNumberOrTag,) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+    m.register_async_method(
+        "eth_getBlockTransactionCountByNumber",
+        move |params, _conn, _ctx| {
+            let call = tx_count_by_block_number.clone();
+            async move {
+                let (number,): (BlockNumberOrTag,) = params.parse()?;
+                if is_block_disallowed(&number) {
+                    return Ok(None);
+                }
+                call(number).await
             }
-            call(number).await
-        }
-    })?;
+        },
+    )?;
     Ok(())
 }
 
@@ -129,190 +156,178 @@ where
     Fut: Future<Output = RpcResult<Option<B>>> + Send + 'static,
     B: serde::Serialize + Send + 'static,
 {
-    m.register_async_method("eth_getUncleCountByBlockNumber", move |params, _conn, _ctx| {
-        let call = block_by_number.clone();
-        async move {
-            let (number,): (BlockNumberOrTag,) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
-            }
-            match call(number, false).await {
-                Ok(Some(block)) => {
-                    let v = serde_json::to_value(block).unwrap_or(serde_json::json!({}));
-                    let count = v
-                        .get("uncles").and_then(|a| a.as_array()).map(|a| a.len())
-                        .or_else(|| v.get("ommers").and_then(|a| a.as_array()).map(|a| a.len()))
-                        .unwrap_or(0);
-                    Ok(Some(format!("0x{:x}", count)))
+    m.register_async_method(
+        "eth_getUncleCountByBlockNumber",
+        move |params, _conn, _ctx| {
+            let call = block_by_number.clone();
+            async move {
+                let (number,): (BlockNumberOrTag,) = params.parse()?;
+                if is_block_disallowed(&number) {
+                    return Ok(None);
                 }
-                Ok(None) => Ok(None),
-                Err(err) => Err(err),
+                match call(number, false).await {
+                    Ok(Some(block)) => {
+                        let v = serde_json::to_value(block).unwrap_or(serde_json::json!({}));
+                        let count = v
+                            .get("uncles")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.len())
+                            .or_else(|| v.get("ommers").and_then(|a| a.as_array()).map(|a| a.len()))
+                            .unwrap_or(0);
+                        Ok(Some(format!("0x{:x}", count)))
+                    }
+                    Ok(None) => Ok(None),
+                    Err(err) => Err(err),
+                }
             }
-        }
-    })?;
+        },
+    )?;
     Ok(())
 }
-
 
 pub fn register_eth_get_block_receipts<F, Fut, R>(
     m: &mut RpcModule<()>,
     get_block_receipts: F,
 ) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag) -> Fut,
+    F: Clone + Send + Sync + 'static + Fn(BlockId) -> Fut,
     Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
     R: serde::Serialize + Clone + Send + 'static,
 {
     m.register_async_method("eth_getBlockReceipts", move |params, _conn, _ctx| {
         let call = get_block_receipts.clone();
         async move {
-            let (number,): (BlockNumberOrTag,) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (block_id,): (BlockId,) = params.parse()?;
+            if let BlockId::Number(num_tag) = &block_id {
+                if is_block_disallowed(num_tag) {
+                    return Ok(None);
+                }
             }
-            call(number).await
+            call(block_id).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_get_balance<F, Fut, R, A>(
-    m: &mut RpcModule<()>,
-    get_balance: F,
-) -> Result<()>
+pub fn register_eth_get_balance<F, Fut>(m: &mut RpcModule<()>, get_balance: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(A, BlockNumberOrTag) -> Fut,
-    A: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(Address, Option<BlockId>) -> Fut,
+    Fut: Future<Output = RpcResult<U256>> + Send + 'static,
 {
     m.register_async_method("eth_getBalance", move |params, _conn, _ctx| {
         let call = get_balance.clone();
         async move {
-            let (address, number): (A, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (address, block): (Address, Option<BlockId>) = params.parse()?;
+            if let Some(BlockId::Number(num)) = &block {
+                if is_block_disallowed(num) {
+                    return Ok(U256::ZERO);
+                }
             }
-            call(address, number).await
+            call(address, block).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_get_code<F, Fut, R, A>(
-    m: &mut RpcModule<()>,
-    get_code: F,
-) -> Result<()>
+pub fn register_eth_get_code<F, Fut>(m: &mut RpcModule<()>, get_code: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(A, BlockNumberOrTag) -> Fut,
-    A: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(Address, Option<BlockId>) -> Fut,
+    Fut: Future<Output = RpcResult<Bytes>> + Send + 'static,
 {
     m.register_async_method("eth_getCode", move |params, _conn, _ctx| {
         let call = get_code.clone();
         async move {
-            let (address, number): (A, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (address, block): (Address, Option<BlockId>) = params.parse()?;
+            if let Some(BlockId::Number(num)) = &block {
+                if is_block_disallowed(num) {
+                    return Ok(Bytes::default());
+                }
             }
-            call(address, number).await
+            call(address, block).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_get_storage_at<F, Fut, R, A, S>(
-    m: &mut RpcModule<()>,
-    get_storage_at: F,
-) -> Result<()>
+pub fn register_eth_get_storage_at<F, Fut>(m: &mut RpcModule<()>, get_storage_at: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(A, S, BlockNumberOrTag) -> Fut,
-    A: serde::de::DeserializeOwned + Send + 'static,
-    S: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(Address, JsonStorageKey, Option<BlockId>) -> Fut,
+    Fut: Future<Output = RpcResult<B256>> + Send + 'static,
 {
     m.register_async_method("eth_getStorageAt", move |params, _conn, _ctx| {
         let call = get_storage_at.clone();
         async move {
-            let (address, slot, number): (A, S, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (address, slot, block): (Address, JsonStorageKey, Option<BlockId>) =
+                params.parse()?;
+            if let Some(BlockId::Number(num)) = &block {
+                if is_block_disallowed(num) {
+                    return Ok(B256::ZERO);
+                }
             }
-            call(address, slot, number).await
+            call(address, slot, block).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_get_transaction_count<F, Fut, R, A>(
+pub fn register_eth_get_transaction_count<F, Fut>(
     m: &mut RpcModule<()>,
     get_tx_count: F,
 ) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(A, BlockNumberOrTag) -> Fut,
-    A: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(Address, Option<BlockId>) -> Fut,
+    Fut: Future<Output = RpcResult<U64>> + Send + 'static,
 {
     m.register_async_method("eth_getTransactionCount", move |params, _conn, _ctx| {
         let call = get_tx_count.clone();
         async move {
-            let (address, number): (A, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (address, block): (Address, Option<BlockId>) = params.parse()?;
+            if let Some(BlockId::Number(num)) = &block {
+                if is_block_disallowed(num) {
+                    return Ok(U64::ZERO);
+                }
             }
-            call(address, number).await
+            call(address, block).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_get_proof<F, Fut, R, A, Slots>(
-    m: &mut RpcModule<()>,
-    get_proof: F,
-) -> Result<()>
+pub fn register_eth_get_proof<F, Fut>(m: &mut RpcModule<()>, get_proof: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(A, Slots, BlockNumberOrTag) -> Fut,
-    A: serde::de::DeserializeOwned + Send + 'static,
-    Slots: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(Address, Vec<B256>, Option<BlockId>) -> Fut,
+    Fut: Future<Output = RpcResult<EIP1186AccountProofResponse>> + Send + 'static,
 {
     m.register_async_method("eth_getProof", move |params, _conn, _ctx| {
         let call = get_proof.clone();
         async move {
-            let (address, slots, number): (A, Slots, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (address, slots, block): (Address, Vec<B256>, Option<BlockId>) = params.parse()?;
+            if let Some(BlockId::Number(num)) = &block {
+                if is_block_disallowed(num) {
+                    return Ok(EIP1186AccountProofResponse::default());
+                }
             }
-            call(address, slots, number).await
+            call(address, slots, block).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_new_filter<F, Fut, R, Filter>(
-    m: &mut RpcModule<()>,
-    new_filter: F,
-) -> Result<()>
+pub fn register_eth_new_filter<F, Fut>(m: &mut RpcModule<()>, new_filter: F) -> Result<()>
 where
     F: Clone + Send + Sync + 'static + Fn(Filter) -> Fut,
-    Filter: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    Fut: Future<Output = RpcResult<FilterId>> + Send + 'static,
 {
     m.register_async_method("eth_newFilter", move |params, _conn, _ctx| {
         let call = new_filter.clone();
         async move {
             let (fv,): (serde_json::Value,) = params.parse()?;
             if filter_has_disallowed_block_range(&fv) {
-                return Ok(None);
+                return Ok(FilterId::Num(0));
             }
             let filter: Filter = match serde_json::from_value(fv) {
                 Ok(v) => v,
-                Err(_) => return Ok(None),
+                Err(_) => return Ok(FilterId::Num(0)),
             };
             call(filter).await
         }
@@ -320,119 +335,137 @@ where
     Ok(())
 }
 
-pub fn register_eth_call<F, Fut, R, T>(
-    m: &mut RpcModule<()>,
-    call_fn: F,
-) -> Result<()>
+pub fn register_eth_call<F, Fut>(m: &mut RpcModule<()>, call_fn: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(T, BlockNumberOrTag) -> Fut,
-    T: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone
+        + Send
+        + Sync
+        + 'static
+        + Fn(
+            TransactionRequest,
+            Option<BlockId>,
+            Option<StateOverride>,
+            Option<Box<BlockOverrides>>,
+        ) -> Fut,
+    Fut: Future<Output = RpcResult<Bytes>> + Send + 'static,
 {
     m.register_async_method("eth_call", move |params, _conn, _ctx| {
         let call = call_fn.clone();
         async move {
-            let (tx, number): (T, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (request, block, state_overrides, block_overrides): (
+                TransactionRequest,
+                Option<BlockId>,
+                Option<StateOverride>,
+                Option<Box<BlockOverrides>>,
+            ) = params.parse()?;
+            if let Some(BlockId::Number(num)) = &block {
+                if is_block_disallowed(num) {
+                    return Ok(Bytes::default());
+                }
             }
-            call(tx, number).await
+            call(request, block, state_overrides, block_overrides).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_call_many<F, Fut, R, T>(
-    m: &mut RpcModule<()>,
-    call_many_fn: F,
-) -> Result<()>
+pub fn register_eth_call_many<F, Fut>(m: &mut RpcModule<()>, call_many_fn: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(T, BlockNumberOrTag) -> Fut,
-    T: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone
+        + Send
+        + Sync
+        + 'static
+        + Fn(Vec<Bundle>, Option<StateContext>, Option<StateOverride>) -> Fut,
+    Fut: Future<Output = RpcResult<Vec<Vec<EthCallResponse>>>> + Send + 'static,
 {
     m.register_async_method("eth_callMany", move |params, _conn, _ctx| {
         let call = call_many_fn.clone();
         async move {
-            let (calls, number): (T, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (calls, state_context, state_override): (
+                Vec<Bundle>,
+                Option<StateContext>,
+                Option<StateOverride>,
+            ) = params.parse()?;
+
+            if let Some(ref context) = state_context {
+                if let Some(alloy_eips::BlockId::Number(num)) = &context.block_number {
+                    if is_block_disallowed(num) {
+                        return Ok(vec![]);
+                    }
+                }
             }
-            call(calls, number).await
+
+            call(calls, state_context, state_override).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_estimate_gas<F, Fut, R, T>(
-    m: &mut RpcModule<()>,
-    estimate_fn: F,
-) -> Result<()>
+pub fn register_eth_estimate_gas<F, Fut>(m: &mut RpcModule<()>, estimate_fn: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(T, BlockNumberOrTag) -> Fut,
-    T: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone
+        + Send
+        + Sync
+        + 'static
+        + Fn(TransactionRequest, Option<BlockId>, Option<StateOverride>) -> Fut,
+    Fut: Future<Output = RpcResult<U256>> + Send + 'static,
 {
     m.register_async_method("eth_estimateGas", move |params, _conn, _ctx| {
         let call = estimate_fn.clone();
         async move {
-            let (tx, number): (T, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (request, block, state_override): (
+                TransactionRequest,
+                Option<BlockId>,
+                Option<StateOverride>,
+            ) = params.parse()?;
+            if let Some(BlockId::Number(num)) = &block {
+                if is_block_disallowed(num) {
+                    return Ok(U256::ZERO);
+                }
             }
-            call(tx, number).await
+            call(request, block, state_override).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_fee_history<F, Fut, R, Count, Reward>(
-    m: &mut RpcModule<()>,
-    fee_history_fn: F,
-) -> Result<()>
+pub fn register_eth_fee_history<F, Fut>(m: &mut RpcModule<()>, fee_history_fn: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(Count, BlockNumberOrTag, Reward) -> Fut,
-    Count: serde::de::DeserializeOwned + Send + 'static,
-    Reward: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(U64, BlockNumberOrTag, Option<Vec<f64>>) -> Fut,
+    Fut: Future<Output = RpcResult<FeeHistory>> + Send + 'static,
 {
     m.register_async_method("eth_feeHistory", move |params, _conn, _ctx| {
         let call = fee_history_fn.clone();
         async move {
-            let (count, number, reward): (Count, BlockNumberOrTag, Reward) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (block_count, newest_block, reward_percentiles): (
+                U64,
+                BlockNumberOrTag,
+                Option<Vec<f64>>,
+            ) = params.parse()?;
+            if is_block_disallowed(&newest_block) {
+                return Ok(FeeHistory::default());
             }
-            call(count, number, reward).await
+            call(block_count, newest_block, reward_percentiles).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_eth_get_logs<F, Fut, R, Filter>(
-    m: &mut RpcModule<()>,
-    get_logs_fn: F,
-) -> Result<()>
+pub fn register_eth_get_logs<F, Fut>(m: &mut RpcModule<()>, get_logs_fn: F) -> Result<()>
 where
     F: Clone + Send + Sync + 'static + Fn(Filter) -> Fut,
-    Filter: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    Fut: Future<Output = RpcResult<Vec<Log>>> + Send + 'static,
 {
     m.register_async_method("eth_getLogs", move |params, _conn, _ctx| {
         let call = get_logs_fn.clone();
         async move {
             let (fv,): (serde_json::Value,) = params.parse()?;
             if filter_has_disallowed_block_range(&fv) {
-                return Ok(None);
+                return Ok(vec![]);
             }
             let filter: Filter = match serde_json::from_value(fv) {
                 Ok(v) => v,
-                Err(_) => return Ok(None),
+                Err(_) => return Ok(vec![]),
             };
             call(filter).await
         }
@@ -442,427 +475,355 @@ where
 
 // --- Trace helpers (generic over types) ---
 
-pub fn register_trace_replay_block_transactions<F, Fut, R, Types>(
+pub fn register_trace_replay_block_transactions<F, Fut>(
     m: &mut RpcModule<()>,
     replay_fn: F,
 ) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, Types) -> Fut,
-    Types: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(BlockId, AHashSet<TraceType>) -> Fut,
+    Fut: Future<Output = RpcResult<Option<Vec<TraceResultsWithTransactionHash>>>> + Send + 'static,
 {
-    m.register_async_method("trace_replayBlockTransactions", move |params, _conn, _ctx| {
-        let call = replay_fn.clone();
-        async move {
-            let (number, types): (BlockNumberOrTag, Types) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+    m.register_async_method(
+        "trace_replayBlockTransactions",
+        move |params, _conn, _ctx| {
+            let call = replay_fn.clone();
+            async move {
+                let (block_id, trace_types): (BlockId, AHashSet<TraceType>) = params.parse()?;
+                if let BlockId::Number(num) = &block_id {
+                    if is_block_disallowed(num) {
+                        return Ok(None);
+                    }
+                }
+                call(block_id, trace_types).await
             }
-            call(number, types).await
-        }
-    })?;
+        },
+    )?;
     Ok(())
 }
 
-// --- Debug helpers ---
-
-pub fn register_debug_trace_block_by_number<F, Fut, R, Opts>(
+pub fn register_debug_trace_block_by_number<F, Fut>(
     m: &mut RpcModule<()>,
     trace_fn: F,
 ) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, Opts) -> Fut,
-    Opts: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, Option<GethDebugTracingOptions>) -> Fut,
+    Fut: Future<Output = RpcResult<Vec<TraceResult>>> + Send + 'static,
 {
     m.register_async_method("debug_traceBlockByNumber", move |params, _conn, _ctx| {
         let call = trace_fn.clone();
         async move {
-            let (number, opts): (BlockNumberOrTag, Opts) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (block_number, opts): (BlockNumberOrTag, Option<GethDebugTracingOptions>) =
+                params.parse()?;
+            if is_block_disallowed(&block_number) {
+                return Ok(vec![]);
             }
-            call(number, opts).await
+            call(block_number, opts).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_debug_trace_call<F, Fut, R, Tx, Opts>(
-    m: &mut RpcModule<()>,
-    trace_call_fn: F,
-) -> Result<()>
+pub fn register_debug_trace_call<F, Fut>(m: &mut RpcModule<()>, trace_call_fn: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(Tx, Opts, BlockNumberOrTag) -> Fut,
-    Tx: serde::de::DeserializeOwned + Send + 'static,
-    Opts: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone
+        + Send
+        + Sync
+        + 'static
+        + Fn(TransactionRequest, Option<BlockId>, Option<GethDebugTracingCallOptions>) -> Fut,
+    Fut: Future<Output = RpcResult<GethTrace>> + Send + 'static,
 {
     m.register_async_method("debug_traceCall", move |params, _conn, _ctx| {
         let call = trace_call_fn.clone();
         async move {
-            let (tx, opts, number): (Tx, Opts, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (request, block_number, opts): (
+                TransactionRequest,
+                Option<BlockId>,
+                Option<GethDebugTracingCallOptions>,
+            ) = params.parse()?;
+            if let Some(BlockId::Number(num)) = &block_number {
+                if is_block_disallowed(num) {
+                    return Ok(GethTrace::default());
+                }
             }
-            call(tx, opts, number).await
+            call(request, block_number, opts).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_debug_storage_range_at<F, Fut, R, A, B, C, D>(
-    m: &mut RpcModule<()>,
-    storage_range_fn: F,
-) -> Result<()>
-where
-    F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, A, B, C, D) -> Fut,
-    A: serde::de::DeserializeOwned + Send + 'static,
-    B: serde::de::DeserializeOwned + Send + 'static,
-    C: serde::de::DeserializeOwned + Send + 'static,
-    D: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
-{
-    m.register_async_method("debug_storageRangeAt", move |params, _conn, _ctx| {
-        let call = storage_range_fn.clone();
-        async move {
-            let (number, a, b, c, d): (BlockNumberOrTag, A, B, C, D) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
-            }
-            call(number, a, b, c, d).await
-        }
-    })?;
-    Ok(())
-}
-
-pub fn register_debug_trace_call_many<F, Fut, R, Calls, Opts>(
+pub fn register_debug_trace_call_many<F, Fut>(
     m: &mut RpcModule<()>,
     trace_call_many_fn: F,
 ) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(Calls, Opts, BlockNumberOrTag) -> Fut,
-    Calls: serde::de::DeserializeOwned + Send + 'static,
-    Opts: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone
+        + Send
+        + Sync
+        + 'static
+        + Fn(Vec<Bundle>, Option<StateContext>, Option<GethDebugTracingCallOptions>) -> Fut,
+    Fut: Future<Output = RpcResult<Vec<Vec<GethTrace>>>> + Send + 'static,
 {
     m.register_async_method("debug_traceCallMany", move |params, _conn, _ctx| {
         let call = trace_call_many_fn.clone();
         async move {
-            let (calls, opts, number): (Calls, Opts, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (calls, state_context, opts): (
+                Vec<Bundle>,
+                Option<StateContext>,
+                Option<GethDebugTracingCallOptions>,
+            ) = params.parse()?;
+            if let Some(ref context) = state_context {
+                if let Some(alloy_eips::BlockId::Number(num)) = &context.block_number {
+                    if is_block_disallowed(num) {
+                        return Ok(vec![]);
+                    }
+                }
             }
-            call(calls, opts, number).await
+            call(calls, state_context, opts).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_trace_block<F, Fut, R>(
-    m: &mut RpcModule<()>,
-    block_fn: F,
-) -> Result<()>
+pub fn register_trace_block<F, Fut>(m: &mut RpcModule<()>, block_fn: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag) -> Fut,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(BlockId) -> Fut,
+    Fut: Future<Output = RpcResult<Option<Vec<LocalizedTransactionTrace>>>> + Send + 'static,
 {
     m.register_async_method("trace_block", move |params, _conn, _ctx| {
         let call = block_fn.clone();
         async move {
-            let (number,): (BlockNumberOrTag,) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (block_id,): (BlockId,) = params.parse()?;
+            if let BlockId::Number(num) = &block_id {
+                if is_block_disallowed(num) {
+                    return Ok(None);
+                }
             }
-            call(number).await
+            call(block_id).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_trace_filter<F, Fut, R, TF>(
-    m: &mut RpcModule<()>,
-    filter_fn: F,
-) -> Result<()>
+pub fn register_trace_filter<F, Fut>(m: &mut RpcModule<()>, filter_fn: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(TF) -> Fut,
-    TF: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone + Send + Sync + 'static + Fn(TraceFilter) -> Fut,
+    Fut: Future<Output = RpcResult<Vec<LocalizedTransactionTrace>>> + Send + 'static,
 {
     m.register_async_method("trace_filter", move |params, _conn, _ctx| {
         let call = filter_fn.clone();
         async move {
             let (fv,): (serde_json::Value,) = params.parse()?;
             if filter_has_disallowed_block_range(&fv) {
-                return Ok(None);
+                return Ok(vec![]);
             }
-            let tf: TF = match serde_json::from_value(fv) {
+            let trace_filter: TraceFilter = match serde_json::from_value(fv) {
                 Ok(v) => v,
-                Err(_) => return Ok(None),
+                Err(_) => return Ok(vec![]),
             };
-            call(tf).await
+            call(trace_filter).await
         }
     })?;
     Ok(())
 }
 
-pub fn register_trace_call_many<F, Fut, R, T>(
-    m: &mut RpcModule<()>,
-    call_many_fn: F,
-) -> Result<()>
+pub fn register_trace_call_many<F, Fut>(m: &mut RpcModule<()>, call_many_fn: F) -> Result<()>
 where
-    F: Clone + Send + Sync + 'static + Fn(T, BlockNumberOrTag) -> Fut,
-    T: serde::de::DeserializeOwned + Send + 'static,
-    Fut: Future<Output = RpcResult<Option<R>>> + Send + 'static,
-    R: serde::Serialize + Clone + Send + 'static,
+    F: Clone
+        + Send
+        + Sync
+        + 'static
+        + Fn(Vec<(TransactionRequest, AHashSet<TraceType>)>, Option<BlockId>) -> Fut,
+    Fut: Future<Output = RpcResult<Vec<TraceResults>>> + Send + 'static,
 {
     m.register_async_method("trace_callMany", move |params, _conn, _ctx| {
         let call = call_many_fn.clone();
         async move {
-            let (calls, number): (T, BlockNumberOrTag) = params.parse()?;
-            if is_block_disallowed(&number) {
-                return Ok(None);
+            let (calls, block_id): (
+                Vec<(TransactionRequest, AHashSet<TraceType>)>,
+                Option<BlockId>,
+            ) = params.parse()?;
+            if let Some(BlockId::Number(num)) = &block_id {
+                if is_block_disallowed(num) {
+                    return Ok(vec![]);
+                }
             }
-            call(calls, number).await
+            call(calls, block_id).await
         }
     })?;
     Ok(())
 }
 
-
-pub fn install_all_with_full<
-    // core eth
-    B, Bfut, Br,
-    Tx, Txfut, Txr, I,
-    C, Cfut, Cr,
-    // additional eth
-    Rcp, Rcpfut, Rcpr,
-    Bal, Balfut, Balr, Addr1,
-    Code, Codefut, Coder, Addr2,
-    Sto, Stofut, Stor, Addr3, Slot,
-    TxCnt, TxCntfut, TxCntr, Addr4,
-    Proof, Prooffut, Proofr, Addr5, Slots,
-    NewF, NewFfut, NewFr, Filter1,
-    Call, Callfut, Callr, TxCall,
-    CallM, CallMfut, CallMr, Calls1,
-    Est, Estfut, Estr, TxEst,
-    Fee, Feefut, Feer, Count, Reward,
-    Logs, Logsfut, Logsr, Filter2,
-    // trace
-    TrRep, TrRepfut, TrRepr, TrTypes,
-    TrBlk, TrBlkfut, TrBlkr,
-    TrFilt, TrFilfut, TrFilr, TrFilter,
-    TrCallM, TrCallMfut, TrCallMr, TrCalls,
-    // debug
-    DBlk, DBlkfut, DBlkr, DOpts1,
-    DCall, DCallfut, DCallr, DTx, DOpts2,
-    DStor, DStorfut, DStorr, DA, DB, DC, DD,
-    DCallM, DCallMfut, DCallMr, DCalls, DOpts3,
->(
-    // core eth
-    block_by_number: B,
-    tx_by_block_number_and_index: Tx,
-    block_tx_count_by_number: C,
-    // additional eth
-    get_block_receipts: Rcp,
-    get_balance: Bal,
-    get_code: Code,
-    get_storage_at: Sto,
-    get_tx_count: TxCnt,
-    get_proof: Proof,
-    new_filter: NewF,
-    call_fn: Call,
-    call_many_fn: CallM,
-    estimate_gas_fn: Est,
-    fee_history_fn: Fee,
-    get_logs_fn: Logs,
-    // trace
-    trace_replay_fn: TrRep,
-    trace_block_fn: TrBlk,
-    trace_filter_fn: TrFilt,
-    trace_call_many_fn: TrCallM,
-    // debug
-    debug_trace_block_fn: DBlk,
-    debug_trace_call_fn: DCall,
-    debug_storage_range_at_fn: DStor,
-    debug_trace_call_many_fn: DCallM,
-) -> Result<RpcModule<()>>
+pub fn build_guarded_module<E, T, D, F>(
+    eth: E,
+    trace: T,
+    debug: D,
+    filter: F,
+) -> eyre::Result<RpcModule<()>>
 where
-    // core eth
-    B: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, bool) -> Bfut,
-    Bfut: Future<Output = RpcResult<Option<Br>>> + Send + 'static,
-    Br: serde::Serialize + Clone + Send + 'static,
-    Tx: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, I) -> Txfut,
-    I: serde::de::DeserializeOwned + Send + 'static,
-    Txfut: Future<Output = RpcResult<Option<Txr>>> + Send + 'static,
-    Txr: serde::Serialize + Clone + Send + 'static,
-    C: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag) -> Cfut,
-    Cfut: Future<Output = RpcResult<Option<Cr>>> + Send + 'static,
-    Cr: serde::Serialize + Clone + Send + 'static,
-    // additional eth
-    Rcp: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag) -> Rcpfut,
-    Rcpfut: Future<Output = RpcResult<Option<Rcpr>>> + Send + 'static,
-    Rcpr: serde::Serialize + Clone + Send + 'static,
-    Bal: Clone + Send + Sync + 'static + Fn(Addr1, BlockNumberOrTag) -> Balfut,
-    Addr1: serde::de::DeserializeOwned + Send + 'static,
-    Balfut: Future<Output = RpcResult<Option<Balr>>> + Send + 'static,
-    Balr: serde::Serialize + Clone + Send + 'static,
-    Code: Clone + Send + Sync + 'static + Fn(Addr2, BlockNumberOrTag) -> Codefut,
-    Addr2: serde::de::DeserializeOwned + Send + 'static,
-    Codefut: Future<Output = RpcResult<Option<Coder>>> + Send + 'static,
-    Coder: serde::Serialize + Clone + Send + 'static,
-    Sto: Clone + Send + Sync + 'static + Fn(Addr3, Slot, BlockNumberOrTag) -> Stofut,
-    Addr3: serde::de::DeserializeOwned + Send + 'static,
-    Slot: serde::de::DeserializeOwned + Send + 'static,
-    Stofut: Future<Output = RpcResult<Option<Stor>>> + Send + 'static,
-    Stor: serde::Serialize + Clone + Send + 'static,
-    TxCnt: Clone + Send + Sync + 'static + Fn(Addr4, BlockNumberOrTag) -> TxCntfut,
-    Addr4: serde::de::DeserializeOwned + Send + 'static,
-    TxCntfut: Future<Output = RpcResult<Option<TxCntr>>> + Send + 'static,
-    TxCntr: serde::Serialize + Clone + Send + 'static,
-    Proof: Clone + Send + Sync + 'static + Fn(Addr5, Slots, BlockNumberOrTag) -> Prooffut,
-    Addr5: serde::de::DeserializeOwned + Send + 'static,
-    Slots: serde::de::DeserializeOwned + Send + 'static,
-    Prooffut: Future<Output = RpcResult<Option<Proofr>>> + Send + 'static,
-    Proofr: serde::Serialize + Clone + Send + 'static,
-    NewF: Clone + Send + Sync + 'static + Fn(Filter1) -> NewFfut,
-    Filter1: serde::de::DeserializeOwned + Send + 'static,
-    NewFfut: Future<Output = RpcResult<Option<NewFr>>> + Send + 'static,
-    NewFr: serde::Serialize + Clone + Send + 'static,
-    Call: Clone + Send + Sync + 'static + Fn(TxCall, BlockNumberOrTag) -> Callfut,
-    TxCall: serde::de::DeserializeOwned + Send + 'static,
-    Callfut: Future<Output = RpcResult<Option<Callr>>> + Send + 'static,
-    Callr: serde::Serialize + Clone + Send + 'static,
-    CallM: Clone + Send + Sync + 'static + Fn(Calls1, BlockNumberOrTag) -> CallMfut,
-    Calls1: serde::de::DeserializeOwned + Send + 'static,
-    CallMfut: Future<Output = RpcResult<Option<CallMr>>> + Send + 'static,
-    CallMr: serde::Serialize + Clone + Send + 'static,
-    Est: Clone + Send + Sync + 'static + Fn(TxEst, BlockNumberOrTag) -> Estfut,
-    TxEst: serde::de::DeserializeOwned + Send + 'static,
-    Estfut: Future<Output = RpcResult<Option<Estr>>> + Send + 'static,
-    Estr: serde::Serialize + Clone + Send + 'static,
-    Fee: Clone + Send + Sync + 'static + Fn(Count, BlockNumberOrTag, Reward) -> Feefut,
-    Count: serde::de::DeserializeOwned + Send + 'static,
-    Reward: serde::de::DeserializeOwned + Send + 'static,
-    Feefut: Future<Output = RpcResult<Option<Feer>>> + Send + 'static,
-    Feer: serde::Serialize + Clone + Send + 'static,
-    Logs: Clone + Send + Sync + 'static + Fn(Filter2) -> Logsfut,
-    Filter2: serde::de::DeserializeOwned + Send + 'static,
-    Logsfut: Future<Output = RpcResult<Option<Logsr>>> + Send + 'static,
-    Logsr: serde::Serialize + Clone + Send + 'static,
-    // trace
-    TrRep: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, TrTypes) -> TrRepfut,
-    TrTypes: serde::de::DeserializeOwned + Send + 'static,
-    TrRepfut: Future<Output = RpcResult<Option<TrRepr>>> + Send + 'static,
-    TrRepr: serde::Serialize + Clone + Send + 'static,
-    TrBlk: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag) -> TrBlkfut,
-    TrBlkfut: Future<Output = RpcResult<Option<TrBlkr>>> + Send + 'static,
-    TrBlkr: serde::Serialize + Clone + Send + 'static,
-    TrFilt: Clone + Send + Sync + 'static + Fn(TrFilter) -> TrFilfut,
-    TrFilter: serde::de::DeserializeOwned + Send + 'static,
-    TrFilfut: Future<Output = RpcResult<Option<TrFilr>>> + Send + 'static,
-    TrFilr: serde::Serialize + Clone + Send + 'static,
-    TrCallM: Clone + Send + Sync + 'static + Fn(TrCalls, BlockNumberOrTag) -> TrCallMfut,
-    TrCalls: serde::de::DeserializeOwned + Send + 'static,
-    TrCallMfut: Future<Output = RpcResult<Option<TrCallMr>>> + Send + 'static,
-    TrCallMr: serde::Serialize + Clone + Send + 'static,
-    // debug
-    DBlk: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, DOpts1) -> DBlkfut,
-    DOpts1: serde::de::DeserializeOwned + Send + 'static,
-    DBlkfut: Future<Output = RpcResult<Option<DBlkr>>> + Send + 'static,
-    DBlkr: serde::Serialize + Clone + Send + 'static,
-    DCall: Clone + Send + Sync + 'static + Fn(DTx, DOpts2, BlockNumberOrTag) -> DCallfut,
-    DTx: serde::de::DeserializeOwned + Send + 'static,
-    DOpts2: serde::de::DeserializeOwned + Send + 'static,
-    DCallfut: Future<Output = RpcResult<Option<DCallr>>> + Send + 'static,
-    DCallr: serde::Serialize + Clone + Send + 'static,
-    DStor: Clone + Send + Sync + 'static + Fn(BlockNumberOrTag, DA, DB, DC, DD) -> DStorfut,
-    DA: serde::de::DeserializeOwned + Send + 'static,
-    DB: serde::de::DeserializeOwned + Send + 'static,
-    DC: serde::de::DeserializeOwned + Send + 'static,
-    DD: serde::de::DeserializeOwned + Send + 'static,
-    DStorfut: Future<Output = RpcResult<Option<DStorr>>> + Send + 'static,
-    DStorr: serde::Serialize + Clone + Send + 'static,
-    DCallM: Clone + Send + Sync + 'static + Fn(DCalls, DOpts3, BlockNumberOrTag) -> DCallMfut,
-    DCalls: serde::de::DeserializeOwned + Send + 'static,
-    DOpts3: serde::de::DeserializeOwned + Send + 'static,
-    DCallMfut: Future<Output = RpcResult<Option<DCallMr>>> + Send + 'static,
-    DCallMr: serde::Serialize + Clone + Send + 'static,
+    E: FullEthApiServer + EthApiTypes + Clone + Send + Sync + 'static,
+    T: TraceApiServer + Clone + Send + Sync + 'static,
+    D: DebugApiServer + Clone + Send + Sync + 'static,
+    F: EthFilterApiServer<RpcTransaction<E::NetworkTypes>> + Clone + Send + Sync + 'static,
 {
     let mut m = RpcModule::new(());
-    let block_by_number_for_uncles = block_by_number.clone();
-    register_eth_get_block_by_number(&mut m, block_by_number)?;
-    register_eth_get_transaction_by_block_number_and_index(&mut m, tx_by_block_number_and_index)?;
-    register_eth_get_block_transaction_count_by_number(&mut m, block_tx_count_by_number)?;
-    register_eth_get_uncle_count_by_block_number_via_block(&mut m, block_by_number_for_uncles)?;
+    let eth_clone = eth.clone();
+    register_eth_get_block_by_number(&mut m, move |n, full| {
+        let eth = eth_clone.clone();
+        async move { eth.block_by_number(n, full).await }
+    })?;
 
-    register_eth_get_block_receipts(&mut m, get_block_receipts)?;
-    register_eth_get_balance(&mut m, get_balance)?;
-    register_eth_get_code(&mut m, get_code)?;
-    register_eth_get_storage_at(&mut m, get_storage_at)?;
-    register_eth_get_transaction_count(&mut m, get_tx_count)?;
-    register_eth_get_proof(&mut m, get_proof)?;
-    register_eth_new_filter(&mut m, new_filter)?;
-    register_eth_call(&mut m, call_fn)?;
-    register_eth_call_many(&mut m, call_many_fn)?;
-    register_eth_estimate_gas(&mut m, estimate_gas_fn)?;
-    register_eth_fee_history(&mut m, fee_history_fn)?;
-    register_eth_get_logs(&mut m, get_logs_fn)?;
+    let eth_clone = eth.clone();
+    register_eth_get_transaction_by_block_number_and_index(&mut m, move |n, i| {
+        let eth = eth_clone.clone();
+        async move { eth.transaction_by_block_number_and_index(n, i).await }
+    })?;
 
-    register_trace_replay_block_transactions(&mut m, trace_replay_fn)?;
-    register_trace_block(&mut m, trace_block_fn)?;
-    register_trace_filter(&mut m, trace_filter_fn)?;
-    register_trace_call_many(&mut m, trace_call_many_fn)?;
+    let eth_clone = eth.clone();
+    register_eth_get_block_transaction_count_by_number(&mut m, move |n| {
+        let eth = eth_clone.clone();
+        async move { eth.block_transaction_count_by_number(n).await }
+    })?;
 
-    register_debug_trace_block_by_number(&mut m, debug_trace_block_fn)?;
-    register_debug_trace_call(&mut m, debug_trace_call_fn)?;
-    register_debug_storage_range_at(&mut m, debug_storage_range_at_fn)?;
-    register_debug_trace_call_many(&mut m, debug_trace_call_many_fn)?;
+    let eth_clone = eth.clone();
+    register_eth_get_uncle_count_by_block_number_via_block(&mut m, move |n, full| {
+        let eth = eth_clone.clone();
+        async move { eth.block_by_number(n, full).await }
+    })?;
 
+    let eth_clone = eth.clone();
+    register_eth_get_block_receipts(&mut m, move |id| {
+        let eth = eth_clone.clone();
+        async move { EthApiServer::block_receipts(&eth, id).await }
+    })?;
+
+    let eth_clone = eth.clone();
+    register_eth_get_balance(&mut m, move |addr, block| {
+        let eth = eth_clone.clone();
+        async move { EthApiServer::balance(&eth, addr, block).await }
+    })?;
+
+    let eth_clone = eth.clone();
+    register_eth_get_code(&mut m, move |addr, block| {
+        let eth = eth_clone.clone();
+        async move { EthApiServer::get_code(&eth, addr, block).await }
+    })?;
+
+    let eth_clone = eth.clone();
+    register_eth_get_storage_at(&mut m, move |addr, slot, block| {
+        let eth = eth_clone.clone();
+        async move { EthApiServer::storage_at(&eth, addr, slot, block).await }
+    })?;
+
+    let eth_clone = eth.clone();
+    register_eth_get_transaction_count(&mut m, move |addr, block| {
+        let eth = eth_clone.clone();
+        async move {
+            match EthApiServer::transaction_count(&eth, addr, block).await {
+                Ok(count) => Ok(U64::from(count.to::<u64>())),
+                Err(e) => Err(e),
+            }
+        }
+    })?;
+
+    let eth_clone = eth.clone();
+    register_eth_get_proof(&mut m, move |addr, slots, block| {
+        let eth = eth_clone.clone();
+        async move {
+            let storage_keys: Vec<JsonStorageKey> =
+                slots.into_iter().map(JsonStorageKey::from).collect();
+            EthApiServer::get_proof(&eth, addr, storage_keys, block).await
+        }
+    })?;
+
+    let eth_clone = eth.clone();
+    register_eth_call(
+        &mut m,
+        move |request, block, state_overrides, block_overrides| {
+            let eth = eth_clone.clone();
+            async move {
+                EthApiServer::call(&eth, request, block, state_overrides, block_overrides).await
+            }
+        },
+    )?;
+
+    let eth_clone = eth.clone();
+    register_eth_call_many(&mut m, move |calls, state_context, state_override| {
+        let eth = eth_clone.clone();
+        async move { EthApiServer::call_many(&eth, calls, state_context, state_override).await }
+    })?;
+
+    let eth_clone = eth.clone();
+    register_eth_estimate_gas(&mut m, move |request, block, state_override| {
+        let eth = eth_clone.clone();
+        async move { EthApiServer::estimate_gas(&eth, request, block, state_override).await }
+    })?;
+
+    let eth_clone = eth.clone();
+    register_eth_fee_history(
+        &mut m,
+        move |block_count, newest_block, reward_percentiles| {
+            let eth = eth_clone.clone();
+            async move {
+                EthApiServer::fee_history(&eth, block_count, newest_block, reward_percentiles).await
+            }
+        },
+    )?;
+
+    let filter_clone = filter.clone();
+    register_eth_get_logs(&mut m, move |filt| {
+        let filter_api = filter_clone.clone();
+        async move {
+            EthFilterApiServer::<RpcTransaction<E::NetworkTypes>>::logs(&filter_api, filt).await
+        }
+    })?;
+
+    let filter_clone = filter.clone();
+    register_eth_new_filter(&mut m, move |filt| {
+        let filter_api = filter_clone.clone();
+        async move {
+            EthFilterApiServer::<RpcTransaction<E::NetworkTypes>>::new_filter(&filter_api, filt)
+                .await
+        }
+    })?;
+
+    let trace_clone = trace.clone();
+    register_trace_replay_block_transactions(&mut m, move |block_id, trace_types| {
+        let trace = trace_clone.clone();
+        async move { TraceApiServer::replay_block_transactions(&trace, block_id, trace_types).await }
+    })?;
+    let debug_clone = debug.clone();
+    register_debug_trace_block_by_number(&mut m, move |block_number, opts| {
+        let debug = debug_clone.clone();
+        async move { DebugApiServer::debug_trace_block_by_number(&debug, block_number, opts).await }
+    })?;
+
+    let debug_clone = debug.clone();
+    register_debug_trace_call(&mut m, move |request, block_number, opts| {
+        let debug = debug_clone.clone();
+        async move { DebugApiServer::debug_trace_call(&debug, request, block_number, opts).await }
+    })?;
+
+    let debug_clone = debug.clone();
+    register_debug_trace_call_many(&mut m, move |calls, state_context, opts| {
+        let debug = debug_clone.clone();
+        async move { DebugApiServer::debug_trace_call_many(&debug, calls, state_context, opts).await }
+    })?;
+    let trace_clone = trace.clone();
+    register_trace_block(&mut m, move |block_id| {
+        let trace = trace_clone.clone();
+        async move { TraceApiServer::trace_block(&trace, block_id).await }
+    })?;
+
+    let trace_clone = trace.clone();
+    register_trace_filter(&mut m, move |trace_filter| {
+        let trace = trace_clone.clone();
+        async move { TraceApiServer::trace_filter(&trace, trace_filter).await }
+    })?;
+
+    let trace_clone = trace.clone();
+    register_trace_call_many(&mut m, move |calls, block_id| {
+        let trace = trace_clone.clone();
+        async move { TraceApiServer::trace_call_many(&trace, calls, block_id).await }
+    })?;
     Ok(m)
 }
-
-pub fn build_guarded_module<E, T, D>(_eth: E, _trace: T, _debug: D) -> eyre::Result<RpcModule<()>>
-where
-    E: Clone + Send + Sync + 'static,
-    T: Clone + Send + Sync + 'static,
-    D: Clone + Send + Sync + 'static,
-{
-    install_all_with_full(
-        // core eth as no-ops (guards still apply)
-        move |_n: alloy_eips::BlockNumberOrTag, _f: bool| async move { Ok(None::<serde_json::Value>) },
-        move |_n: alloy_eips::BlockNumberOrTag, _i: serde_json::Value| async move { Ok(None::<serde_json::Value>) },
-        move |_n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        // additional eth as no-ops (guards still apply)
-        move |_n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_addr: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_addr: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_addr: serde_json::Value, _slot: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_addr: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_addr: serde_json::Value, _slots: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_filter: serde_json::Value| async move { Ok(None::<serde_json::Value>) },
-        move |_tx: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_calls: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_tx: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_count: serde_json::Value, _n: alloy_eips::BlockNumberOrTag, _reward: serde_json::Value| async move { Ok(None::<serde_json::Value>) },
-        move |_filter: serde_json::Value| async move { Ok(None::<serde_json::Value>) },
-        // trace as no-ops
-        move |_n: alloy_eips::BlockNumberOrTag, _types: serde_json::Value| async move { Ok(None::<serde_json::Value>) },
-        move |_n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_tf: serde_json::Value| async move { Ok(None::<serde_json::Value>) },
-        move |_calls: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        // debug as no-ops
-        move |_n: alloy_eips::BlockNumberOrTag, _opts: serde_json::Value| async move { Ok(None::<serde_json::Value>) },
-        move |_tx: serde_json::Value, _opts: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-        move |_n: alloy_eips::BlockNumberOrTag, _a: serde_json::Value, _b: serde_json::Value, _c: serde_json::Value, _d: serde_json::Value| async move { Ok(None::<serde_json::Value>) },
-        move |_calls: serde_json::Value, _opts: serde_json::Value, _n: alloy_eips::BlockNumberOrTag| async move { Ok(None::<serde_json::Value>) },
-    )
-}
-
