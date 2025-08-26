@@ -13,6 +13,7 @@ use alloy_evm::{
 use alloy_evm::{Database, Evm};
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_evm::block::calc::{base_block_reward, block_reward, ommer_reward};
+use reth_evm::block::CommitChanges;
 use reth_evm::{
     block::{
         BlockExecutor, BlockExecutorFactory, BlockExecutorFor, StateChangePostBlockSource,
@@ -121,9 +122,7 @@ where
     fn execute_transaction_with_commit_condition(
         &mut self,
         tx: impl ExecutableTx<Self>,
-        f: impl FnOnce(
-            &ExecutionResult<<Self::Evm as Evm>::HaltReason>,
-        ) -> reth_evm::block::CommitChanges,
+        f: impl FnOnce(&ExecutionResult<<Self::Evm as Evm>::HaltReason>) -> CommitChanges,
     ) -> Result<Option<u64>, BlockExecutionError> {
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
         // must be no greater than the block's gasLimit.
@@ -142,7 +141,7 @@ where
         // Execute transaction.
         let ResultAndState { result, state } = self
             .evm
-            .transact(tx)
+            .transact(&tx)
             .map_err(|err| BlockExecutionError::evm(err, tx.tx().trie_hash()))?;
 
         if !f(&result).should_commit() {

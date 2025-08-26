@@ -1,6 +1,6 @@
 use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
-use alloy_consensus::Header;
+use alloy_consensus::{BlockHeader as _, Header};
 use alloy_rlp::Decodable;
 use reth::tokio_runtime;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
@@ -9,16 +9,18 @@ use reth_db::table::{Decompress, Table};
 use reth_db::tables;
 use reth_db_common::init::init_from_state_dump;
 use reth_db_common::DbTool;
+use reth_errors::ProviderError;
 use reth_primitives::{SealedHeader, StaticFileSegment};
 use reth_provider::{
-    BlockNumReader, DatabaseProviderFactory, StaticFileProviderFactory, StaticFileWriter,
+    BlockHashReader as _, BlockNumReader, DatabaseProviderFactory, HeaderProvider as _,
+    StaticFileProviderFactory, StaticFileWriter,
 };
 use revm_primitives::{B256, U256};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use tracing::info;
+use tracing::{error, info};
 
 const IMPORTED_FLAG: &str = "imported.flag";
 
