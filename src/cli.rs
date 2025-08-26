@@ -161,7 +161,7 @@ where
     pub fn with_runner_and_components(
         mut self,
         runner: CliRunner,
-        components: impl CliComponentsBuilder<GnosisNode>,
+        _components: impl CliComponentsBuilder<GnosisNode>,
         launcher: impl AsyncFnOnce(
             WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>,
             Ext,
