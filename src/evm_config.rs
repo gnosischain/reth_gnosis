@@ -1,11 +1,11 @@
-use alloy_consensus::{BlockHeader, Header};
+use alloy_consensus::BlockHeader;
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Address, U256};
+use gnosis_primitives::header::GnosisHeader;
 use reth::rpc::types::engine::ExecutionData;
-use reth_ethereum_primitives::Block;
 use reth_evm::eth::EthBlockExecutionCtx;
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
-use reth_primitives::{EthPrimitives, TxTy};
+use reth_primitives::TxTy;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
 use reth_provider::errors::any::AnyError;
 use revm::context_interface::block::BlobExcessGasAndPrice;
@@ -24,6 +24,8 @@ use crate::blobs::{get_blob_params, next_blob_gas_and_price};
 use crate::block::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
+use crate::primitives::block::Block as GnosisBlock;
+use crate::primitives::GnosisNodePrimitives;
 use crate::spec::gnosis_spec::GnosisChainSpec;
 
 /// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
@@ -70,7 +72,7 @@ impl GnosisEvmConfig {
             .config
             .extra_fields
             .get("blockRewardsContract")
-            .expect("no eip1559collector field");
+            .expect("no blockRewardsContract field");
         let block_rewards_address: Address = serde_json::from_value(block_rewards_address.clone())
             .expect("failed to parse eip1559collector field");
 
@@ -101,7 +103,7 @@ impl GnosisEvmConfig {
 }
 
 impl ConfigureEvm for GnosisEvmConfig {
-    type Primitives = EthPrimitives;
+    type Primitives = GnosisNodePrimitives;
     type Error = Infallible;
     type NextBlockEnvCtx = NextBlockEnvAttributes;
     type BlockExecutorFactory =
@@ -116,7 +118,7 @@ impl ConfigureEvm for GnosisEvmConfig {
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &Header) -> EvmEnv {
+    fn evm_env(&self, header: &GnosisHeader) -> EvmEnv {
         let spec = revm_spec(self.chain_spec(), header);
 
         // configure evm env based on parent block
@@ -149,7 +151,7 @@ impl ConfigureEvm for GnosisEvmConfig {
 
     fn next_evm_env(
         &self,
-        parent: &Header,
+        parent: &GnosisHeader,
         attributes: &NextBlockEnvAttributes,
     ) -> Result<EvmEnv, Self::Error> {
         // ensure we're not missing any timestamp based hardforks
@@ -194,18 +196,21 @@ impl ConfigureEvm for GnosisEvmConfig {
         Ok((cfg, block_env).into())
     }
 
-    fn context_for_block<'a>(&self, block: &'a SealedBlock<Block>) -> EthBlockExecutionCtx<'a> {
+    fn context_for_block<'a>(
+        &self,
+        block: &'a SealedBlock<GnosisBlock>,
+    ) -> EthBlockExecutionCtx<'a> {
         EthBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
-            ommers: &block.body().ommers,
+            ommers: &[],
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
         }
     }
 
     fn context_for_next_block(
         &self,
-        parent: &SealedHeader,
+        parent: &SealedHeader<GnosisHeader>,
         attributes: Self::NextBlockEnvCtx,
     ) -> EthBlockExecutionCtx<'_> {
         EthBlockExecutionCtx {

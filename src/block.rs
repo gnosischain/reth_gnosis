@@ -113,9 +113,9 @@ where
         self.evm.db_mut().set_state_clear_flag(state_clear_flag);
 
         self.system_caller
-            .apply_beacon_root_contract_call(self.ctx.parent_beacon_block_root, &mut self.evm)?;
-        self.system_caller
             .apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
+        self.system_caller
+            .apply_beacon_root_contract_call(self.ctx.parent_beacon_block_root, &mut self.evm)?;
         Ok(())
     }
 
@@ -198,7 +198,7 @@ where
 
         let requests = if self
             .spec
-            .is_prague_active_at_timestamp(self.evm.block().timestamp.to())
+            .is_prague_active_at_timestamp(self.evm.block().timestamp.saturating_to())
         {
             // Collect all EIP-6110 deposits
             let deposit_requests = parse_deposits_from_receipts(&self.spec, &self.receipts)?;

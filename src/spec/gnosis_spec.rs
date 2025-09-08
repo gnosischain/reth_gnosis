@@ -3,10 +3,10 @@ use std::sync::Arc;
 use core::fmt::Display;
 
 use crate::blobs::gnosis_blob_schedule;
-use alloy_consensus::Header;
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use derive_more::{Constructor, Deref, From, Into};
+use gnosis_primitives::header::GnosisHeader;
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, ChainHardforks, ChainSpec,
     ChainSpecBuilder, DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks,
@@ -17,12 +17,13 @@ use reth_ethereum_forks::hardfork;
 use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use reth_primitives::SealedHeader;
-use revm_primitives::{b256, Address, B256, U256};
+use revm_primitives::{b256, Address, FixedBytes, B256, U256};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Chain {
     Gnosis,
     Chiado,
+    Devnet,
 }
 
 impl Chain {
@@ -30,12 +31,13 @@ impl Chain {
         match chain_id {
             100 => Some(Chain::Gnosis),
             10200 => Some(Chain::Chiado),
+            10209 => Some(Chain::Devnet),
             _ => None,
         }
     }
 }
 
-use super::chains::{CHIADO_GENESIS, GNOSIS_GENESIS};
+use super::chains::{CHIADO_GENESIS, DEVNET_GENESIS, GNOSIS_GENESIS};
 
 const GNOSIS_NODES: &[&str] = &[
     "enode://6765fff89db92aa8d923e28c438af626c8ae95a43093cdccbd6f550a7b6ce6ab5d1a3dc60dd79af3e6d2c2e6731bae629f0e54446a0d9da408c4eca7ebcd8485@3.75.159.31:30303",
@@ -69,6 +71,14 @@ const CHIADO_NODES: &[&str] = &[
     "enode://f7e62226a64a2ccc0ada8b032b33c4389464562f87135a3e0d5bdb814fab717d58db5d142c453b071d08b4e0ffd9c5aff4a6d4441c2041401634f10d7962f885@35.210.126.23:30303",
 ];
 
+const DEVNET_NODES: &[&str] = &[
+    "enode://e0aca04df902ec16d58e83bd24bfecf3e4b994ad046f78c27767163cc8863d7d36efdd18b7ad4fd71df69879effa17f1c4198432276f344ccf156c74c68b94fd@45.79.198.98:30303",
+    "enode://1597b12ff8d72a6bbc3c588dfae16d6e95b138604fdb907e2523d8e20b51a09ea80f6b83bfa8c0a352229d766d3c7d1161826f04cb8e472310f5038fcd2a5d6b@173.230.131.157:30303",
+    "enode://6fca333d089c3f52ce80414eed847697547f7ccafdf05b18f07f24691943b0f20669f59cdb84c7bcaa7d9f9d1398702b6efa12ca1428d4f873e3a656cb28422e@172.105.158.35:30303",
+    "enode://ac6e15c5cbe9a79b133003a4305b9b30b59a55983bb55bf9cb767141194e042252bf068ad38180e04f8a9bfcdfe26d78f73d5a255c375fbd360f8cfa5d7233c1@74.207.226.212:30303",
+    "enode://e8659d15f8a25a5680d68a793d7bf31427e18848d65db9d9939fad17aee7c1cf70e8fd27128bc57de8b998445e102e8ef68a6796a52ef758f132ac347cb57436@139.177.206.215:30303"
+];
+
 hardfork!(
     /// The name of an gnosis hardfork.
     ///
@@ -88,7 +98,10 @@ fn genesis_hash(chain_id: u64, chainspec_genesis_hash: B256) -> B256 {
         Some(Chain::Chiado) => {
             b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
         }
-        None => chainspec_genesis_hash,
+        Some(Chain::Devnet) => {
+            b256!("c0cc2021e9958be549f46578491e7e6b0c7317b3c08ca23fe6da0f4dbe7ab7a6")
+        }
+        _ => chainspec_genesis_hash,
     }
 }
 
@@ -103,11 +116,13 @@ pub struct GnosisChainSpecBuilder {
 #[derive(Debug, Clone, Default, Deref, Into, Constructor, PartialEq, Eq)]
 pub struct GnosisChainSpec {
     /// [`ChainSpec`].
+    #[deref]
     pub inner: ChainSpec,
+    pub genesis_header: SealedHeader<GnosisHeader>,
 }
 
 impl EthChainSpec for GnosisChainSpec {
-    type Header = Header;
+    type Header = GnosisHeader;
 
     fn chain(&self) -> alloy_chains::Chain {
         self.inner.chain()
@@ -126,7 +141,7 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn genesis_hash(&self) -> B256 {
-        self.inner.genesis_hash()
+        self.genesis_header.hash()
     }
 
     fn prune_delete_limit(&self) -> usize {
@@ -138,7 +153,7 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn genesis_header(&self) -> &Self::Header {
-        self.inner.genesis_header()
+        &self.genesis_header
     }
 
     fn genesis(&self) -> &Genesis {
@@ -150,6 +165,7 @@ impl EthChainSpec for GnosisChainSpec {
             match chain {
                 Chain::Gnosis => Some(parse_nodes(GNOSIS_NODES)),
                 Chain::Chiado => Some(parse_nodes(CHIADO_NODES)),
+                Chain::Devnet => Some(parse_nodes(DEVNET_NODES)),
             }
         } else {
             None
@@ -453,6 +469,13 @@ impl From<Genesis> for GnosisChainSpec {
 
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
+        let mut genesis_header = GnosisHeader::from(make_genesis_header(&genesis, &hardforks));
+        genesis_header.mix_hash = None;
+        genesis_header.nonce = None;
+        genesis_header.aura_seal = Some(FixedBytes::<65>::ZERO);
+        genesis_header.aura_step = Some(U256::ZERO);
+        let genesis_header = SealedHeader::new_unhashed(genesis_header);
+
         Self {
             inner: ChainSpec {
                 chain: genesis.config.chain_id.into(),
@@ -467,6 +490,7 @@ impl From<Genesis> for GnosisChainSpec {
                 base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
                 ..Default::default()
             },
+            genesis_header,
         }
     }
 }
@@ -497,6 +521,7 @@ pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::E
         "dev" => Arc::new(GnosisChainSpec::from(Genesis::default())),
         "chiado" => Arc::new(GnosisChainSpec::from(CHIADO_GENESIS.clone())),
         "gnosis" => Arc::new(GnosisChainSpec::from(GNOSIS_GENESIS.clone())),
+        "devnet" => Arc::new(GnosisChainSpec::from(DEVNET_GENESIS.clone())),
         _ => Arc::new(parse_genesis(s)?.into()),
     })
 }

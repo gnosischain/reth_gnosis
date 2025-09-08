@@ -135,7 +135,7 @@ where
             kind: TxKind::Call(contract),
             // Explicitly set nonce to 0 so revm does not do any nonce checks
             nonce: 0,
-            gas_limit: 30_000_000,
+            gas_limit: 16_777_216,
             value: U256::ZERO,
             data,
             // Setting the gas price to zero enforces that no value is transferred as part of the
@@ -166,6 +166,7 @@ where
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
 
         let mut res = self.transact(tx);
+        // dbg!(&res);
 
         // swap back to the previous gas limit
         core::mem::swap(&mut self.block.gas_limit, &mut gas_limit);

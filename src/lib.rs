@@ -1,38 +1,38 @@
 // use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
+use gnosis_primitives::header::GnosisHeader;
 use network::GnosisNetworkBuilder;
 use payload_builder::GnosisPayloadBuilder;
 use pool::GnosisPoolBuilder;
-use reth::{
-    api::{AddOnsContext, FullNodeComponents},
-    rpc::types::engine::ExecutionData,
-};
-use reth_chainspec::{EthereumHardforks, Hardforks};
+use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
-use reth_ethereum_engine_primitives::{
-    EthBuiltPayload, EthPayloadAttributes, EthPayloadBuilderAttributes,
-};
+use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
 use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
     },
     rpc::{PayloadValidatorBuilder, RpcAddOns},
-    BuilderContext, EngineTypes, FullNodeTypes, Node, NodeAdapter, NodeTypes, PayloadTypes,
+    BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeTypes, PayloadTypes,
 };
-use reth_node_ethereum::{EthEngineTypes, EthereumEngineValidator, EthereumEthApiBuilder};
-use reth_primitives::EthPrimitives;
+use reth_node_ethereum::EthereumEthApiBuilder;
 use reth_provider::EthStorage;
 use spec::gnosis_spec::GnosisChainSpec;
 use std::sync::Arc;
 
-use crate::rpc::GnosisNetwork;
+use crate::{
+    engine::{GnosisEngineTypes, GnosisEngineValidator},
+    payload::GnosisBuiltPayload,
+    rpc::GnosisNetwork,
+};
+use primitives::{block::TransactionSigned, GnosisNodePrimitives};
 
 mod blobs;
 mod block;
 mod build;
 pub mod cli;
+mod engine;
 mod errors;
 mod evm;
 mod evm_config;
@@ -42,6 +42,7 @@ mod network;
 mod payload;
 mod payload_builder;
 mod pool;
+pub mod primitives;
 mod rpc;
 pub mod spec;
 mod testing;
@@ -82,9 +83,9 @@ impl GnosisNode {
         Node: FullNodeTypes<
             Types: NodeTypes<
                 ChainSpec = GnosisChainSpec,
-                Primitives = EthPrimitives,
+                Primitives = GnosisNodePrimitives,
                 Payload: PayloadTypes<
-                    BuiltPayload = EthBuiltPayload,
+                    BuiltPayload = GnosisBuiltPayload,
                     PayloadAttributes = EthPayloadAttributes,
                     PayloadBuilderAttributes = EthPayloadBuilderAttributes,
                 >,
@@ -103,10 +104,10 @@ impl GnosisNode {
 
 /// Configure the node types
 impl NodeTypes for GnosisNode {
-    type Primitives = EthPrimitives;
+    type Primitives = GnosisNodePrimitives;
     type ChainSpec = GnosisChainSpec;
-    type Storage = EthStorage;
-    type Payload = EthEngineTypes;
+    type Storage = EthStorage<TransactionSigned, GnosisHeader>;
+    type Payload = GnosisEngineTypes;
 }
 
 /// Add-ons w.r.t. gnosis
@@ -145,7 +146,9 @@ pub struct GnosisExecutorBuilder;
 
 impl<Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
+    Node: FullNodeTypes<
+        Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+    >,
 {
     type EVM = GnosisEvmConfig;
 
@@ -163,9 +166,11 @@ pub struct GnosisConsensusBuilder;
 
 impl<Node> ConsensusBuilder<Node> for GnosisConsensusBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
+    Node: FullNodeTypes<
+        Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+    >,
 {
-    type Consensus = Arc<dyn FullConsensus<EthPrimitives, Error = ConsensusError>>;
+    type Consensus = Arc<dyn FullConsensus<GnosisNodePrimitives, Error = ConsensusError>>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
         Ok(Arc::new(EthBeaconConsensus::new(ctx.chain_spec())))
@@ -180,16 +185,17 @@ pub struct GnosisEngineValidatorBuilder;
 impl<Node, Types> PayloadValidatorBuilder<Node> for GnosisEngineValidatorBuilder
 where
     Types: NodeTypes<
-        ChainSpec: Hardforks + EthereumHardforks + Clone + 'static,
-        Payload: EngineTypes<ExecutionData = ExecutionData>
-                     + PayloadTypes<PayloadAttributes = EthPayloadAttributes>,
-        Primitives = EthPrimitives,
+        Payload = GnosisEngineTypes,
+        ChainSpec = GnosisChainSpec,
+        Primitives = GnosisNodePrimitives,
     >,
     Node: FullNodeComponents<Types = Types>,
 {
-    type Validator = EthereumEngineValidator<Types::ChainSpec>;
+    type Validator = GnosisEngineValidator;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
-        Ok(EthereumEngineValidator::new(ctx.config.chain.clone()))
+        Ok(GnosisEngineValidator::new(Arc::new(
+            ctx.config.chain.inner.clone(),
+        )))
     }
 }

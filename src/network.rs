@@ -3,14 +3,16 @@ use reth::{
     builder::{components::NetworkBuilder, BuilderContext},
     network::{NetworkHandle, NetworkManager, PeersInfo},
 };
-use reth_eth_wire_types::UnifiedStatus;
+use reth_eth_wire_types::{BasicNetworkPrimitives, UnifiedStatus};
 use reth_ethereum_primitives::PooledTransactionVariant;
-use reth_primitives::EthPrimitives;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
 
-use crate::spec::gnosis_spec::GnosisChainSpec;
+use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
+
+pub type GnosisNetworkPrimitives =
+    BasicNetworkPrimitives<GnosisNodePrimitives, PooledTransactionVariant>;
 
 /// A basic ethereum payload service.
 #[derive(Debug, Default, Clone, Copy)]
@@ -20,7 +22,9 @@ pub struct GnosisNetworkBuilder {
 
 impl<Node, Pool> NetworkBuilder<Node, Pool> for GnosisNetworkBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
+    Node: FullNodeTypes<
+        Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+    >,
     Pool: TransactionPool<
             Transaction: PoolTransaction<
                 Consensus = TxTy<Node::Types>,
@@ -29,13 +33,13 @@ where
         > + Unpin
         + 'static,
 {
-    type Network = NetworkHandle;
+    type Network = NetworkHandle<GnosisNetworkPrimitives>;
 
     async fn build_network(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-    ) -> eyre::Result<NetworkHandle> {
+    ) -> eyre::Result<NetworkHandle<GnosisNetworkPrimitives>> {
         let mut network_config = ctx.network_config()?;
 
         let spec = ctx.chain_spec();
@@ -49,7 +53,14 @@ where
             10200 => {
                 b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
             }
-            _ => spec.genesis_hash(),
+            10209 => {
+                b256!("c0cc2021e9958be549f46578491e7e6b0c7317b3c08ca23fe6da0f4dbe7ab7a6")
+            }
+            _ => {
+                let genhash = spec.genesis_hash();
+                dbg!(">>>>>> Using genesis hash from chainspec: {}", genhash);
+                genhash
+            }
         };
 
         let status = UnifiedStatus::builder()

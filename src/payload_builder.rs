@@ -1,16 +1,16 @@
-use reth_ethereum_engine_primitives::{
-    EthBuiltPayload, EthPayloadAttributes, EthPayloadBuilderAttributes,
-};
+use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
     components::PayloadBuilderBuilder, BuilderContext, FullNodeTypes, NodeTypes, PayloadTypes,
     PrimitivesTy, TxTy,
 };
-use reth_primitives::EthPrimitives;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
-use crate::{evm_config::GnosisEvmConfig, spec::gnosis_spec::GnosisChainSpec};
+use crate::{
+    evm_config::GnosisEvmConfig, payload::GnosisBuiltPayload, primitives::GnosisNodePrimitives,
+    spec::gnosis_spec::GnosisChainSpec,
+};
 
 /// A basic ethereum payload service.
 #[derive(Clone, Default, Debug)]
@@ -29,9 +29,9 @@ impl GnosisPayloadBuilder {
     where
         Types: NodeTypes<
             ChainSpec = GnosisChainSpec,
-            Primitives = EthPrimitives,
+            Primitives = GnosisNodePrimitives,
             Payload: PayloadTypes<
-                BuiltPayload = EthBuiltPayload,
+                BuiltPayload = GnosisBuiltPayload,
                 PayloadAttributes = EthPayloadAttributes,
                 PayloadBuilderAttributes = EthPayloadBuilderAttributes,
             >,
@@ -60,9 +60,9 @@ impl<Types, Node, Pool> PayloadBuilderBuilder<Node, Pool, GnosisEvmConfig> for G
 where
     Types: NodeTypes<
         ChainSpec = GnosisChainSpec,
-        Primitives = EthPrimitives,
+        Primitives = GnosisNodePrimitives,
         Payload: PayloadTypes<
-            BuiltPayload = EthBuiltPayload,
+            BuiltPayload = GnosisBuiltPayload,
             PayloadAttributes = EthPayloadAttributes,
             PayloadBuilderAttributes = EthPayloadBuilderAttributes,
         >,

@@ -28,3 +28,8 @@ pub static GNOSIS_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
     serde_json::from_str(include_str!("chainspecs/gnosis.json"))
         .expect("Can't deserialize Mainnet genesis json")
 });
+
+pub static DEVNET_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("chainspecs/devnet.json"))
+        .expect("Can't deserialize Devnet genesis json")
+});

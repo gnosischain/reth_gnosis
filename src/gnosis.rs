@@ -110,6 +110,8 @@ fn apply_block_rewards_contract_call<SPEC>(
 where
     SPEC: EthExecutorSpec,
 {
+    // return Ok(HashMap::default()); // TODO: Disable for now until we have the contract deployed and tested
+
     let ResultAndState { result, state } = match evm.transact_system_call(
         alloy_eips::eip4788::SYSTEM_ADDRESS,
         block_rewards_contract,
