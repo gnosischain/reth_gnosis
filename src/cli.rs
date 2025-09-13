@@ -6,16 +6,18 @@ use reth::{
     builder::{NodeBuilder, WithLaunchContext},
     cli::Commands,
     prometheus_exporter::install_prometheus_recorder,
-    version::{LONG_VERSION, SHORT_VERSION},
+    version::version_metadata,
     CliRunner,
 };
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::{launcher::FnLauncher, node::NoArgs};
+use reth_cli_commands::{common::CliComponentsBuilder, launcher::FnLauncher, node::NoArgs};
 use reth_db::DatabaseEnv;
+use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
 
 use crate::{
+    evm_config::GnosisEvmConfig,
     spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
     GnosisNode,
 };
@@ -24,7 +26,7 @@ use crate::{
 ///
 /// This is the entrypoint to the executable.
 #[derive(Debug, Parser)]
-#[command(author, version = SHORT_VERSION, long_version = LONG_VERSION, about = "Reth", long_about = None)]
+#[command(author, version = version_metadata().short_version.as_ref(), long_version = version_metadata().long_version.as_ref(), about = "Reth", long_about = None)]
 pub struct Cli<Spec: ChainSpecParser = GnosisChainSpecParser, Ext: clap::Args + fmt::Debug = NoArgs>
 {
     /// The command to run
@@ -93,22 +95,89 @@ where
     where
         L: FnOnce(WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
+        C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
     {
         self.with_runner(CliRunner::try_default_runtime()?, launcher)
     }
 
+    /// Execute the configured cli command with the provided [`CliComponentsBuilder`].
+    ///
+    /// This accepts a closure that is used to launch the node via the
+    /// [`NodeCommand`](node::NodeCommand).
+    ///
+    /// This command will be run on the [default tokio runtime](reth_cli_runner::tokio_runtime).
+    pub fn run_with_components(
+        self,
+        components: impl CliComponentsBuilder<GnosisNode>,
+        launcher: impl AsyncFnOnce(
+            WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>,
+            Ext,
+        ) -> eyre::Result<()>,
+    ) -> eyre::Result<()>
+    where
+        C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
+    {
+        self.with_runner_and_components(CliRunner::try_default_runtime()?, components, launcher)
+    }
+
     /// Execute the configured cli command with the provided [`CliRunner`].
-    pub fn with_runner<L, Fut>(mut self, runner: CliRunner, launcher: L) -> eyre::Result<()>
+    ///
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use reth_cli_runner::CliRunner;
+    /// use reth_ethereum_cli::interface::Cli;
+    /// use reth_node_ethereum::EthereumNode;
+    ///
+    /// let runner = CliRunner::try_default_runtime().unwrap();
+    ///
+    /// Cli::parse_args()
+    ///     .with_runner(runner, |builder, _| async move {
+    ///         let handle = builder.launch_node(EthereumNode::default()).await?;
+    ///         handle.wait_for_node_exit().await
+    ///     })
+    ///     .unwrap();
+    /// ```
+    pub fn with_runner<L, Fut>(self, runner: CliRunner, launcher: L) -> eyre::Result<()>
     where
         L: FnOnce(WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
+        C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
     {
-        // add network name to logs dir
-        self.logs.log_file_directory = self
-            .logs
-            .log_file_directory
-            .join(self.chain.chain().to_string());
+        let components = |spec: Arc<C::ChainSpec>| {
+            (
+                GnosisEvmConfig::new(spec.clone()),
+                EthBeaconConsensus::new(spec),
+            )
+        };
 
+        self.with_runner_and_components(runner, components, async move |builder, ext| {
+            launcher(builder, ext).await
+        })
+    }
+
+    /// Execute the configured cli command with the provided [`CliRunner`] and
+    /// [`CliComponentsBuilder`].
+    pub fn with_runner_and_components(
+        mut self,
+        runner: CliRunner,
+        _components: impl CliComponentsBuilder<GnosisNode>,
+        launcher: impl AsyncFnOnce(
+            WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>,
+            Ext,
+        ) -> eyre::Result<()>,
+    ) -> eyre::Result<()>
+    where
+        C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
+    {
+        // Add network name if available to the logs dir
+        if let Some(chain_spec) = self.command.chain_spec() {
+            self.logs.log_file_directory = self
+                .logs
+                .log_file_directory
+                .join(chain_spec.chain().to_string());
+        }
         let _guard = self.init_tracing()?;
         info!(target: "reth::cli", "Initialized tracing, debug log directory: {}", self.logs.log_file_directory);
 
@@ -137,9 +206,11 @@ where
             }
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::Import(_command) => unimplemented!(),
-            Commands::Debug(_command) => todo!(),
+            // Commands::Debug(_command) => todo!(),
             Commands::ImportEra(_) => unimplemented!(),
             Commands::Download(_) => unimplemented!(),
+            Commands::ExportEra(_export_era_command) => unimplemented!(),
+            Commands::ReExecute(_command) => unimplemented!(),
         }
     }
 

@@ -3,20 +3,19 @@ use reth_node_builder::{
     node::{FullNodeTypes, NodeTypes},
     BuilderContext,
 };
-use reth_primitives::EthPrimitives;
 use reth_provider::CanonStateSubscriptions;
 use reth_transaction_pool::{
     blobstore::DiskFileBlobStore, EthTransactionPool, TransactionValidationTaskExecutor,
 };
 
-use crate::spec::gnosis_spec::GnosisChainSpec;
+use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct GnosisPoolBuilder {}
 
 impl<Types, Node> PoolBuilder<Node> for GnosisPoolBuilder
 where
-    Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>,
+    Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
     Node: FullNodeTypes<Types = Types>,
 {
     type Pool = EthTransactionPool<Node::Provider, DiskFileBlobStore>;

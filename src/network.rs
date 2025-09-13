@@ -5,12 +5,11 @@ use reth::{
 };
 use reth_eth_wire_types::UnifiedStatus;
 use reth_ethereum_primitives::PooledTransactionVariant;
-use reth_primitives::EthPrimitives;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
 
-use crate::spec::gnosis_spec::GnosisChainSpec;
+use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
 
 /// A basic ethereum payload service.
 #[derive(Debug, Default, Clone, Copy)]
@@ -20,7 +19,9 @@ pub struct GnosisNetworkBuilder {
 
 impl<Node, Pool> NetworkBuilder<Node, Pool> for GnosisNetworkBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = EthPrimitives>>,
+    Node: FullNodeTypes<
+        Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+    >,
     Pool: TransactionPool<
             Transaction: PoolTransaction<
                 Consensus = TxTy<Node::Types>,
@@ -48,6 +49,9 @@ where
             }
             10200 => {
                 b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
+            }
+            10209 => {
+                b256!("c0cc2021e9958be549f46578491e7e6b0c7317b3c08ca23fe6da0f4dbe7ab7a6")
             }
             _ => spec.genesis_hash(),
         };

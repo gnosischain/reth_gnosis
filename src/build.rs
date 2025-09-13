@@ -17,6 +17,8 @@ use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
 
+use crate::primitives::block::GnosisBlock;
+
 /// Block builder for Gnosis.
 #[derive(Debug)]
 pub struct GnosisBlockAssembler<ChainSpec> {
@@ -55,7 +57,7 @@ where
     >,
     ChainSpec: EthChainSpec + EthereumHardforks,
 {
-    type Block = Block<F::Transaction>;
+    type Block = GnosisBlock;
 
     fn assemble_block(
         &self,
@@ -76,7 +78,7 @@ where
             ..
         } = input;
 
-        let timestamp = evm_env.block_env.timestamp;
+        let timestamp = evm_env.block_env.timestamp.saturating_to();
 
         let transactions_root = proofs::calculate_transaction_root(&transactions);
         let receipts_root = Receipt::calculate_receipt_root_no_memo(receipts);
@@ -84,7 +86,7 @@ where
 
         let withdrawals = self
             .chain_spec
-            .is_shanghai_active_at_timestamp(timestamp.to())
+            .is_shanghai_active_at_timestamp(timestamp)
             .then(|| ctx.withdrawals.map(|w| w.into_owned()).unwrap_or_default());
 
         let withdrawals_root = withdrawals
@@ -92,17 +94,14 @@ where
             .map(|w| proofs::calculate_withdrawals_root(w));
         let requests_hash = self
             .chain_spec
-            .is_prague_active_at_timestamp(timestamp.to())
+            .is_prague_active_at_timestamp(timestamp)
             .then(|| requests.requests_hash());
 
         let mut excess_blob_gas = None;
         let mut blob_gas_used = None;
 
         // only determine cancun fields when active
-        if self
-            .chain_spec
-            .is_cancun_active_at_timestamp(timestamp.to())
-        {
+        if self.chain_spec.is_cancun_active_at_timestamp(timestamp) {
             blob_gas_used = Some(
                 transactions
                     .iter()
@@ -114,12 +113,15 @@ where
                 .is_cancun_active_at_timestamp(parent.timestamp)
             {
                 parent.maybe_next_block_excess_blob_gas(
-                    self.chain_spec.blob_params_at_timestamp(timestamp.to()),
+                    self.chain_spec.blob_params_at_timestamp(timestamp),
                 )
             } else {
                 // for the first post-fork block, both parent.blob_gas_used and
                 // parent.excess_blob_gas are evaluated as 0
-                Some(crate::blobs::CANCUN_BLOB_PARAMS.next_block_excess_blob_gas(0, 0))
+                Some(
+                    alloy_eips::eip7840::BlobParams::cancun()
+                        .next_block_excess_blob_gas_osaka(0, 0, 0),
+                )
             };
         }
 
@@ -132,11 +134,11 @@ where
             receipts_root,
             withdrawals_root,
             logs_bloom,
-            timestamp: timestamp.to(),
+            timestamp,
             mix_hash: evm_env.block_env.prevrandao.unwrap_or_default(),
             nonce: BEACON_NONCE.into(),
             base_fee_per_gas: Some(evm_env.block_env.basefee),
-            number: evm_env.block_env.number.to(),
+            number: evm_env.block_env.number.saturating_to(),
             gas_limit: evm_env.block_env.gas_limit,
             difficulty: evm_env.block_env.difficulty,
             gas_used: *gas_used,
@@ -147,7 +149,7 @@ where
             requests_hash,
         };
 
-        Ok(Block {
+        Ok(GnosisBlock {
             header,
             body: BlockBody {
                 transactions,
