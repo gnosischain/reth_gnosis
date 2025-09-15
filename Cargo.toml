@@ -102,6 +102,11 @@ tokio = "1"
 anyhow = "1.0.98"
 indicatif = "0.17"
 zstd = "0.12"
+jsonrpsee = "0.26"
+jsonrpsee-core = "0.26"
+jsonrpsee-types = "0.26"
+tower = "0.4"
+reth-storage-api = { git = "https://github.com/paradigmxyz/reth", rev = "6bcd5e07ac522c3ac0f0795c9e94766f438fd799" }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemalloc-ctl = "0.6"

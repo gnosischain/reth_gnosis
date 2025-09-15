@@ -24,7 +24,7 @@ use std::sync::Arc;
 use crate::{
     engine::{GnosisEngineTypes, GnosisEngineValidator},
     payload::GnosisBuiltPayload,
-    rpc::GnosisNetwork,
+    rpc::{BlockFloorLayer, GnosisNetwork},
 };
 use primitives::{block::TransactionSigned, GnosisNodePrimitives};
 
@@ -111,8 +111,14 @@ impl NodeTypes for GnosisNode {
 }
 
 /// Add-ons w.r.t. gnosis
-pub type GnosisAddOns<N> =
-    RpcAddOns<N, EthereumEthApiBuilder<GnosisNetwork>, GnosisEngineValidatorBuilder>;
+pub type GnosisAddOns<N, RpcMiddleware = reth_node_builder::rpc::Identity> = RpcAddOns<
+    N,
+    EthereumEthApiBuilder<GnosisNetwork>,
+    GnosisEngineValidatorBuilder,
+    reth_node_builder::rpc::BasicEngineApiBuilder<GnosisEngineValidatorBuilder>,
+    reth_node_builder::rpc::BasicEngineValidatorBuilder<GnosisEngineValidatorBuilder>,
+    RpcMiddleware,
+>;
 
 impl<N> Node<N> for GnosisNode
 where
@@ -127,7 +133,10 @@ where
         GnosisConsensusBuilder,
     >;
 
-    type AddOns = GnosisAddOns<NodeAdapter<N>>;
+    type AddOns = GnosisAddOns<
+        NodeAdapter<N>,
+        reth_node_builder::rpc::Stack<reth_node_builder::rpc::Identity, BlockFloorLayer>,
+    >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         let Self { args } = self;
@@ -135,7 +144,7 @@ where
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        GnosisAddOns::default()
+        GnosisAddOns::default().layer_rpc_middleware(BlockFloorLayer::from_env())
     }
 }
 
