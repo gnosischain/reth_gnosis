@@ -13,7 +13,6 @@ use serde_json::Value;
 use tower::Layer;
 use tracing::debug;
 
-// BlockFloorLayer carries the hardcoded, chain-aware floor.
 #[derive(Debug, Clone, Copy)]
 pub struct BlockFloorLayer {
     min_block: BlockNumber,
@@ -88,14 +87,11 @@ where
     }
 }
 
-/// Decide if the current RPC should be short-circuited with `null` based on the
-/// method name and parameters. Only covers the listed methods.
 fn should_block_by_method(
     method: &str,
     params: &Params<'_>,
     min_block: BlockNumber,
 ) -> bool {
-    // Helper to check a single BlockId
     let mut block_below = |bid: BlockId| -> bool {
         match bid {
             BlockId::Number(BlockNumberOrTag::Number(n)) => n < min_block,
@@ -112,9 +108,7 @@ fn should_block_by_method(
         parse_block_id_from_params(params, pos).map(|b| block_below(b)).unwrap_or(false)
     };
 
-    // Methods with first param as block id
     match method {
-        // eth_* block-number in param[0]
         "eth_getBlockByNumber" |
         "eth_getTransactionByBlockNumberAndIndex" |
         "eth_getBlockTransactionCountByNumber" |
@@ -123,37 +117,24 @@ fn should_block_by_method(
         "trace_replayBlockTransactions" |
         "trace_block" |
         "debug_traceBlockByNumber" => return single_pos(0),
-
-        // Common eth methods where block id is param[1]
         "eth_getBalance" |
         "eth_getCode" |
         "eth_getTransactionCount" |
         "eth_call" |
         "eth_estimateGas" |
-        "debug_traceCall" => return single_pos(1),
-
-        // Methods where block id is param[2]
+        "debug_traceCall" |
+        "debug_traceCallMany" => return single_pos(1),    
         "eth_getStorageAt" |
         "eth_getProof" => return single_pos(2),
-
-        // Fee history: newest block in param[1]
         "eth_feeHistory" => return single_pos(1),
-
-        // eth_callMany and trace_callMany:
-        // Minimal policy: if a common block id is present in param[1], enforce it.
-        // If not present or schema differs, allow.
         "eth_callMany" | "trace_callMany" => return single_pos(1),
-
-        // Filters and logs can include fromBlock/toBlock inside an object.
         "eth_newFilter" | "eth_getLogs" | "trace_filter" => {
             return filter_has_block_below_floor(params, &mut block_below)
         }
 
-        // debug namespace catch-all: we only enforce for explicit methods listed above
         _ => {}
     }
 
-    // Not a method we guard
     false
 }
 
@@ -164,16 +145,10 @@ fn parse_block_id_from_params(params: &Params<'_>, pos: usize) -> Option<BlockId
     serde_json::from_value::<BlockId>(v).ok()
 }
 
-/// For filter-like objects, check fromBlock/toBlock fields.
-/// Returns true if either bound exists and is below MIN_BLOCK.
 fn filter_has_block_below_floor(
     params: &Params<'_>,
     block_below: &mut dyn FnMut(BlockId) -> bool,
 ) -> bool {
-    // Param position for filter object:
-    // eth_newFilter: param[0] is object
-    // eth_getLogs:   param[0] is object
-    // trace_filter:  param[0] is object
     let values: Vec<Value> = match params.parse() {
         Ok(v) => v,
         Err(_) => return false,
