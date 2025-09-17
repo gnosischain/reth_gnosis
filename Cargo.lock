@@ -8669,6 +8669,7 @@ dependencies = [
  "reth-db",
  "reth-db-api",
  "reth-db-common",
+ "reth-engine-local",
  "reth-engine-primitives",
  "reth-errors",
  "reth-eth-wire-types",

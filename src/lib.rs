@@ -5,6 +5,7 @@ use payload_builder::GnosisPayloadBuilder;
 use pool::GnosisPoolBuilder;
 use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
+use reth_engine_local::LocalPayloadAttributesBuilder;
 use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
@@ -13,7 +14,8 @@ use reth_node_builder::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
     },
     rpc::{PayloadValidatorBuilder, RpcAddOns},
-    BuilderContext, FullNodeTypes, Node, NodeAdapter, NodeTypes, PayloadTypes,
+    BuilderContext, DebugNode, FullNodeTypes, Node, NodeAdapter, NodeTypes,
+    PayloadAttributesBuilder, PayloadTypes,
 };
 use reth_node_ethereum::EthereumEthApiBuilder;
 use reth_provider::EthStorage;
@@ -107,6 +109,20 @@ impl NodeTypes for GnosisNode {
     type ChainSpec = GnosisChainSpec;
     type Storage = EthStorage;
     type Payload = GnosisEngineTypes;
+}
+
+impl<N: FullNodeComponents<Types = Self>> DebugNode<N> for GnosisNode {
+    type RpcBlock = alloy_rpc_types_eth::Block;
+
+    fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> reth_ethereum_primitives::Block {
+        rpc_block.into_consensus().convert_transactions()
+    }
+
+    fn local_payload_attributes_builder(
+        chain_spec: &Self::ChainSpec,
+    ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes> {
+        LocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone()))
+    }
 }
 
 /// Add-ons w.r.t. gnosis
