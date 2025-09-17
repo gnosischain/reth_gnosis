@@ -120,25 +120,6 @@ where
         self.with_runner_and_components(CliRunner::try_default_runtime()?, components, launcher)
     }
 
-    /// Execute the configured cli command with the provided [`CliRunner`].
-    ///
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use reth_cli_runner::CliRunner;
-    /// use reth_ethereum_cli::interface::Cli;
-    /// use reth_node_ethereum::EthereumNode;
-    ///
-    /// let runner = CliRunner::try_default_runtime().unwrap();
-    ///
-    /// Cli::parse_args()
-    ///     .with_runner(runner, |builder, _| async move {
-    ///         let handle = builder.launch_node(EthereumNode::default()).await?;
-    ///         handle.wait_for_node_exit().await
-    ///     })
-    ///     .unwrap();
-    /// ```
     pub fn with_runner<L, Fut>(self, runner: CliRunner, launcher: L) -> eyre::Result<()>
     where
         L: FnOnce(WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>, Ext) -> Fut,
