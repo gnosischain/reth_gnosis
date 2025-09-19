@@ -17,7 +17,7 @@
     "terminalTotalDifficulty": 0,
     "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 0,
-    "cancunTime": 1757260765,
+    "cancunTime": 0,
     "blobSchedule": {
       "cancun": {
         "target": 1,
@@ -60,8 +60,8 @@
         "baseFeeUpdateFraction": 1112826
       }
     },
-    "pragueTime": 1757260765,
-    "osakaTime": 1757260765,
+    "pragueTime": 0,
+    "osakaTime": 1758228680,
     "minBlobGasPrice": 1000000000,
     "maxBlobGasPerBlock": 262144,
     "targetBlobGasPerBlock": 131072,
@@ -114,7 +114,6 @@
   },
   "alloc": {
     "0xfffffffffffffffffffffffffffffffffffffffe": {
-      "balance": "0",
       "nonce": "1"
     },
     "0xB03a86b3126157C039b55E21D378587CcFc04d45": {
@@ -525,7 +524,7 @@
       "nonce": "0x1",
       "code": "0x6080604052600080fdfea2646970667358221220736146d047d972ba2411e1910bb9eb02bef6f4135edcdf986f9fe8612931cf5264736f6c63430008090033"
     },
-    "0x000f3df6d732807ef1319fb7b8bb8522d0beac02": {
+    "0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02": {
       "balance": "0",
       "nonce": "1",
       "code": "0x3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500"
