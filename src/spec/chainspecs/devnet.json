@@ -33,35 +33,10 @@
         "target": 1,
         "max": 2,
         "baseFeeUpdateFraction": 1112826
-      },
-      "bpo1": {
-        "target": 1,
-        "max": 2,
-        "baseFeeUpdateFraction": 1112826
-      },
-      "bpo2": {
-        "target": 1,
-        "max": 2,
-        "baseFeeUpdateFraction": 1112826
-      },
-      "bpo3": {
-        "target": 1,
-        "max": 2,
-        "baseFeeUpdateFraction": 1112826
-      },
-      "bpo4": {
-        "target": 1,
-        "max": 2,
-        "baseFeeUpdateFraction": 1112826
-      },
-      "bpo5": {
-        "target": 1,
-        "max": 2,
-        "baseFeeUpdateFraction": 1112826
       }
     },
     "pragueTime": 0,
-    "osakaTime": 1758228680,
+    "osakaTime": 1758292880,
     "minBlobGasPrice": 1000000000,
     "maxBlobGasPerBlock": 262144,
     "targetBlobGasPerBlock": 131072,
@@ -105,7 +80,6 @@
   "baseFeePerGas": "0x3b9aca00",
   "difficulty": "0x01",
   "gasLimit": "0x989680",
-  "timestamp": 1757260765,
   "seal": {
     "authorityRound": {
       "step": "0x0",
@@ -114,6 +88,7 @@
   },
   "alloc": {
     "0xfffffffffffffffffffffffffffffffffffffffe": {
+      "balance": "0",
       "nonce": "1"
     },
     "0xB03a86b3126157C039b55E21D378587CcFc04d45": {
