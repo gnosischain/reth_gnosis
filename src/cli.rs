@@ -101,11 +101,6 @@ where
     }
 
     /// Execute the configured cli command with the provided [`CliComponentsBuilder`].
-    ///
-    /// This accepts a closure that is used to launch the node via the
-    /// [`NodeCommand`](node::NodeCommand).
-    ///
-    /// This command will be run on the [default tokio runtime](reth_cli_runner::tokio_runtime).
     pub fn run_with_components(
         self,
         components: impl CliComponentsBuilder<GnosisNode>,

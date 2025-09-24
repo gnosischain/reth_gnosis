@@ -192,7 +192,7 @@ where
     }
 }
 
-/// Builder for [`EthereumEngineValidator`].
+/// Builder for [`GnosisEngineValidator`].
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct GnosisEngineValidatorBuilder;
