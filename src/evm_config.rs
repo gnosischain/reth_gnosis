@@ -207,7 +207,7 @@ impl ConfigureEvm for GnosisEvmConfig {
             .or_else(|| (spec_id == SpecId::CANCUN).then_some(0))
             .map(|excess_blob_gas| {
                 let blob_gasprice = blob_params
-                    .unwrap_or_else(|| CANCUN_BLOB_PARAMS)
+                    .unwrap_or(CANCUN_BLOB_PARAMS)
                     .calc_blob_fee(excess_blob_gas);
                 BlobExcessGasAndPrice {
                     excess_blob_gas,

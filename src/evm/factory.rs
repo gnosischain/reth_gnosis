@@ -3,7 +3,6 @@ use alloy_evm::{Database, Evm};
 use core::ops::{Deref, DerefMut};
 use reth::revm::precompile::{PrecompileSpecId, Precompiles};
 use reth_evm::{eth::EthEvmContext, EvmEnv, EvmFactory};
-use revm::SystemCallEvm;
 use revm::{
     context::{
         result::{EVMError, HaltReason, ResultAndState},
