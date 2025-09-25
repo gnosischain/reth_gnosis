@@ -22,7 +22,7 @@ use revm_primitives::{b256, Address, B256, U256};
 enum Chain {
     Gnosis,
     Chiado,
-    Devnet,
+    FusakaDevnet5,
 }
 
 impl Chain {
@@ -30,13 +30,13 @@ impl Chain {
         match chain_id {
             100 => Some(Chain::Gnosis),
             10200 => Some(Chain::Chiado),
-            10209 => Some(Chain::Devnet),
+            10209 => Some(Chain::FusakaDevnet5),
             _ => None,
         }
     }
 }
 
-use super::chains::{CHIADO_GENESIS, DEVNET_GENESIS, GNOSIS_GENESIS};
+use super::chains::{CHIADO_GENESIS, FUSAKA_DEVNET_5_GENESIS, GNOSIS_GENESIS};
 
 const GNOSIS_NODES: &[&str] = &[
     "enode://6765fff89db92aa8d923e28c438af626c8ae95a43093cdccbd6f550a7b6ce6ab5d1a3dc60dd79af3e6d2c2e6731bae629f0e54446a0d9da408c4eca7ebcd8485@3.75.159.31:30303",
@@ -70,7 +70,7 @@ const CHIADO_NODES: &[&str] = &[
     "enode://f7e62226a64a2ccc0ada8b032b33c4389464562f87135a3e0d5bdb814fab717d58db5d142c453b071d08b4e0ffd9c5aff4a6d4441c2041401634f10d7962f885@35.210.126.23:30303",
 ];
 
-const DEVNET_NODES: &[&str] = &[
+const FUSAKA_DEVNET_5_NODES: &[&str] = &[
     "enode://9145162a07cf666aad7cbcca83a51c3741c45b00a6ce52a575fd9eba865d029c1942b00cb836bf4b1173d301990d8b3eefadd9af5839eef789472201d52c825d@173.230.132.219:30303",
     "enode://01c0fcdc61ba9483a793e895e12c3f0e5ad7b6305aea776c1dea598868a23acd82666f833d31dbad29fc4df251222a15448e67cd26dc482b1e949c2167e50974@45.56.118.144:30303",
     "enode://303ed6bbdb3da4576c69b25f3c3b33e38f2a123290f1daaab9221c06eeed2ecb5a6524422f6caf9ee100c02acd50ebdc29f6dd6bda60a872545e3b67336008d8@192.155.92.148:30303",
@@ -100,7 +100,7 @@ fn genesis_hash(chain_id: u64, chainspec_genesis_hash: B256) -> B256 {
         Some(Chain::Chiado) => {
             b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
         }
-        Some(Chain::Devnet) => {
+        Some(Chain::FusakaDevnet5) => {
             b256!("13197729e2298b471456a37bba9b701748a08ae1624a8ffb38e27654b6554467")
         }
         None => chainspec_genesis_hash,
@@ -168,7 +168,7 @@ impl EthChainSpec for GnosisChainSpec {
             match chain {
                 Chain::Gnosis => Some(parse_nodes(GNOSIS_NODES)),
                 Chain::Chiado => Some(parse_nodes(CHIADO_NODES)),
-                Chain::Devnet => Some(parse_nodes(DEVNET_NODES)),
+                Chain::FusakaDevnet5 => Some(parse_nodes(FUSAKA_DEVNET_5_NODES)),
             }
         } else {
             None
@@ -522,12 +522,13 @@ impl ChainSpecParser for GnosisChainSpecParser {
 /// to a json file, or a json formatted string in-memory. The json needs to be a Genesis struct.
 pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::Error> {
     Ok(match s {
-        // currently it's mandatory to specify the path to the chainspec file
-        // TODO: allow for hardcoded built-in chains. using Genesis::default() because fallback needed for clap
         "dev" => Arc::new(GnosisChainSpec::from(Genesis::default())),
         "chiado" => Arc::new(GnosisChainSpec::from(CHIADO_GENESIS.clone())),
         "gnosis" => Arc::new(GnosisChainSpec::from(GNOSIS_GENESIS.clone())),
-        "devnet" => Arc::new(GnosisChainSpec::from(DEVNET_GENESIS.clone())),
+        // devnet is an alias for the latest devnet
+        "devnet" | "fusaka-devnet-5" => {
+            Arc::new(GnosisChainSpec::from(FUSAKA_DEVNET_5_GENESIS.clone()))
+        }
         _ => Arc::new(parse_genesis(s)?.into()),
     })
 }

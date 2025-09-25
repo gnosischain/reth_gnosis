@@ -1,3 +1,5 @@
+// NOTE: Needed for AddOns
+
 use reth_rpc::RpcTypes;
 
 use crate::primitives::block::GnosisHeader;

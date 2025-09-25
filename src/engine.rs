@@ -1,3 +1,7 @@
+// NOTE: Copied from https://github.com/paradigmxyz/reth/blob/2ebb519287ffc4dcfa75743337b10cd1d68aac2d/crates/ethereum/engine-primitives/src/lib.rs
+// Relevant changes made for Gnosis types
+// Needed for AddOns, debug capabilities and custom primitives
+
 use reth::rpc::types::engine::{ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV5};
 use reth_chainspec::ChainSpec;
 use reth_ethereum_engine_primitives::{

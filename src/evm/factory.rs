@@ -131,44 +131,6 @@ where
         contract: Address,
         data: Bytes,
     ) -> Result<ResultAndState, Self::Error> {
-        // === LOGIC 1 ===
-        // let mut res = self.inner.0.system_call_with_caller(caller, contract, data)?;
-
-        // // in gnosis aura, system account needs to be included in the state and not removed (despite EIP-158/161, even if empty)
-        // // here we have a generalized check if system account is in state, or needs to be created
-
-        // // keeping this generalized, instead of only in block 1
-        // // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
-
-        // let should_create = res
-        //     .state
-        //     .get(&alloy_eips::eip4788::SYSTEM_ADDRESS)
-        //     .is_none_or(|system_account| {
-        //         // true if account not in state (either None, or Touched | LoadedAsNotExisting)
-        //         system_account.status
-        //             == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
-        //     });
-
-        // if should_create {
-        //     let account = Account {
-        //         info: AccountInfo::default(),
-        //         storage: Default::default(),
-        //         // we force the account to be created by changing the status
-        //         status: AccountStatus::Touched | AccountStatus::Created,
-        //         transaction_id: 0,
-        //     };
-        //     res.state
-        //         .insert(alloy_eips::eip4788::SYSTEM_ADDRESS, account);
-        // } else {
-        //     // clear the system address account from state transitions, else EIP-158/161 (impl in revm) removes it from state
-        //     res.state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
-        // }
-
-        // res.state.remove(&self.block.beneficiary);
-
-        // Ok(res)
-        // === LOGIC 1 ENDS ===
-
         let tx = TxEnv {
             caller,
             kind: TxKind::Call(contract),
@@ -205,7 +167,6 @@ where
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
 
         let mut res = self.transact(tx);
-        // dbg!(&res);
 
         // swap back to the previous gas limit
         core::mem::swap(&mut self.block.gas_limit, &mut gas_limit);

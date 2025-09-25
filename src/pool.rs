@@ -7,6 +7,7 @@ use reth_provider::CanonStateSubscriptions;
 use reth_transaction_pool::{
     blobstore::DiskFileBlobStore, EthTransactionPool, TransactionValidationTaskExecutor,
 };
+use tracing::info;
 
 use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
 #[derive(Debug, Clone, Default)]
@@ -33,7 +34,7 @@ where
 
         let transaction_pool =
             reth_transaction_pool::Pool::eth_pool(validator, blob_store, pool_config);
-        // info!(target: "reth::cli", "Transaction pool initialized");
+        info!(target: "reth::cli", "Transaction pool initialized");
         let transactions_path = data_dir.txpool_transactions();
 
         // spawn txpool maintenance task
@@ -67,7 +68,6 @@ where
                     Default::default(),
                 ),
             );
-            // debug!(target: "reth::cli", "Spawned txpool maintenance task");
         }
 
         Ok(transaction_pool)

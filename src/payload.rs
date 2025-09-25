@@ -108,17 +108,12 @@ where
     ) -> Result<GnosisBuiltPayload, PayloadBuilderError> {
         let args = BuildArguments::new(Default::default(), config, Default::default(), None);
 
-        // let evm_env = self
-        //     .evm_env(&args.config, &args.config.parent_header)
-        //     .map_err(PayloadBuilderError::other)?;
-
         default_ethereum_payload(
             self.evm_config.clone(),
             self.client.clone(),
             self.pool.clone(),
             self.builder_config.clone(),
             args,
-            // evm_env,
             |attributes| self.pool.best_transactions_with_attributes(attributes),
         )?
         .into_payload()
@@ -243,6 +238,8 @@ where
         // convert tx to a signed transaction
         let tx = pool_tx.to_consensus();
 
+        // the logic maintains parity with:
+        // https://github.com/paradigmxyz/reth/blob/db04a19101c922965b8336d960f837537895defb/crates/ethereum/payload/src/lib.rs#L206-L343
         let estimated_block_size_with_tx = block_transactions_rlp_length
             + tx.inner().length()
             + attributes.withdrawals().length()
@@ -366,7 +363,6 @@ where
     // check if we have a better block
     if !is_better_payload(best_payload.as_ref(), total_fees) {
         // Release db
-        // drop(evm);
         drop(builder);
 
         // can skip building the block
