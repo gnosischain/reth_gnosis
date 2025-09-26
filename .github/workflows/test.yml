@@ -35,6 +35,8 @@ jobs:
         with:
           components: rustfmt
         # </setup>
+      - name: Install clippy
+        run: rustup component add clippy
       - run: cargo fmt -- --check
       - run: cargo check --all-targets
       - run: cargo clippy -- --deny warnings
