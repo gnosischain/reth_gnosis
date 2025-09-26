@@ -22,7 +22,6 @@ use revm_primitives::{b256, Address, B256, U256};
 enum Chain {
     Gnosis,
     Chiado,
-    FusakaDevnet5,
 }
 
 impl Chain {
@@ -30,13 +29,12 @@ impl Chain {
         match chain_id {
             100 => Some(Chain::Gnosis),
             10200 => Some(Chain::Chiado),
-            10209 => Some(Chain::FusakaDevnet5),
             _ => None,
         }
     }
 }
 
-use super::chains::{CHIADO_GENESIS, FUSAKA_DEVNET_5_GENESIS, GNOSIS_GENESIS};
+use super::chains::{CHIADO_GENESIS, GNOSIS_GENESIS};
 
 const GNOSIS_NODES: &[&str] = &[
     "enode://6765fff89db92aa8d923e28c438af626c8ae95a43093cdccbd6f550a7b6ce6ab5d1a3dc60dd79af3e6d2c2e6731bae629f0e54446a0d9da408c4eca7ebcd8485@3.75.159.31:30303",
@@ -70,17 +68,6 @@ const CHIADO_NODES: &[&str] = &[
     "enode://f7e62226a64a2ccc0ada8b032b33c4389464562f87135a3e0d5bdb814fab717d58db5d142c453b071d08b4e0ffd9c5aff4a6d4441c2041401634f10d7962f885@35.210.126.23:30303",
 ];
 
-const FUSAKA_DEVNET_5_NODES: &[&str] = &[
-    "enode://9145162a07cf666aad7cbcca83a51c3741c45b00a6ce52a575fd9eba865d029c1942b00cb836bf4b1173d301990d8b3eefadd9af5839eef789472201d52c825d@173.230.132.219:30303",
-    "enode://01c0fcdc61ba9483a793e895e12c3f0e5ad7b6305aea776c1dea598868a23acd82666f833d31dbad29fc4df251222a15448e67cd26dc482b1e949c2167e50974@45.56.118.144:30303",
-    "enode://303ed6bbdb3da4576c69b25f3c3b33e38f2a123290f1daaab9221c06eeed2ecb5a6524422f6caf9ee100c02acd50ebdc29f6dd6bda60a872545e3b67336008d8@192.155.92.148:30303",
-    "enode://93c86d6b00a06cf50efef390b76a2818b8ade6e869f767359a489a6852ecda5d971ac7fd87f0e4e808c7bba47c0e7c4664d26e36ce2108ffecb0da8a30b3be1d@192.155.92.194:30303",
-    "enode://ed7e0e4562d28d3fb916ead0f6c9600d8673177dec312a9206b224aaecbf941d98d4f689f110bb47c32b85842edd4e567169fd30a617f74de400472969e99080@173.230.132.170:30303",
-    "enode://c8fc132262815686f2e16cbe155f63fb38117edb0ae79494552fcca02d8d7c3850d4c97fbb963d31575ff22c000a31f461db10a94ef9eab8167195df675cb9c4@50.116.43.152:30303",
-    "enode://47bf998c3e0f881cbda4eb5239bb19031ae3564fb864ae930c2e4ff32ab11b4f71826f5597457a6e1c61e96bf257794f29378366109f1a7c4fa60782e32297d9@173.230.132.184:30303",
-    "enode://afeb085a928836c6e195fe952580158746e761148c766158de171a63a31e3bd4386297104d75f9792de32738432bfd4518304dbb54f049bc2dc8c8748ca1f5e6@74.207.228.22:30303",
-];
-
 hardfork!(
     /// The name of an gnosis hardfork.
     ///
@@ -99,9 +86,6 @@ fn genesis_hash(chain_id: u64, chainspec_genesis_hash: B256) -> B256 {
         }
         Some(Chain::Chiado) => {
             b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
-        }
-        Some(Chain::FusakaDevnet5) => {
-            b256!("13197729e2298b471456a37bba9b701748a08ae1624a8ffb38e27654b6554467")
         }
         None => chainspec_genesis_hash,
     }
@@ -168,7 +152,6 @@ impl EthChainSpec for GnosisChainSpec {
             match chain {
                 Chain::Gnosis => Some(parse_nodes(GNOSIS_NODES)),
                 Chain::Chiado => Some(parse_nodes(CHIADO_NODES)),
-                Chain::FusakaDevnet5 => Some(parse_nodes(FUSAKA_DEVNET_5_NODES)),
             }
         } else {
             None
@@ -509,7 +492,7 @@ pub struct GnosisChainSpecParser;
 impl ChainSpecParser for GnosisChainSpecParser {
     type ChainSpec = GnosisChainSpec;
 
-    const SUPPORTED_CHAINS: &'static [&'static str] = &["dev", "chiado", "gnosis", "devnet"];
+    const SUPPORTED_CHAINS: &'static [&'static str] = &["dev", "chiado", "gnosis"];
 
     fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
         chain_value_parser(s)
@@ -525,10 +508,6 @@ pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::E
         "dev" => Arc::new(GnosisChainSpec::from(Genesis::default())),
         "chiado" => Arc::new(GnosisChainSpec::from(CHIADO_GENESIS.clone())),
         "gnosis" => Arc::new(GnosisChainSpec::from(GNOSIS_GENESIS.clone())),
-        // devnet is an alias for the latest devnet
-        "devnet" | "fusaka-devnet-5" => {
-            Arc::new(GnosisChainSpec::from(FUSAKA_DEVNET_5_GENESIS.clone()))
-        }
         _ => Arc::new(parse_genesis(s)?.into()),
     })
 }
