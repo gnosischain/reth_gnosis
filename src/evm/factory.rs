@@ -17,6 +17,9 @@ use revm_primitives::{hardfork::SpecId, Address, Bytes};
 use revm_primitives::{TxKind, U256};
 use revm_state::{Account, AccountInfo, AccountStatus};
 
+// https://eips.ethereum.org/EIPS/eip-7825
+const TX_GAS_LIMIT: u64 = 16_777_216;
+
 #[allow(missing_debug_implementations)] // missing revm::Context Debug impl
 pub struct GnosisEvm<DB: Database, I, PRECOMPILE = PrecompilesMap> {
     inner: crate::evm::gnosis_evm::GnosisEvm<
@@ -136,7 +139,7 @@ where
             kind: TxKind::Call(contract),
             // Explicitly set nonce to 0 so revm does not do any nonce checks
             nonce: 0,
-            gas_limit: 16_777_216,
+            gas_limit: TX_GAS_LIMIT,
             value: U256::ZERO,
             data,
             // Setting the gas price to zero enforces that no value is transferred as part of the
