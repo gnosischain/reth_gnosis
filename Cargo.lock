@@ -8398,6 +8398,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-stateless"
+version = "1.7.0"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.7.0#9d56da53ec0ad60e229456a0c70b338501d923a5"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-debug",
+ "alloy-trie",
+ "itertools 0.14.0",
+ "reth-chainspec",
+ "reth-consensus",
+ "reth-errors",
+ "reth-ethereum-consensus",
+ "reth-ethereum-primitives",
+ "reth-evm",
+ "reth-primitives-traits",
+ "reth-revm",
+ "reth-trie-common",
+ "reth-trie-sparse",
+ "serde",
+ "serde_with",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "reth-static-file"
 version = "1.7.0"
 source = "git+https://github.com/paradigmxyz/reth?tag=v1.7.0#9d56da53ec0ad60e229456a0c70b338501d923a5"
@@ -8749,6 +8775,7 @@ dependencies = [
  "reth-stages",
  "reth-stages-api",
  "reth-stages-types",
+ "reth-stateless",
  "reth-tracing",
  "reth-transaction-pool",
  "reth-trie",

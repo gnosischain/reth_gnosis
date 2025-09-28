@@ -21,25 +21,16 @@ pub trait Suite {
     /// - `BlockchainTests/TransitionTests`
     fn suite_name(&self) -> String;
 
-    /// Load an run each contained test case.
+    /// Load and run each contained test case.
     ///
     /// # Note
     ///
     /// This recursively finds every test description in the resulting path.
     fn run(&self) {
         // Build the path to the test suite directory
-        // let suite_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        //     .join("fixtures")
-        //     .join(self.suite_name());
-        dbg!("suit path", self.suite_name());
-        let suite_path = match self.suite_name().starts_with("blockchain_tests") {
-            true => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("fixtures")
-                .join(self.suite_name()),
-            false => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("ethereum-tests")
-                .join(self.suite_name()),
-        };
+        let suite_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("ethereum-tests")
+            .join(self.suite_name());
 
         // Verify that the path exists
         assert!(

@@ -51,6 +51,7 @@ reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-stages = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-stages-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
+reth-stateless = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
