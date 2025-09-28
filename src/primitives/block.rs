@@ -11,7 +11,7 @@ pub type GnosisBlock = alloy_consensus::Block<TransactionSigned, GnosisHeader>;
 /// The body type of this node
 pub type BlockBody = alloy_consensus::BlockBody<TransactionSigned, GnosisHeader>;
 
-/// A local trait to convert AlloyBlock<AlloyHeader> into Block
+/// Trait to convert a consensus block into a `GnosisBlock`
 pub trait IntoBlock {
     fn into_block(self) -> GnosisBlock;
 }
