@@ -3,13 +3,16 @@ use reth::{
     builder::{components::NetworkBuilder, BuilderContext},
     network::{NetworkHandle, NetworkManager, PeersInfo},
 };
-use reth_eth_wire_types::UnifiedStatus;
+use reth_eth_wire_types::{BasicNetworkPrimitives, UnifiedStatus};
 use reth_ethereum_primitives::PooledTransactionVariant;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use revm_primitives::b256;
 use tracing::info;
 
 use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
+
+pub type GnosisNetworkPrimitives =
+    BasicNetworkPrimitives<GnosisNodePrimitives, PooledTransactionVariant>;
 
 /// A basic ethereum payload service.
 #[derive(Debug, Default, Clone, Copy)]
@@ -30,13 +33,13 @@ where
         > + Unpin
         + 'static,
 {
-    type Network = NetworkHandle;
+    type Network = NetworkHandle<GnosisNetworkPrimitives>;
 
     async fn build_network(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-    ) -> eyre::Result<NetworkHandle> {
+    ) -> eyre::Result<NetworkHandle<GnosisNetworkPrimitives>> {
         let mut network_config = ctx.network_config()?;
 
         let spec = ctx.chain_spec();

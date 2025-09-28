@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use alloy_consensus::{
-    proofs, Block, BlockBody, BlockHeader, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH,
+    proofs, BlockBody, BlockHeader, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH,
 };
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::Bytes;
+use gnosis_primitives::header::GnosisHeader;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::BlockExecutionError;
 use reth_ethereum_primitives::Receipt;
@@ -61,8 +62,8 @@ where
 
     fn assemble_block(
         &self,
-        input: BlockAssemblerInput<'_, '_, F>,
-    ) -> Result<Block<TransactionSigned>, BlockExecutionError> {
+        input: BlockAssemblerInput<'_, '_, F, GnosisHeader>,
+    ) -> Result<GnosisBlock, BlockExecutionError> {
         let BlockAssemblerInput {
             evm_env,
             execution_ctx: ctx,
@@ -150,7 +151,7 @@ where
         };
 
         Ok(GnosisBlock {
-            header,
+            header: header.into(),
             body: BlockBody {
                 transactions,
                 ommers: Default::default(),

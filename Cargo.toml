@@ -12,6 +12,8 @@ name = "reth"
 path = "src/main.rs"
 
 [dependencies]
+gnosis-primitives = { git = "https://github.com/gnosischain/gnosis-stuff.git", version = "0.0.5" }
+
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }

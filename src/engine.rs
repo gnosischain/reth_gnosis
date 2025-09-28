@@ -9,7 +9,6 @@ use reth_ethereum_engine_primitives::{
     ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
 };
 use reth_ethereum_payload_builder::EthereumExecutionPayloadValidator;
-use reth_ethereum_primitives::Block;
 use reth_node_builder::{
     validate_execution_requests, validate_version_specific_fields, BuiltPayload,
     EngineApiMessageVersion, EngineApiValidator, EngineObjectValidationError, EngineTypes,
@@ -21,7 +20,10 @@ use reth_primitives_traits::SealedBlock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::payload::GnosisBuiltPayload;
+use crate::{
+    payload::GnosisBuiltPayload,
+    primitives::block::{GnosisBlock, IntoBlock},
+};
 
 /// Custom engine types - uses a custom payload attributes RPC type, but uses the default
 /// payload builder attributes type.
@@ -76,12 +78,12 @@ impl GnosisEngineValidator {
 }
 
 impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
-    type Block = Block;
+    type Block = GnosisBlock;
 
     fn ensure_well_formed_payload(
         &self,
         payload: ExecutionData,
-    ) -> Result<RecoveredBlock<Block>, NewPayloadError> {
+    ) -> Result<RecoveredBlock<GnosisBlock>, NewPayloadError> {
         let sealed_block = self
             .inner
             .ensure_well_formed_payload::<TransactionSigned>(payload)?;
@@ -92,8 +94,8 @@ impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
         let block = result.unwrap();
         let senders = block.senders().to_owned();
         let hash = block.hash();
-        let gnosis_block: Block = block.into_block();
-        let block = RecoveredBlock::<Block>::new(gnosis_block, senders, hash);
+        let gnosis_block: GnosisBlock = block.into_block().into_block();
+        let block = RecoveredBlock::<GnosisBlock>::new(gnosis_block, senders, hash);
         Ok(block)
     }
 }

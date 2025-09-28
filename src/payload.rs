@@ -3,6 +3,7 @@ use std::sync::Arc;
 use alloy_consensus::Transaction;
 use alloy_eips::eip7685::Requests;
 use alloy_rlp::Encodable;
+use gnosis_primitives::header::GnosisHeader;
 use reth::{
     consensus_common::validation::MAX_RLP_BLOCK_SIZE,
     rpc::types::engine::{
@@ -20,7 +21,6 @@ use reth_ethereum_engine_primitives::{
     ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
 };
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
-use reth_ethereum_primitives::Block as RethBlock;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_evm::{
     execute::{BlockBuilder, BlockBuilderOutcome},
@@ -41,7 +41,10 @@ use revm::context::Block;
 use revm_primitives::U256;
 use tracing::{debug, trace, warn};
 
-use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
+use crate::{
+    primitives::{block::GnosisBlock, GnosisNodePrimitives},
+    spec::gnosis_spec::GnosisChainSpec,
+};
 
 type BestTransactionsIter<Pool> = Box<
     dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
@@ -104,7 +107,7 @@ where
 
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes>,
+        config: PayloadConfig<Self::Attributes, GnosisHeader>,
     ) -> Result<GnosisBuiltPayload, PayloadBuilderError> {
         let args = BuildArguments::new(Default::default(), config, Default::default(), None);
 
@@ -400,7 +403,7 @@ pub struct GnosisBuiltPayload {
     /// Identifier of the payload
     pub(crate) id: PayloadId,
     /// The built block
-    pub(crate) block: Arc<SealedBlock<RethBlock>>,
+    pub(crate) block: Arc<SealedBlock<GnosisBlock>>,
     /// The fees of the block
     pub(crate) fees: U256,
     /// The blobs, proofs, and commitments in the block. If the block is pre-cancun, this will be
@@ -418,7 +421,7 @@ impl GnosisBuiltPayload {
     /// Caution: This does not set any [`BlobSidecars`].
     pub const fn new(
         id: PayloadId,
-        block: Arc<SealedBlock<RethBlock>>,
+        block: Arc<SealedBlock<GnosisBlock>>,
         fees: U256,
         requests: Option<Requests>,
     ) -> Self {
@@ -437,7 +440,7 @@ impl GnosisBuiltPayload {
     }
 
     /// Returns the built block(sealed)
-    pub fn block(&self) -> &SealedBlock<RethBlock> {
+    pub fn block(&self) -> &SealedBlock<GnosisBlock> {
         &self.block
     }
 
@@ -547,7 +550,7 @@ impl GnosisBuiltPayload {
 impl BuiltPayload for GnosisBuiltPayload {
     type Primitives = GnosisNodePrimitives;
 
-    fn block(&self) -> &SealedBlock<RethBlock> {
+    fn block(&self) -> &SealedBlock<GnosisBlock> {
         &self.block
     }
 

@@ -140,7 +140,7 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn genesis_header(&self) -> &Self::Header {
-        self.inner.genesis_header()
+        &self.genesis_header
     }
 
     fn genesis(&self) -> &Genesis {

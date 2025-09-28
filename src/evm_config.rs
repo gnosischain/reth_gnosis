@@ -1,7 +1,8 @@
-use alloy_consensus::{BlockHeader, Header};
+use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
+use alloy_rlp::Encodable;
+use gnosis_primitives::header::GnosisHeader;
 use reth::rpc::types::engine::ExecutionData;
-use reth_ethereum_primitives::Block;
 use reth_evm::eth::EthBlockExecutionCtx;
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 use reth_primitives::TxTy;
@@ -19,12 +20,15 @@ use revm::context::{BlockEnv, CfgEnv};
 use revm_primitives::hardfork::SpecId;
 use revm_primitives::Bytes;
 use std::borrow::Cow;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::{convert::Infallible, sync::Arc};
 
 use crate::blobs::CANCUN_BLOB_PARAMS;
 use crate::block::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
+use crate::primitives::block::GnosisBlock;
 use crate::primitives::GnosisNodePrimitives;
 use crate::spec::gnosis_spec::GnosisChainSpec;
 
@@ -118,7 +122,7 @@ impl ConfigureEvm for GnosisEvmConfig {
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &Header) -> EvmEnv {
+    fn evm_env(&self, header: &GnosisHeader) -> EvmEnv {
         let blob_params = self.chain_spec().blob_params_at_timestamp(header.timestamp);
         let spec = revm_spec(self.chain_spec(), header);
 
@@ -174,7 +178,7 @@ impl ConfigureEvm for GnosisEvmConfig {
 
     fn next_evm_env(
         &self,
-        parent: &Header,
+        parent: &GnosisHeader,
         attributes: &NextBlockEnvAttributes,
     ) -> Result<EvmEnv, Self::Error> {
         // ensure we're not missing any timestamp based hardforks
@@ -235,18 +239,42 @@ impl ConfigureEvm for GnosisEvmConfig {
         Ok((cfg, block_env).into())
     }
 
-    fn context_for_block<'a>(&self, block: &'a SealedBlock<Block>) -> EthBlockExecutionCtx<'a> {
+    fn context_for_block<'a>(
+        &self,
+        block: &'a SealedBlock<GnosisBlock>,
+    ) -> EthBlockExecutionCtx<'a> {
+        if block.number() > 12000 {
+            let mut out = Vec::new();
+            block.encode(&mut out);
+            // convert block_rlp to hex and output it to a file (append, and create if not exists)
+            let block_rlp_hex = hex::encode(out);
+
+            // std::fs::write("block_rlp.txt", format!("block_rlp for block {}: {}\n", block.number(), block_rlp_hex)).unwrap();
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("block_rlp.txt")
+                .unwrap();
+            writeln!(
+                file,
+                "block_rlp for block {}: {}",
+                block.number(),
+                block_rlp_hex
+            )
+            .unwrap();
+        }
+
         EthBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
-            ommers: &block.body().ommers,
+            ommers: &[],
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
         }
     }
 
     fn context_for_next_block(
         &self,
-        parent: &SealedHeader,
+        parent: &SealedHeader<GnosisHeader>,
         attributes: Self::NextBlockEnvCtx,
     ) -> EthBlockExecutionCtx<'_> {
         EthBlockExecutionCtx {
