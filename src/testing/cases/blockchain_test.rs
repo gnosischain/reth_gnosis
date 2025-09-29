@@ -7,6 +7,7 @@ use crate::testing::{
 use alloy_rlp::{Decodable, Encodable};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use reth_chainspec::ChainSpec;
+use reth_cli::chainspec::parse_genesis;
 use reth_consensus::{Consensus, HeaderValidator};
 use reth_db_common::init::{insert_genesis_hashes, insert_genesis_history, insert_genesis_state};
 use reth_ethereum_consensus::{validate_block_post_execution, EthBeaconConsensus};
@@ -23,7 +24,12 @@ use reth_revm::{database::StateProviderDatabase, witness::ExecutionWitnessRecord
 use reth_stateless::{validation::stateless_validation, ExecutionWitness};
 use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
 use reth_trie_db::DatabaseStateRoot;
-use std::{collections::BTreeMap, fs, path::Path, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 /// A handler for the blockchain test suite.
 #[derive(Debug)]
@@ -42,7 +48,7 @@ impl Suite for BlockchainTests {
     type Case = BlockchainTestCase;
 
     fn suite_name(&self) -> String {
-        format!("BlockchainTests/{}", self.suite)
+        self.suite.clone()
     }
 }
 
@@ -191,7 +197,37 @@ impl Case for BlockchainTestCase {
 /// - `Err(Error)` if any block fails to execute correctly, or if the post-state validation fails.
 fn run_case(case: &BlockchainTest) -> Result<(), Error> {
     // Create a new test database and initialize a provider for the test case.
-    let chain_spec: Arc<ChainSpec> = Arc::new(case.network.into());
+    let chainspec_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts")
+        .join("chiado_genesis_alloc.json");
+    let original_chain_spec: ChainSpec = parse_genesis(chainspec_path.to_str().unwrap())
+        .unwrap()
+        .into();
+
+    let mut chain_spec: ChainSpec = case.network.into();
+    chain_spec.genesis.config.extra_fields.insert(
+        String::from("eip1559collector"),
+        original_chain_spec
+            .genesis
+            .config
+            .extra_fields
+            .get("eip1559collector")
+            .unwrap()
+            .clone(),
+    );
+    chain_spec.genesis.config.extra_fields.insert(
+        String::from("blockRewardsContract"),
+        original_chain_spec
+            .genesis
+            .config
+            .extra_fields
+            .get("blockRewardsContract")
+            .unwrap()
+            .clone(),
+    );
+    chain_spec.deposit_contract = original_chain_spec.deposit_contract;
+    let chain_spec: Arc<ChainSpec> = Arc::new(chain_spec);
+
     let factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
     let provider = factory.database_provider_rw().unwrap();
 
