@@ -3,10 +3,10 @@ use reth::{
     builder::{components::NetworkBuilder, BuilderContext},
     network::{NetworkHandle, NetworkManager, PeersInfo},
 };
+use reth_chainspec::EthChainSpec;
 use reth_eth_wire_types::{BasicNetworkPrimitives, UnifiedStatus};
 use reth_ethereum_primitives::PooledTransactionVariant;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
-use revm_primitives::b256;
 use tracing::info;
 
 use crate::{primitives::GnosisNodePrimitives, spec::gnosis_spec::GnosisChainSpec};
@@ -46,15 +46,7 @@ where
         let head = &ctx.head();
 
         // using actual genesis hash for mainnet and chiado
-        let genesis_hash = match spec.chain().id() {
-            100 => {
-                b256!("4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756")
-            }
-            10200 => {
-                b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
-            }
-            _ => spec.genesis_hash(),
-        };
+        let genesis_hash = spec.genesis_hash();
 
         let status = UnifiedStatus::builder()
             .chain(spec.chain())
