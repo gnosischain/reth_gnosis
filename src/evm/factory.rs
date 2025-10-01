@@ -161,7 +161,7 @@ where
         let mut gas_limit = tx.gas_limit;
         let mut basefee = 0;
         let mut disable_nonce_check = true;
-        let mut tx_gas_limit_cap = self.cfg.tx_gas_limit_cap;
+        let mut tx_gas_limit_cap = Some(TX_GAS_LIMIT);
 
         // ensure the block gas limit is >= the tx
         core::mem::swap(&mut self.block.gas_limit, &mut gas_limit);
@@ -170,7 +170,7 @@ where
         // disable the nonce check
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
         // set the tx gas limit cap to our defined constant
-        core::mem::swap(&mut self.cfg.tx_gas_limit_cap, &mut Some(TX_GAS_LIMIT));
+        core::mem::swap(&mut self.cfg.tx_gas_limit_cap, &mut tx_gas_limit_cap);
 
         let mut res = self.transact(tx);
 
