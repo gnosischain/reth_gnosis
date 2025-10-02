@@ -1,8 +1,9 @@
 use clap::{Args, Parser};
 use reth_cli_commands::common::EnvironmentArgs;
+use reth_gnosis::cli::cli::Commands;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
-use reth_gnosis::{cli::Cli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
+use reth_gnosis::{cli::cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
@@ -14,14 +15,14 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[non_exhaustive]
 pub struct NoArgs;
 
-type CliGnosis = Cli<GnosisChainSpecParser, NoArgs>;
+type CliGnosis = GnosisCli<GnosisChainSpecParser, NoArgs>;
 
 fn main() {
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
 
     // Fetch pre-merge state from a URL and load into the DB
-    if let reth::cli::Commands::Node(ref node_cmd) = user_cli.command {
+    if let Commands::Node(ref node_cmd) = user_cli.command {
         let env = EnvironmentArgs::<GnosisChainSpecParser> {
             datadir: node_cmd.datadir.clone(),
             config: node_cmd.config.clone(),
