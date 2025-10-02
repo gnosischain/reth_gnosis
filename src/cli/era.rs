@@ -63,20 +63,20 @@ where
     let (tx, rx) = mpsc::channel();
 
     // Handle IO-bound async download in a background tokio task
-    // tokio::spawn(async move {
-    //     while let Some(file) = downloader.next().await {
-    //         tx.send(Some(file))?;
-    //     }
-    //     tx.send(None)
-    // });
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let _ = rt.spawn(async move {
+    tokio::spawn(async move {
         while let Some(file) = downloader.next().await {
             tx.send(Some(file))?;
         }
         tx.send(None)
     });
+
+    // let rt = tokio::runtime::Runtime::new().unwrap();
+    // let _ = rt.spawn(async move {
+    //     while let Some(file) = downloader.next().await {
+    //         tx.send(Some(file))?;
+    //     }
+    //     tx.send(None)
+    // });
 
     let static_file_provider = provider_factory.static_file_provider();
 
