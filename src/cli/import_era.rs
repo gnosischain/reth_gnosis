@@ -16,6 +16,7 @@ use tracing::info;
 use crate::{cli::era, initialize::MAINNET_ERA_IMPORT_HEIGHT, primitives::GnosisNodePrimitives};
 
 pub const ERA_IMPORT_URL: &str = "https://gc-era.gnosiscoredevs.io/";
+pub const ERA_IMPORTED_FLAG: &str = "era-imported.flag";
 
 /// Syncs ERA encoded blocks from a local or remote source.
 #[derive(Debug, Parser)]
@@ -106,6 +107,17 @@ where
     let stream = EraStream::new(client, config);
 
     era::import(stream, &provider_factory, &mut hash_collector, max_height)?;
+
+    let datadir = env.datadir.clone().resolve_datadir(env.chain.chain());
+    let datadir = datadir.data_dir();
+
+    // create the IMPORTED_FLAG file
+    let imported_flag_path = datadir.join(ERA_IMPORTED_FLAG);
+    if let Err(e) = std::fs::File::create(imported_flag_path) {
+        eprintln!("Failed to create {ERA_IMPORTED_FLAG} file: {e}");
+        std::process::exit(1);
+    }
+    println!("✅ ERA imported successfully.");
 
     Ok(())
 }

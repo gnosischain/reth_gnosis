@@ -1,3 +1,4 @@
+use crate::cli::import_era::ERA_IMPORTED_FLAG;
 use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 use alloy_rlp::Decodable;
@@ -109,10 +110,11 @@ pub fn download_and_import_init_state(
     if datadir.exists() && db_dir.exists() {
         // DB is initialized, check if the state is imported
         let imported_flag_path = datadir.join(IMPORTED_FLAG);
+        let era_imported_flag_path = datadir.join(ERA_IMPORTED_FLAG);
         if imported_flag_path.exists() {
             println!("✅ State is imported, skipping import.");
             return;
-        } else {
+        } else if !era_imported_flag_path.exists() {
             println!("❌ State looks misconfigured, please delete the following directory and try again:");
             println!("{datadir:?}");
             std::process::exit(1);
