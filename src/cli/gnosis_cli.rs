@@ -214,7 +214,7 @@ where
     }
 }
 
-/// Implementing our own [`cli::Commands`] is needed to have custom path for ImportEra command
+/// Implementing our own Commands is needed to have custom path for ImportEra command
 /// Commands to be executed
 #[derive(Debug, Subcommand)]
 pub enum Commands<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> {
@@ -249,7 +249,7 @@ pub enum Commands<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> {
     Stage(stage::Command<C>),
     /// P2P Debugging utilities
     #[command(name = "p2p")]
-    P2P(p2p::Command<C>),
+    P2P(Box<p2p::Command<C>>),
     /// Write config to stdout
     #[command(name = "config")]
     Config(config_cmd::Command),

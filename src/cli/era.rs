@@ -95,7 +95,7 @@ where
         let receipt_height = static_file_provider
             .get_highest_static_file_tx(StaticFileSegment::Receipts)
             .unwrap_or_default();
-        println!("Receipt height: {}", receipt_height);
+        println!("Receipt height: {receipt_height}");
 
         let from = height;
         let provider = provider_factory.database_provider_rw()?;
@@ -384,7 +384,7 @@ where
                 i += 1;
             }
         } else {
-            panic!("Failed to get block body indices for block {}", number);
+            panic!("Failed to get block body indices for block {number}");
         }
         receipts_writer.increment_block(number)?;
 
