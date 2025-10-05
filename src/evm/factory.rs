@@ -17,7 +17,7 @@ use revm_primitives::{hardfork::SpecId, Address, Bytes};
 use revm_primitives::{TxKind, U256};
 use revm_state::{Account, AccountInfo, AccountStatus};
 
-// https://eips.ethereum.org/EIPS/eip-7825
+// https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
 const TX_GAS_LIMIT: u64 = 30_000_000;
 
 #[allow(missing_debug_implementations)] // missing revm::Context Debug impl
