@@ -1,6 +1,7 @@
 //! Test runners for `BlockchainTests` in <https://github.com/ethereum/tests>
 
 use crate::evm_config::GnosisEvmConfig;
+use crate::primitives::block::GnosisHeader;
 use crate::{
     spec::gnosis_spec::GnosisChainSpec,
     testing::{
@@ -13,7 +14,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::parse_genesis;
 use reth_ethereum_consensus::EthBeaconConsensus;
-use reth_primitives::{BlockBody, SealedBlock, StaticFileSegment};
+use reth_primitives::{BlockBody, SealedBlock, SealedHeader, StaticFileSegment};
 use reth_provider::{
     providers::StaticFileWriter, test_utils::create_test_provider_factory_with_chain_spec,
     DatabaseProviderFactory, HashingWriter, StaticFileProviderFactory,
@@ -181,6 +182,9 @@ impl Case for BlockchainTestCase {
 
                 let gnosis_executor_provider = GnosisEvmConfig::new(Arc::new(GnosisChainSpec {
                     inner: chain_spec.as_ref().clone(),
+                    genesis_header: SealedHeader::new_unhashed(GnosisHeader::from(
+                        chain_spec.genesis_header().clone(),
+                    )),
                 }));
 
                 // Execute the execution stage using the EVM processor factory for the test case

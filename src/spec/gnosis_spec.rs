@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use core::fmt::Display;
 
-use crate::blobs::gnosis_blob_schedule;
-use alloy_consensus::Header;
+use crate::{blobs::gnosis_blob_schedule, primitives::block::GnosisHeader};
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use derive_more::{Constructor, Deref, From, Into};
@@ -103,18 +102,16 @@ pub struct GnosisChainSpecBuilder {
 #[derive(Debug, Clone, Default, Deref, Into, Constructor, PartialEq, Eq)]
 pub struct GnosisChainSpec {
     /// [`ChainSpec`].
+    #[deref]
     pub inner: ChainSpec,
+    pub genesis_header: SealedHeader<GnosisHeader>,
 }
 
 impl EthChainSpec for GnosisChainSpec {
-    type Header = Header;
+    type Header = GnosisHeader;
 
     fn chain(&self) -> alloy_chains::Chain {
         self.inner.chain()
-    }
-
-    fn base_fee_params_at_block(&self, block_number: u64) -> BaseFeeParams {
-        self.inner.base_fee_params_at_block(block_number)
     }
 
     fn base_fee_params_at_timestamp(&self, timestamp: u64) -> BaseFeeParams {
@@ -130,7 +127,8 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn genesis_hash(&self) -> B256 {
-        self.inner.genesis_hash()
+        // self.inner.genesis_hash()
+        genesis_hash(self.chain_id(), self.inner.genesis_hash())
     }
 
     fn prune_delete_limit(&self) -> usize {
@@ -457,6 +455,11 @@ impl From<Genesis> for GnosisChainSpec {
 
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
+        let genesis_header = GnosisHeader::from(make_genesis_header(&genesis, &hardforks));
+        let curr_genesis_hash = genesis_header.hash_slow();
+        let genesis_header =
+            SealedHeader::new(genesis_header, genesis_hash(chain_id, curr_genesis_hash));
+
         Self {
             inner: ChainSpec {
                 chain: genesis.config.chain_id.into(),
@@ -471,6 +474,7 @@ impl From<Genesis> for GnosisChainSpec {
                 base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
                 ..Default::default()
             },
+            genesis_header,
         }
     }
 }
@@ -496,8 +500,6 @@ impl ChainSpecParser for GnosisChainSpecParser {
 /// to a json file, or a json formatted string in-memory. The json needs to be a Genesis struct.
 pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::Error> {
     Ok(match s {
-        // currently it's mandatory to specify the path to the chainspec file
-        // TODO: allow for hardcoded built-in chains. using Genesis::default() because fallback needed for clap
         "dev" => Arc::new(GnosisChainSpec::from(Genesis::default())),
         "chiado" => Arc::new(GnosisChainSpec::from(CHIADO_GENESIS.clone())),
         "gnosis" => Arc::new(GnosisChainSpec::from(GNOSIS_GENESIS.clone())),

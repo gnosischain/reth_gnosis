@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
+use alloy_consensus::{Transaction, TxReceipt};
 use alloy_eips::eip7002::WITHDRAWAL_REQUEST_TYPE;
 use alloy_eips::eip7251;
 use alloy_eips::{eip7685::Requests, Encodable2718};
@@ -12,7 +12,7 @@ use alloy_evm::{
 };
 use alloy_evm::{Database, Evm};
 use reth_errors::{BlockExecutionError, BlockValidationError};
-use reth_evm::block::calc::{base_block_reward, block_reward, ommer_reward};
+use reth_evm::block::CommitChanges;
 use reth_evm::{
     block::{
         BlockExecutor, BlockExecutorFactory, BlockExecutorFor, StateChangePostBlockSource,
@@ -108,22 +108,21 @@ where
         // Set state clear flag if the block is after the Spurious Dragon hardfork.
         let state_clear_flag = self
             .spec
-            .is_spurious_dragon_active_at_block(self.evm.block().number.to());
+            .is_spurious_dragon_active_at_block(self.evm.block().number.saturating_to());
         self.evm.db_mut().set_state_clear_flag(state_clear_flag);
 
         self.system_caller
-            .apply_beacon_root_contract_call(self.ctx.parent_beacon_block_root, &mut self.evm)?;
-        self.system_caller
             .apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
+        self.system_caller
+            .apply_beacon_root_contract_call(self.ctx.parent_beacon_block_root, &mut self.evm)?;
+
         Ok(())
     }
 
     fn execute_transaction_with_commit_condition(
         &mut self,
         tx: impl ExecutableTx<Self>,
-        f: impl FnOnce(
-            &ExecutionResult<<Self::Evm as Evm>::HaltReason>,
-        ) -> reth_evm::block::CommitChanges,
+        f: impl FnOnce(&ExecutionResult<<Self::Evm as Evm>::HaltReason>) -> CommitChanges,
     ) -> Result<Option<u64>, BlockExecutionError> {
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
         // must be no greater than the block's gasLimit.
@@ -142,7 +141,7 @@ where
         // Execute transaction.
         let ResultAndState { result, state } = self
             .evm
-            .transact(tx)
+            .transact(&tx)
             .map_err(|err| BlockExecutionError::evm(err, tx.tx().trie_hash()))?;
 
         if !f(&result).should_commit() {
@@ -184,19 +183,6 @@ where
         let withdrawals = self.ctx.withdrawals.as_deref();
         let beneficiary = self.evm.block().beneficiary();
 
-        // Gnosis-specific // Start
-        let (mut balance_increments, _) = apply_post_block_system_calls(
-            &self.spec,
-            self.block_rewards_address,
-            deposit_contract,
-            timestamp.to(),
-            withdrawals,
-            beneficiary,
-            &mut self.evm,
-            &mut self.system_caller,
-        )?;
-        // Gnosis-specific // End
-
         let requests = if self
             .spec
             .is_prague_active_at_timestamp(self.evm.block().timestamp.to())
@@ -232,23 +218,18 @@ where
             Requests::default()
         };
 
-        // Add block rewards if they are enabled.
-        if let Some(base_block_reward) = base_block_reward(&self.spec, self.evm.block().number.to())
-        {
-            // Ommer rewards
-            for ommer in self.ctx.ommers {
-                *balance_increments.entry(ommer.beneficiary()).or_default() += ommer_reward(
-                    base_block_reward,
-                    self.evm.block().number.to(),
-                    ommer.number(),
-                );
-            }
-
-            // Full block reward
-            *balance_increments
-                .entry(self.evm.block().beneficiary)
-                .or_default() += block_reward(base_block_reward, self.ctx.ommers.len());
-        }
+        // Gnosis-specific // Start
+        let (balance_increments, _) = apply_post_block_system_calls(
+            &self.spec,
+            self.block_rewards_address,
+            deposit_contract,
+            timestamp.to(),
+            withdrawals,
+            beneficiary,
+            &mut self.evm,
+            &mut self.system_caller,
+        )?;
+        // Gnosis-specific // End
 
         // increment balances
         self.evm
