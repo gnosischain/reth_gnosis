@@ -50,6 +50,9 @@ where
             10200 => {
                 b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
             }
+            10209 => {
+                b256!("13197729e2298b471456a37bba9b701748a08ae1624a8ffb38e27654b6554467")
+            }
             _ => spec.genesis_hash(),
         };
 

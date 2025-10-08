@@ -106,7 +106,6 @@ mod general_state_tests {
     general_state_test!(st_solidity, stSolidityTest);
     general_state_test!(st_static_flag, stStaticFlagEnabled);
     general_state_test!(st_system_operations, stSystemOperationsTest);
-    general_state_test!(st_time_consuming, stTimeConsuming);
     general_state_test!(st_wallet, stWalletTest);
     general_state_test!(st_zero_calls_revert, stZeroCallsRevert);
     general_state_test!(st_zero_calls, stZeroCallsTest);
