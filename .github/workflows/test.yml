@@ -6,9 +6,9 @@ on:
   push:
     branches:
       - master
+      - prerelease/*
     tags:
       - "v*"
-      - prerelease/*
 
 env:
   REQWEST_TEST_BODY_FULL: 1
