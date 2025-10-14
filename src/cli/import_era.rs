@@ -1,3 +1,5 @@
+// File copied from https://github.com/paradigmxyz/reth/blob/94c93583af801a75ae5bb96080d21dc1851325fa/crates/cli/commands/src/import_era.rs
+
 //! Command that initializes the node by importing a chain from ERA files.
 use clap::{Args, Parser};
 use reqwest::{Client, Url};

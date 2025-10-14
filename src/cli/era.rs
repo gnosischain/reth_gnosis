@@ -1,3 +1,8 @@
+// Bulk is from https://github.com/debjit-bw/reth/blob/994d73edf63f2a17cdc9c1e32338dcd81c165905/crates/era-utils/src/history.rs
+// Includes Gnosis-specific modifications:
+// Reth doesn't import receipts because it executes the blocks to get it
+// reth_gnosis imports the receipts directly from the ERA files
+
 use alloy_consensus::ReceiptWithBloom;
 use alloy_primitives::{BlockHash, BlockNumber, TxNumber};
 use futures_util::{Stream, StreamExt};
@@ -70,14 +75,6 @@ where
         tx.send(None)
     });
 
-    // let rt = tokio::runtime::Runtime::new().unwrap();
-    // let _ = rt.spawn(async move {
-    //     while let Some(file) = downloader.next().await {
-    //         tx.send(Some(file))?;
-    //     }
-    //     tx.send(None)
-    // });
-
     let static_file_provider = provider_factory.static_file_provider();
 
     // Consistency check of expected headers in static files vs DB is done on provider::sync_gap
@@ -109,9 +106,6 @@ where
             }
         }
 
-        // let start = range.start().clone().max(1);
-        // let end = range.end().clone();
-
         dbg!("Importing {:?}", &range);
 
         height = process(
@@ -123,20 +117,6 @@ where
             &mut td,
             range,
         )?;
-
-        // PROBLEMATIC PART
-        // Increment the block end range of receipts directly in the current thread
-        // for segment in [StaticFileSegment::Receipts] {
-        //     let mut writer = static_file_provider.latest_writer(segment)?;
-        //     let height = static_file_provider
-        //         .get_highest_static_file_block(StaticFileSegment::Receipts)
-        //         .unwrap_or_default();
-        //     for block_num in start..=end {
-        //         if block_num > height {
-        //             writer.increment_block(block_num)?;
-        //         }
-        //     }
-        // }
 
         save_stage_checkpoints(&provider, from, height, height, height)?;
 
@@ -328,15 +308,9 @@ where
         Bound::Unbounded => None,
     };
 
-    let mut flag = true;
-
     for block in &mut iter {
         let (header, body, receipts) = block?;
         let number = header.number();
-
-        if flag {
-            flag = false;
-        }
 
         if number <= last_header_number {
             continue;
@@ -347,8 +321,6 @@ where
             }
         }
 
-        // println!("Processing block: {}", number);
-
         let hash = header.hash_slow();
         last_header_number = number;
 
@@ -358,17 +330,6 @@ where
         // Append to Headers segment
         header_writer.append_header(&header, *total_difficulty, &hash)?;
 
-        // Append to Receipts segment
-        // let mut i = 0;
-        // if let Some(tx_range) = receipts_writer.user_header().tx_range() {
-        //     i = tx_range.end()
-        // } else {
-        //     println!("No tx range found for receipts writer, starting from 0");
-        // }
-        // println!("Appending {} receipts for block {}: {}", receipts.len(), number, i);
-        // receipts_writer.append_receipts(receipts_to_iter(receipts, i))?;
-        // receipts_writer.increment_block(number)?;
-
         // Write bodies to database.
         provider.append_block_bodies(
             vec![(header.number(), Some(body))],
@@ -376,6 +337,7 @@ where
             StorageLocation::StaticFiles,
         )?;
 
+        // GNOSIS-SPECIFIC: Write receipts to static files
         let idx = provider.block_body_indices(number);
         if let Ok(Some(idx)) = idx {
             let mut i = idx.first_tx_num();
@@ -387,41 +349,10 @@ where
             panic!("Failed to get block body indices for block {number}");
         }
         receipts_writer.increment_block(number)?;
-
-        // all_receipts.push(
-        //     // push Vec<Receipts> (receipts.receipt) to all_receipts
-        //     receipts.iter()
-        //         .map(|r| r.receipt.clone())
-        //         .collect::<Vec<_>>(),
-        // );
+        // GNOSIS-SPECIFIC END
 
         hash_collector.insert(hash, number)?;
     }
-
-    // dbg!("Last header number", last_header_number);
-
-    // if first_block == 0 {
-    //     // remove the first empty receipts
-    //     let genesis_receipts = all_receipts.remove(0);
-    //     debug_assert!(genesis_receipts.is_empty());
-    //     // this ensures the execution outcome and static file producer start at block 1
-    //     first_block = 1;
-    // }
-
-    // dbg!("First block", first_block);
-
-    // let execution_outcome =
-    //     ExecutionOutcome::new(Default::default(), all_receipts, first_block, Default::default());
-
-    // dbg!("Writing state for last header number", last_header_number);
-
-    // provider.write_state(
-    //     &execution_outcome,
-    //     OriginalValuesKnown::Yes,
-    //     StorageLocation::StaticFiles,
-    // )?;
-
-    // dbg!("Done writing state for last header number", last_header_number);
 
     Ok(last_header_number)
 }
