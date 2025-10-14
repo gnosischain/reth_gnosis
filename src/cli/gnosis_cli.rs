@@ -17,13 +17,16 @@ use reth_cli_commands::{
     node::{self, NoArgs},
     p2p, prune, re_execute, recover, stage,
 };
+use reth_consensus::FullConsensus;
 use reth_db::DatabaseEnv;
+use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
 
 use crate::{
     evm_config::GnosisEvmConfig,
+    primitives::GnosisNodePrimitives,
     spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
     GnosisNode,
 };
@@ -132,7 +135,8 @@ where
         let components = |spec: Arc<C::ChainSpec>| {
             (
                 GnosisEvmConfig::new(spec.clone()),
-                EthBeaconConsensus::new(spec),
+                Arc::new(EthBeaconConsensus::new(spec))
+                    as Arc<dyn FullConsensus<GnosisNodePrimitives, Error = ConsensusError>>,
             )
         };
 
@@ -185,9 +189,6 @@ where
             Commands::Stage(_command) => unimplemented!(),
             Commands::P2P(_command) => unimplemented!(),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
-            Commands::Recover(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
-            }
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::Import(_command) => unimplemented!(),
             // Commands::Debug(_command) => todo!(),

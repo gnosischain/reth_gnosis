@@ -1,6 +1,5 @@
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
-use alloy_rlp::Encodable;
 use gnosis_primitives::header::GnosisHeader;
 use reth::rpc::types::engine::ExecutionData;
 use reth_evm::eth::EthBlockExecutionCtx;
@@ -20,8 +19,6 @@ use revm::context::{BlockEnv, CfgEnv};
 use revm_primitives::hardfork::SpecId;
 use revm_primitives::Bytes;
 use std::borrow::Cow;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::{convert::Infallible, sync::Arc};
 
 use crate::blobs::CANCUN_BLOB_PARAMS;
@@ -122,7 +119,7 @@ impl ConfigureEvm for GnosisEvmConfig {
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &GnosisHeader) -> EvmEnv {
+    fn evm_env(&self, header: &GnosisHeader) -> Result<EvmEnv, Self::Error> {
         let blob_params = self.chain_spec().blob_params_at_timestamp(header.timestamp);
         let spec = revm_spec(self.chain_spec(), header);
 
@@ -173,7 +170,7 @@ impl ConfigureEvm for GnosisEvmConfig {
             blob_excess_gas_and_price,
         };
 
-        EvmEnv { cfg_env, block_env }
+        Ok(EvmEnv { cfg_env, block_env })
     }
 
     fn next_evm_env(
@@ -242,47 +239,26 @@ impl ConfigureEvm for GnosisEvmConfig {
     fn context_for_block<'a>(
         &self,
         block: &'a SealedBlock<GnosisBlock>,
-    ) -> EthBlockExecutionCtx<'a> {
-        if block.number() > 12000 {
-            let mut out = Vec::new();
-            block.encode(&mut out);
-            // convert block_rlp to hex and output it to a file (append, and create if not exists)
-            let block_rlp_hex = hex::encode(out);
-
-            // std::fs::write("block_rlp.txt", format!("block_rlp for block {}: {}\n", block.number(), block_rlp_hex)).unwrap();
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("block_rlp.txt")
-                .unwrap();
-            writeln!(
-                file,
-                "block_rlp for block {}: {}",
-                block.number(),
-                block_rlp_hex
-            )
-            .unwrap();
-        }
-
-        EthBlockExecutionCtx {
+    ) -> Result<EthBlockExecutionCtx<'a>, Self::Error> {
+        Ok(EthBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
             ommers: &[],
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
-        }
+        })
     }
 
     fn context_for_next_block(
         &self,
         parent: &SealedHeader<GnosisHeader>,
         attributes: Self::NextBlockEnvCtx,
-    ) -> EthBlockExecutionCtx<'_> {
-        EthBlockExecutionCtx {
+    ) -> Result<EthBlockExecutionCtx<'_>, Self::Error> {
+        Ok(EthBlockExecutionCtx {
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             ommers: &[],
             withdrawals: attributes.withdrawals.map(Cow::Owned),
-        }
+        })
     }
     // modifications to EIP-1559 gas accounting handler has been moved to Handler in gnosis_evm.rs
     // ConfigureEvmEnv and BlockExecutionStrategyFactory traits are merged into a single ConfigureEvm trait

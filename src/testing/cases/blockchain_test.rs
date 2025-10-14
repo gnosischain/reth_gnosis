@@ -1,3 +1,5 @@
+//! File copied directly from https://github.com/paradigmxyz/reth/tree/main/testing/ef-tests/src
+//! Added nominal Gnosis modifications
 //! Test runners for `BlockchainTests` in <https://github.com/ethereum/tests>
 
 use crate::testing::{
