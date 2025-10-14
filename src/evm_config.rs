@@ -1,6 +1,5 @@
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
-use alloy_rlp::Encodable;
 use gnosis_primitives::header::GnosisHeader;
 use reth::rpc::types::engine::ExecutionData;
 use reth_evm::eth::EthBlockExecutionCtx;
@@ -20,8 +19,6 @@ use revm::context::{BlockEnv, CfgEnv};
 use revm_primitives::hardfork::SpecId;
 use revm_primitives::Bytes;
 use std::borrow::Cow;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::{convert::Infallible, sync::Arc};
 
 use crate::blobs::CANCUN_BLOB_PARAMS;

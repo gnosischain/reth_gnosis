@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use alloy_consensus::{
-    proofs, BlockBody, BlockHeader, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH,
-};
+use alloy_consensus::{proofs, BlockBody, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::Bytes;
 use gnosis_primitives::header::GnosisHeader;
