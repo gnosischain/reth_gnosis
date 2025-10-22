@@ -19,13 +19,17 @@ pub struct BlockFloorLayer {
 }
 
 impl BlockFloorLayer {
-    pub const fn with_min_block(min_block: BlockNumber) -> Self { Self { min_block } }
+    pub const fn with_min_block(min_block: BlockNumber) -> Self {
+        Self { min_block }
+    }
 
     // Chiado (10200) -> 700000, Gnosis (100) -> 26478650, Others -> 0
     pub const fn from_chain_id(chain_id: u64) -> Self {
         match chain_id {
             10200 => Self { min_block: 700_000 },
-            100 => Self { min_block: 26_478_650 },
+            100 => Self {
+                min_block: 26_478_650,
+            },
             _ => Self { min_block: 0 },
         }
     }
@@ -45,11 +49,19 @@ impl BlockFloorLayer {
 impl<S> Layer<S> for BlockFloorLayer {
     type Service = BlockFloorService<S>;
 
-    fn layer(&self, inner: S) -> Self::Service { BlockFloorService { inner, min_block: self.min_block } }
+    fn layer(&self, inner: S) -> Self::Service {
+        BlockFloorService {
+            inner,
+            min_block: self.min_block,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct BlockFloorService<S> { inner: S, min_block: BlockNumber }
+pub struct BlockFloorService<S> {
+    inner: S,
+    min_block: BlockNumber,
+}
 
 impl<S> RpcServiceT for BlockFloorService<S>
 where
@@ -67,7 +79,7 @@ where
             // Intercept a curated set of methods and return `null` if the target block is below MIN_BLOCK
             if should_block_by_method(req.method_name(), &req.params(), min_block) {
                 let payload = ResponsePayload::success(serde_json::Value::Null).into();
-                return RpcMethodResponse::response(req.id.clone(), payload, usize::MAX)
+                return RpcMethodResponse::response(req.id.clone(), payload, usize::MAX);
             }
 
             // Default path
@@ -87,11 +99,7 @@ where
     }
 }
 
-fn should_block_by_method(
-    method: &str,
-    params: &Params<'_>,
-    min_block: BlockNumber,
-) -> bool {
+fn should_block_by_method(method: &str, params: &Params<'_>, min_block: BlockNumber) -> bool {
     let mut block_below = |bid: BlockId| -> bool {
         match bid {
             BlockId::Number(BlockNumberOrTag::Number(n)) => n < min_block,
@@ -105,27 +113,28 @@ fn should_block_by_method(
 
     // Methods that carry a single BlockId at a fixed position
     let single_pos = |pos: usize| -> bool {
-        parse_block_id_from_params(params, pos).map(|b| block_below(b)).unwrap_or(false)
+        parse_block_id_from_params(params, pos)
+            .map(|b| block_below(b))
+            .unwrap_or(false)
     };
 
     match method {
-        "eth_getBlockByNumber" |
-        "eth_getTransactionByBlockNumberAndIndex" |
-        "eth_getBlockTransactionCountByNumber" |
-        "eth_getUncleCountByBlockNumber" |
-        "eth_getBlockReceipts" |
-        "trace_replayBlockTransactions" |
-        "trace_block" |
-        "debug_traceBlockByNumber" => return single_pos(0),
-        "eth_getBalance" |
-        "eth_getCode" |
-        "eth_getTransactionCount" |
-        "eth_call" |
-        "eth_estimateGas" |
-        "debug_traceCall" |
-        "debug_traceCallMany" => return single_pos(1),
-        "eth_getStorageAt" |
-        "eth_getProof" => return single_pos(2),
+        "eth_getBlockByNumber"
+        | "eth_getTransactionByBlockNumberAndIndex"
+        | "eth_getBlockTransactionCountByNumber"
+        | "eth_getUncleCountByBlockNumber"
+        | "eth_getBlockReceipts"
+        | "trace_replayBlockTransactions"
+        | "trace_block"
+        | "debug_traceBlockByNumber" => return single_pos(0),
+        "eth_getBalance"
+        | "eth_getCode"
+        | "eth_getTransactionCount"
+        | "eth_call"
+        | "eth_estimateGas"
+        | "debug_traceCall"
+        | "debug_traceCallMany" => return single_pos(1),
+        "eth_getStorageAt" | "eth_getProof" => return single_pos(2),
         "eth_feeHistory" => return single_pos(1),
         "eth_callMany" | "trace_callMany" => return single_pos(1),
         "eth_newFilter" | "eth_getLogs" | "trace_filter" => {
@@ -153,24 +162,29 @@ fn filter_has_block_below_floor(
         Ok(v) => v,
         Err(_) => return false,
     };
-    let Some(obj) = values.into_iter().nth(0) else { return false };
+    let Some(obj) = values.into_iter().nth(0) else {
+        return false;
+    };
 
     // Try to read "fromBlock" and "toBlock" if present
-    let from_below = obj.get("fromBlock")
+    let from_below = obj
+        .get("fromBlock")
         .and_then(|v| serde_json::from_value::<BlockId>(v.clone()).ok())
         .map(|bid| block_below(bid))
         .unwrap_or(false);
 
-    if from_below { return true }
+    if from_below {
+        return true;
+    }
 
-    let to_below = obj.get("toBlock")
+    let to_below = obj
+        .get("toBlock")
         .and_then(|v| serde_json::from_value::<BlockId>(v.clone()).ok())
         .map(|bid| block_below(bid))
         .unwrap_or(false);
 
     to_below
 }
-
 
 use reth_rpc::RpcTypes;
 
