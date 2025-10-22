@@ -39,6 +39,11 @@ fn main() {
         }
     }
 
+    // Export chain id for RPC middleware
+    if let Commands::Node(ref node_cmd) = user_cli.command {
+        std::env::set_var("RETH_GNOSIS_CHAIN_ID", node_cmd.chain.chain().id().to_string());
+    }
+
     // Actual program run
     run_reth(user_cli);
 }
