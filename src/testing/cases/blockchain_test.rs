@@ -1,5 +1,7 @@
 //! File copied directly from https://github.com/paradigmxyz/reth/tree/main/testing/ef-tests/src
-//! Added nominal Gnosis modifications
+//! Added nominal Gnosis modifications:
+//! - adding chiado_genesis_alloc.json as the hardcoded genesis state for tests
+//! - adding eip1559collector and blockRewardsContract fields from chiado spec to the test chain spec
 //! Test runners for `BlockchainTests` in <https://github.com/ethereum/tests>
 
 use crate::testing::{
