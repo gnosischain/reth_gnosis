@@ -1,4 +1,5 @@
 //! Shared models for <https://github.com/ethereum/tests>
+//! No gnosis-specific modifications in this file.
 
 use crate::testing::{assert::assert_equal, Error};
 use alloy_consensus::Header as RethHeader;

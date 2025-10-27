@@ -1,3 +1,8 @@
+//! File copied directly from https://github.com/paradigmxyz/reth/tree/main/testing/ef-tests/src
+//! Added nominal Gnosis modifications:
+//! - added EEST tests with the blockchain_tests/{}/{}/{}
+//! - changed ethereum/tests tests to use BlockchainTests path
+
 #![allow(missing_docs)]
 #![cfg(feature = "testing")]
 #![cfg(test)]
