@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use crate::{
     payload::GnosisBuiltPayload,
-    primitives::block::{GnosisBlock, IntoBlock},
+    primitives::block::{GnosisBlock, IntoGnosisBlock},
 };
 
 /// Custom engine types - uses a custom payload attributes RPC type, but uses the default
@@ -94,7 +94,7 @@ impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
         let block = result.unwrap();
         let senders = block.senders().to_owned();
         let hash = block.hash();
-        let gnosis_block: GnosisBlock = block.into_block().into_block();
+        let gnosis_block: GnosisBlock = block.into_block().into_gnosis_block();
         let block = RecoveredBlock::<GnosisBlock>::new(gnosis_block, senders, hash);
         Ok(block)
     }
