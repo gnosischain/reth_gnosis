@@ -3,8 +3,6 @@ pub use gnosis_primitives::header::GnosisHeader;
 
 pub type TransactionSigned = alloy_consensus::EthereumTxEnvelope<TxEip4844>;
 
-// pub type GnosisHeader = alloy_consensus::Header;
-
 /// The Block type of this node
 pub type GnosisBlock = alloy_consensus::Block<TransactionSigned, GnosisHeader>;
 
