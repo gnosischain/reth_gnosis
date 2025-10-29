@@ -1,4 +1,6 @@
 // File copied from https://github.com/paradigmxyz/reth/blob/94c93583af801a75ae5bb96080d21dc1851325fa/crates/cli/commands/src/import_era.rs
+// Needed due to the addition of max_height till which to import ERA blocks
+// This fills the gap from block 0 till the block from which reth_gnosis can switch to normal sync
 
 //! Command that initializes the node by importing a chain from ERA files.
 use clap::{Args, Parser};

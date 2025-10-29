@@ -1,4 +1,4 @@
-// Bulk is from https://github.com/debjit-bw/reth/blob/994d73edf63f2a17cdc9c1e32338dcd81c165905/crates/era-utils/src/history.rs
+// Bulk is from https://github.com/paradigmxyz/reth/blob/main/crates/era-utils/src/history.rs
 // Includes Gnosis-specific modifications:
 // Reth doesn't import receipts because it executes the blocks to get it
 // reth_gnosis imports the receipts directly from the ERA files
