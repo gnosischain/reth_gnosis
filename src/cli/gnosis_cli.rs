@@ -150,7 +150,7 @@ where
     pub fn with_runner_and_components(
         mut self,
         runner: CliRunner,
-        _components: impl CliComponentsBuilder<GnosisNode>,
+        components: impl CliComponentsBuilder<GnosisNode>,
         launcher: impl AsyncFnOnce(
             WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>,
             Ext,
@@ -186,7 +186,8 @@ where
             Commands::Db(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
-            Commands::Stage(_command) => unimplemented!(),
+            Commands::Stage(command) => runner
+                .run_command_until_exit(|ctx| command.execute::<GnosisNode, _>(ctx, components)),
             Commands::P2P(_command) => unimplemented!(),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
@@ -196,7 +197,9 @@ where
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
             Commands::Download(_) => unimplemented!(),
-            Commands::ExportEra(_export_era_command) => unimplemented!(),
+            Commands::ExportEra(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+            }
             Commands::ReExecute(_command) => unimplemented!(),
         }
     }

@@ -9,7 +9,7 @@ use reth::version::version_metadata;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
-use reth_era_downloader::{EraClient, EraStream, EraStreamConfig};
+use reth_era_downloader::{read_dir, EraClient, EraStream, EraStreamConfig};
 use reth_etl::Collector;
 use reth_fs_util as fs;
 use reth_provider::StaticFileProviderFactory;
@@ -17,9 +17,13 @@ use reth_static_file_types::StaticFileSegment;
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
-use crate::{cli::era, initialize::MAINNET_ERA_IMPORT_HEIGHT, primitives::GnosisNodePrimitives};
+use crate::{
+    cli::era,
+    initialize::{CHIADO_ERA_IMPORT_HEIGHT, MAINNET_ERA_IMPORT_HEIGHT},
+    primitives::GnosisNodePrimitives,
+};
 
-pub const ERA_IMPORT_URL: &str = "https://gc-era.gnosiscoredevs.io/";
+pub const ERA_IMPORT_URL_GNOSIS: &str = "https://gc-era.gnosiscoredevs.io/";
 pub const ERA_IMPORTED_FLAG: &str = "era-imported.flag";
 
 /// Syncs ERA encoded blocks from a local or remote source.
@@ -55,7 +59,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> ImportEraC
     where
         N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = GnosisNodePrimitives>,
     {
-        execute_inner::<C, N>(&self.env)
+        execute_inner::<C, N>(&self.env, &self.import)
     }
 }
 
@@ -66,7 +70,14 @@ impl<C: ChainSpecParser> ImportEraCommand<C> {
     }
 }
 
-pub fn execute_inner<C, N>(env: &EnvironmentArgs<C>) -> eyre::Result<()>
+fn get_default_era_url(chain_id: u64) -> Url {
+    match chain_id {
+        100 => Url::parse(ERA_IMPORT_URL_GNOSIS).unwrap(), // Gnosis mainnet
+        _ => panic!("No default ERA import URL for chain ID {}", chain_id),
+    }
+}
+
+pub fn execute_inner<C, N>(env: &EnvironmentArgs<C>, import: &ImportArgs) -> eyre::Result<()>
 where
     C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>,
     N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = GnosisNodePrimitives>,
@@ -89,28 +100,35 @@ where
         + 1;
 
     let max_height: Option<u64> = match env.chain.chain_id() {
-        100 => Some(MAINNET_ERA_IMPORT_HEIGHT), // Gnosis mainnet
-        _ => panic!(
-            "Era import not supported for chain id {}",
-            env.chain.chain_id()
-        ),
+        100 => Some(MAINNET_ERA_IMPORT_HEIGHT),  // Gnosis mainnet
+        10200 => Some(CHIADO_ERA_IMPORT_HEIGHT), // Chiado testnet
+        _ => None,
     };
 
-    let url = Url::parse(ERA_IMPORT_URL).unwrap();
-    let folder = env
-        .datadir
-        .clone()
-        .resolve_datadir(env.chain.chain())
-        .data_dir()
-        .join("era");
+    if let Some(path) = &import.path {
+        let stream = read_dir(path.clone(), next_block)?;
 
-    fs::create_dir_all(&folder)?;
+        era::import(stream, &provider_factory, &mut hash_collector, max_height)?;
+    } else {
+        let url = match &import.url {
+            Some(url) => url,
+            None => &get_default_era_url(env.chain.chain_id()),
+        };
+        let folder = env
+            .datadir
+            .clone()
+            .resolve_datadir(env.chain.chain())
+            .data_dir()
+            .join("era");
 
-    let config = EraStreamConfig::default().start_from(next_block);
-    let client = EraClient::new(Client::new(), url, folder);
-    let stream = EraStream::new(client, config);
+        fs::create_dir_all(&folder)?;
 
-    era::import(stream, &provider_factory, &mut hash_collector, max_height)?;
+        let config = EraStreamConfig::default().start_from(next_block);
+        let client = EraClient::new(Client::new(), url.clone(), folder);
+        let stream = EraStream::new(client, config);
+
+        era::import(stream, &provider_factory, &mut hash_collector, max_height)?;
+    }
 
     let datadir = env.datadir.clone().resolve_datadir(env.chain.chain());
     let datadir = datadir.data_dir();
