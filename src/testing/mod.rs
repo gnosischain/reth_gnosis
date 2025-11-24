@@ -1,3 +1,5 @@
+//! All files in testing/ excluding tests/ copied directly from https://github.com/paradigmxyz/reth/tree/main/testing/ef-tests/src
+
 #![allow(dead_code)]
 #![cfg(test)]
 pub mod case;
