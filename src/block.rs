@@ -11,6 +11,7 @@ use alloy_evm::{
     FromTxWithEncoded,
 };
 use alloy_evm::{Database, Evm};
+use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_evm::{
     block::{
@@ -19,7 +20,7 @@ use reth_evm::{
     },
     eth::{
         receipt_builder::{AlloyReceiptBuilder, ReceiptBuilder, ReceiptBuilderCtx},
-        spec::{EthExecutorSpec, EthSpec},
+        spec::EthExecutorSpec,
         EthBlockExecutionCtx,
     },
     EvmFactory, FromRecoveredTx, OnStateHook,
@@ -32,20 +33,21 @@ use revm_primitives::{Address, Log};
 
 use crate::evm::factory::GnosisEvmFactory;
 use crate::gnosis::apply_post_block_system_calls;
+use crate::spec::gnosis_spec::GnosisChainSpec;
 
 // REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/op-evm/src/block/mod.rs#L42
 /// Block executor for Ethereum.
 #[derive(Debug)]
-pub struct GnosisBlockExecutor<'a, Evm, Spec, R: ReceiptBuilder> {
+pub struct GnosisBlockExecutor<'a, Evm, R: ReceiptBuilder> {
     /// Reference to the specification object.
-    spec: Spec,
+    spec: GnosisChainSpec,
 
     /// Context for block execution.
     pub ctx: EthBlockExecutionCtx<'a>,
     /// Inner EVM.
     evm: Evm,
     /// Utility to call system smart contracts.
-    system_caller: SystemCaller<Spec>,
+    system_caller: SystemCaller<GnosisChainSpec>,
     /// Receipt builder.
     receipt_builder: R,
 
@@ -58,16 +60,15 @@ pub struct GnosisBlockExecutor<'a, Evm, Spec, R: ReceiptBuilder> {
     block_rewards_address: Address,
 }
 
-impl<'a, Evm, Spec, R> GnosisBlockExecutor<'a, Evm, Spec, R>
+impl<'a, Evm, R> GnosisBlockExecutor<'a, Evm, R>
 where
-    Spec: Clone,
     R: ReceiptBuilder,
 {
     /// Creates a new [`GnosisBlockExecutor`]
     pub fn new(
         evm: Evm,
         ctx: EthBlockExecutionCtx<'a>,
-        spec: Spec,
+        spec: &GnosisChainSpec,
         receipt_builder: R,
         block_rewards_address: Address,
     ) -> Self {
@@ -77,7 +78,7 @@ where
             receipts: Vec::new(),
             gas_used: 0,
             system_caller: SystemCaller::new(spec.clone()),
-            spec,
+            spec: spec.clone(),
             receipt_builder,
             block_rewards_address,
         }
@@ -86,14 +87,13 @@ where
 
 // REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/evm/src/eth/block.rs#L81
 // ALong with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
-impl<'db, DB, E, Spec, R> BlockExecutor for GnosisBlockExecutor<'_, E, Spec, R>
+impl<'db, DB, E, R> BlockExecutor for GnosisBlockExecutor<'_, E, R>
 where
     DB: Database + 'db,
     E: Evm<
         DB = &'db mut State<DB>,
         Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
     >,
-    Spec: EthExecutorSpec,
     R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
 {
     type Transaction = R::Transaction;
@@ -270,16 +270,12 @@ where
 }
 
 /// Ethereum block executor factory.
-#[derive(Debug, Clone, Default, Copy)]
-pub struct GnosisBlockExecutorFactory<
-    R = AlloyReceiptBuilder,
-    Spec = EthSpec,
-    EvmFactory = GnosisEvmFactory,
-> {
+#[derive(Debug, Clone, Default)]
+pub struct GnosisBlockExecutorFactory<R = AlloyReceiptBuilder, EvmFactory = GnosisEvmFactory> {
     /// Receipt builder.
     receipt_builder: R,
     /// Chain specification.
-    spec: Spec,
+    spec: GnosisChainSpec,
     /// EVM factory.
     evm_factory: EvmFactory,
 
@@ -287,12 +283,12 @@ pub struct GnosisBlockExecutorFactory<
     block_rewards_address: Address,
 }
 
-impl<R, Spec, EvmFactory> GnosisBlockExecutorFactory<R, Spec, EvmFactory> {
+impl<R, EvmFactory> GnosisBlockExecutorFactory<R, EvmFactory> {
     /// Creates a new [`GnosisBlockExecutorFactory`] with the given spec, [`EvmFactory`], and
     /// [`ReceiptBuilder`].
     pub const fn new(
         receipt_builder: R,
-        spec: Spec,
+        spec: GnosisChainSpec,
         evm_factory: EvmFactory,
         block_rewards_address: Address,
     ) -> Self {
@@ -310,7 +306,7 @@ impl<R, Spec, EvmFactory> GnosisBlockExecutorFactory<R, Spec, EvmFactory> {
     }
 
     /// Exposes the chain specification.
-    pub const fn spec(&self) -> &Spec {
+    pub const fn spec(&self) -> &GnosisChainSpec {
         &self.spec
     }
 
@@ -320,10 +316,9 @@ impl<R, Spec, EvmFactory> GnosisBlockExecutorFactory<R, Spec, EvmFactory> {
     }
 }
 
-impl<R, Spec, EvmF> BlockExecutorFactory for GnosisBlockExecutorFactory<R, Spec, EvmF>
+impl<R, EvmF> BlockExecutorFactory for GnosisBlockExecutorFactory<R, EvmF>
 where
     R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
-    Spec: EthExecutorSpec,
     EvmF: EvmFactory<Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
     Self: 'static,
 {
