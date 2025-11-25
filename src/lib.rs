@@ -1,5 +1,6 @@
 // use consensus::GnosisBeaconConsensus;
 use evm_config::GnosisEvmConfig;
+use gnosis_primitives::header::GnosisHeader;
 use network::GnosisNetworkBuilder;
 use payload_builder::GnosisPayloadBuilder;
 use pool::GnosisPoolBuilder;
@@ -25,7 +26,10 @@ use std::sync::Arc;
 use crate::{
     engine::{GnosisEngineTypes, GnosisEngineValidator},
     payload::GnosisBuiltPayload,
-    primitives::GnosisNodePrimitives,
+    primitives::{
+        block::{BlockBody, GnosisBlock, TransactionSigned},
+        GnosisNodePrimitives,
+    },
     rpc::GnosisNetwork,
 };
 
@@ -107,15 +111,29 @@ impl GnosisNode {
 impl NodeTypes for GnosisNode {
     type Primitives = GnosisNodePrimitives;
     type ChainSpec = GnosisChainSpec;
-    type Storage = EthStorage;
+    type Storage = EthStorage<TransactionSigned, GnosisHeader>;
     type Payload = GnosisEngineTypes;
 }
 
 impl<N: FullNodeComponents<Types = Self>> DebugNode<N> for GnosisNode {
     type RpcBlock = alloy_rpc_types_eth::Block;
 
-    fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> reth_ethereum_primitives::Block {
-        rpc_block.into_consensus().convert_transactions()
+    fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> GnosisBlock {
+        let block: reth_ethereum_primitives::Block =
+            rpc_block.into_consensus().convert_transactions();
+        GnosisBlock {
+            header: GnosisHeader::from(block.header),
+            body: BlockBody {
+                transactions: block.body.transactions,
+                ommers: block
+                    .body
+                    .ommers
+                    .into_iter()
+                    .map(GnosisHeader::from)
+                    .collect(),
+                withdrawals: block.body.withdrawals,
+            },
+        }
     }
 
     fn local_payload_attributes_builder(

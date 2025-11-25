@@ -1,7 +1,7 @@
-use alloy_consensus::{BlockHeader, Header};
+use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
+use gnosis_primitives::header::GnosisHeader;
 use reth::rpc::types::engine::ExecutionData;
-use reth_ethereum_primitives::Block;
 use reth_evm::eth::EthBlockExecutionCtx;
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 use reth_primitives::TxTy;
@@ -25,6 +25,7 @@ use crate::blobs::CANCUN_BLOB_PARAMS;
 use crate::block::GnosisBlockExecutorFactory;
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
+use crate::primitives::block::GnosisBlock;
 use crate::primitives::GnosisNodePrimitives;
 use crate::spec::gnosis_spec::GnosisChainSpec;
 
@@ -118,7 +119,7 @@ impl ConfigureEvm for GnosisEvmConfig {
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &Header) -> Result<EvmEnv, Self::Error> {
+    fn evm_env(&self, header: &GnosisHeader) -> Result<EvmEnv, Self::Error> {
         let blob_params = self.chain_spec().blob_params_at_timestamp(header.timestamp);
         let spec = revm_spec(self.chain_spec(), header);
 
@@ -174,7 +175,7 @@ impl ConfigureEvm for GnosisEvmConfig {
 
     fn next_evm_env(
         &self,
-        parent: &Header,
+        parent: &GnosisHeader,
         attributes: &NextBlockEnvAttributes,
     ) -> Result<EvmEnv, Self::Error> {
         // ensure we're not missing any timestamp based hardforks
@@ -237,19 +238,19 @@ impl ConfigureEvm for GnosisEvmConfig {
 
     fn context_for_block<'a>(
         &self,
-        block: &'a SealedBlock<Block>,
+        block: &'a SealedBlock<GnosisBlock>,
     ) -> Result<EthBlockExecutionCtx<'a>, Self::Error> {
         Ok(EthBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
-            ommers: &block.body().ommers,
+            ommers: &[],
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
         })
     }
 
     fn context_for_next_block(
         &self,
-        parent: &SealedHeader,
+        parent: &SealedHeader<GnosisHeader>,
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<EthBlockExecutionCtx<'_>, Self::Error> {
         Ok(EthBlockExecutionCtx {

@@ -16,7 +16,7 @@ use reth_ethereum_forks::hardfork;
 use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use reth_primitives::SealedHeader;
-use revm_primitives::{b256, Address, B256, U256};
+use revm_primitives::{b256, Address, FixedBytes, B256, U256};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Chain {
@@ -140,7 +140,7 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn genesis_header(&self) -> &Self::Header {
-        self.inner.genesis_header()
+        &self.genesis_header
     }
 
     fn genesis(&self) -> &Genesis {
@@ -455,10 +455,15 @@ impl From<Genesis> for GnosisChainSpec {
 
         let hardforks = ChainHardforks::new(ordered_hardforks);
 
-        let genesis_header = GnosisHeader::from(make_genesis_header(&genesis, &hardforks));
-        let curr_genesis_hash = genesis_header.hash_slow();
-        let genesis_header =
-            SealedHeader::new(genesis_header, genesis_hash(chain_id, curr_genesis_hash));
+        let mut genesis_header = GnosisHeader::from(make_genesis_header(&genesis, &hardforks));
+        genesis_header.mix_hash = None;
+        genesis_header.nonce = None;
+        genesis_header.aura_seal = Some(FixedBytes::<65>::ZERO);
+        genesis_header.aura_step = Some(U256::ZERO);
+        let genesis_header = SealedHeader::new_unhashed(genesis_header);
+        // let curr_genesis_hash = genesis_header.hash_slow();
+        // let genesis_header =
+        //     SealedHeader::new(genesis_header, genesis_hash(chain_id, curr_genesis_hash));
 
         Self {
             inner: ChainSpec {
