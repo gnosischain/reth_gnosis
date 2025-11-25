@@ -1,16 +1,22 @@
 use std::{ffi::OsString, fmt, future::Future, sync::Arc};
 
-use clap::{value_parser, Parser};
+use crate::cli::import_era;
+use clap::{value_parser, Parser, Subcommand};
 use reth::{
     args::LogArgs,
     builder::{NodeBuilder, WithLaunchContext},
-    cli::Commands,
     prometheus_exporter::install_prometheus_recorder,
     version::version_metadata,
     CliRunner,
 };
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::{common::CliComponentsBuilder, launcher::FnLauncher, node::NoArgs};
+use reth_cli_commands::{
+    common::CliComponentsBuilder,
+    config_cmd, db, download, dump_genesis, export_era, import, init_cmd, init_state,
+    launcher::FnLauncher,
+    node::{self, NoArgs},
+    p2p, prune, re_execute, stage,
+};
 use reth_consensus::FullConsensus;
 use reth_db::DatabaseEnv;
 use reth_errors::ConsensusError;
@@ -30,8 +36,10 @@ use crate::{
 /// This is the entrypoint to the executable.
 #[derive(Debug, Parser)]
 #[command(author, version = version_metadata().short_version.as_ref(), long_version = version_metadata().long_version.as_ref(), about = "Reth", long_about = None)]
-pub struct Cli<Spec: ChainSpecParser = GnosisChainSpecParser, Ext: clap::Args + fmt::Debug = NoArgs>
-{
+pub struct GnosisCli<
+    Spec: ChainSpecParser = GnosisChainSpecParser,
+    Ext: clap::Args + fmt::Debug = NoArgs,
+> {
     /// The command to run
     #[command(subcommand)]
     pub command: Commands<Spec, Ext>,
@@ -69,7 +77,7 @@ pub struct Cli<Spec: ChainSpecParser = GnosisChainSpecParser, Ext: clap::Args + 
     logs: LogArgs,
 }
 
-impl Cli {
+impl GnosisCli {
     /// Parsers only the default CLI arguments
     pub fn parse_args() -> Self {
         Self::parse()
@@ -85,7 +93,7 @@ impl Cli {
     }
 }
 
-impl<C, Ext> Cli<C, Ext>
+impl<C, Ext> GnosisCli<C, Ext>
 where
     C: ChainSpecParser<ChainSpec = GnosisChainSpec>,
     Ext: clap::Args + fmt::Debug,
@@ -184,7 +192,9 @@ where
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::Import(_command) => unimplemented!(),
             // Commands::Debug(_command) => todo!(),
-            Commands::ImportEra(_) => unimplemented!(),
+            Commands::ImportEra(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+            }
             Commands::Download(_) => unimplemented!(),
             Commands::ExportEra(_export_era_command) => unimplemented!(),
             Commands::ReExecute(_command) => unimplemented!(),
@@ -202,5 +212,76 @@ where
 
     pub fn set_chain(&mut self, chain: Arc<GnosisChainSpec>) {
         self.chain = chain;
+    }
+}
+
+// Ref: https://github.com/paradigmxyz/reth/blob/79c71b86924d6cb9f3d2fa36f1a6f49b27e1735d/crates/ethereum/cli/src/interface.rs#L222-L269
+
+/// Implementing our own Commands is needed to have custom path for ImportEra command
+/// Commands to be executed
+#[derive(Debug, Subcommand)]
+pub enum Commands<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> {
+    /// Start the node
+    #[command(name = "node")]
+    Node(Box<node::NodeCommand<C, Ext>>),
+    /// Initialize the database from a genesis file.
+    #[command(name = "init")]
+    Init(init_cmd::InitCommand<C>),
+    /// Initialize the database from a state dump file.
+    #[command(name = "init-state")]
+    InitState(init_state::InitStateCommand<C>),
+    /// This syncs RLP encoded blocks from a file.
+    #[command(name = "import")]
+    Import(import::ImportCommand<C>),
+    /// This syncs ERA encoded blocks from a directory.
+    #[command(name = "import-era")]
+    ImportEra(import_era::ImportEraCommand<C>),
+    /// Exports block to era1 files in a specified directory.
+    #[command(name = "export-era")]
+    ExportEra(export_era::ExportEraCommand<C>),
+    /// Dumps genesis block JSON configuration to stdout.
+    DumpGenesis(dump_genesis::DumpGenesisCommand<C>),
+    /// Database debugging utilities
+    #[command(name = "db")]
+    Db(db::Command<C>),
+    /// Download public node snapshots
+    #[command(name = "download")]
+    Download(download::DownloadCommand<C>),
+    /// Manipulate individual stages.
+    #[command(name = "stage")]
+    Stage(stage::Command<C>),
+    /// P2P Debugging utilities
+    #[command(name = "p2p")]
+    P2P(Box<p2p::Command<C>>),
+    /// Write config to stdout
+    #[command(name = "config")]
+    Config(config_cmd::Command),
+    /// Prune according to the configuration without any limits
+    #[command(name = "prune")]
+    Prune(prune::PruneCommand<C>),
+    /// Re-execute blocks in parallel to verify historical sync correctness.
+    #[command(name = "re-execute")]
+    ReExecute(re_execute::Command<C>),
+}
+
+impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> Commands<C, Ext> {
+    /// Returns the underlying chain being used for commands
+    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+        match self {
+            Self::Node(cmd) => cmd.chain_spec(),
+            Self::Init(cmd) => cmd.chain_spec(),
+            Self::InitState(cmd) => cmd.chain_spec(),
+            Self::Import(cmd) => cmd.chain_spec(),
+            Self::ExportEra(cmd) => cmd.chain_spec(),
+            Self::ImportEra(cmd) => cmd.chain_spec(),
+            Self::DumpGenesis(cmd) => cmd.chain_spec(),
+            Self::Db(cmd) => cmd.chain_spec(),
+            Self::Download(cmd) => cmd.chain_spec(),
+            Self::Stage(cmd) => cmd.chain_spec(),
+            Self::P2P(cmd) => cmd.chain_spec(),
+            Self::Config(_) => None,
+            Self::Prune(cmd) => cmd.chain_spec(),
+            Self::ReExecute(cmd) => cmd.chain_spec(),
+        }
     }
 }

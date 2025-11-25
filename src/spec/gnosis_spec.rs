@@ -461,9 +461,6 @@ impl From<Genesis> for GnosisChainSpec {
         genesis_header.aura_seal = Some(FixedBytes::<65>::ZERO);
         genesis_header.aura_step = Some(U256::ZERO);
         let genesis_header = SealedHeader::new_unhashed(genesis_header);
-        // let curr_genesis_hash = genesis_header.hash_slow();
-        // let genesis_header =
-        //     SealedHeader::new(genesis_header, genesis_hash(chain_id, curr_genesis_hash));
 
         Self {
             inner: ChainSpec {
