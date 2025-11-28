@@ -47,8 +47,7 @@ pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -
 #[derive(Debug, Clone)]
 pub struct GnosisEvmConfig {
     /// Inner [`GnosisBlockExecutorFactory`].
-    pub executor_factory:
-        GnosisBlockExecutorFactory<RethReceiptBuilder, Arc<GnosisChainSpec>, GnosisEvmFactory>,
+    pub executor_factory: GnosisBlockExecutorFactory<RethReceiptBuilder, GnosisEvmFactory>,
     /// Ethereum block assembler.
     pub block_assembler: GnosisBlockAssembler<GnosisChainSpec>,
     /// Spec.
@@ -81,7 +80,7 @@ impl GnosisEvmConfig {
             block_assembler: GnosisBlockAssembler::new(chain_spec.clone()),
             executor_factory: GnosisBlockExecutorFactory::new(
                 RethReceiptBuilder::default(),
-                chain_spec.clone(),
+                (*chain_spec).clone(),
                 GnosisEvmFactory {
                     fee_collector_address,
                 },
@@ -107,8 +106,7 @@ impl ConfigureEvm for GnosisEvmConfig {
     type Primitives = GnosisNodePrimitives;
     type Error = Infallible;
     type NextBlockEnvCtx = NextBlockEnvAttributes;
-    type BlockExecutorFactory =
-        GnosisBlockExecutorFactory<RethReceiptBuilder, Arc<GnosisChainSpec>, GnosisEvmFactory>;
+    type BlockExecutorFactory = GnosisBlockExecutorFactory<RethReceiptBuilder, GnosisEvmFactory>;
     type BlockAssembler = GnosisBlockAssembler<GnosisChainSpec>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
