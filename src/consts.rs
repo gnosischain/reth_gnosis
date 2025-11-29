@@ -108,10 +108,10 @@ pub fn parse_balancer_hardfork_config(
     let config = parsed_mapping
         .into_iter()
         .map(|(addr, bytecode_str)| {
-            let bytecode = if bytecode_str.len() > 0 {
+            let bytecode = if !bytecode_str.is_empty() {
                 Some(Bytecode::new_legacy(
                     Bytes::from_hex(bytecode_str)
-                        .expect(&format!("Unable to parse bytecode hex for {addr}")),
+                        .unwrap_or_else(|_| panic!("Unable to parse bytecode hex for {addr}")),
                 ))
             } else {
                 None

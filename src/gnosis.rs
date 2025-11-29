@@ -269,7 +269,7 @@ pub fn rewrite_bytecodes(
             transaction_id: 0,
         };
         if let Ok(standard_font) = FIGfont::standard() {
-            if let Some(figure) = standard_font.convert(&format!("Rewriting Bytecode")) {
+            if let Some(figure) = standard_font.convert("Rewriting Bytecode") {
                 tracing::info!(
                     "\n{} Addr: {}; From: {}; To: {}",
                     figure,

@@ -104,8 +104,7 @@ impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
         if !self
             .chain_spec()
             .is_balancer_hardfork_active_at_timestamp(block.timestamp)
-        {
-            if block.timestamp
+            && block.timestamp
                 > env::var("GNOSIS_EL_PATCH_TIME")
                     .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
                     .parse::<u64>()
@@ -132,7 +131,6 @@ impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
                     }
                 }
             }
-        }
 
         Ok(block)
     }

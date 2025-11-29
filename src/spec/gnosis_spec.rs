@@ -535,8 +535,8 @@ impl GnosisChainSpec {
         let mut forkhash = ForkHash::from(genesis_hash);
         let mut current_applied = 0;
 
-        println!("Genesis hash: {}", genesis_hash);
-        println!("Initial fork hash: {:?}\n", forkhash);
+        println!("Genesis hash: {genesis_hash}");
+        println!("Initial fork hash: {forkhash:?}\n");
 
         // Print block-based forks
         println!("Block-based forks:");
@@ -581,7 +581,7 @@ impl GnosisChainSpec {
             }
         }
 
-        println!("\nFinal fork hash: {:?}", forkhash);
+        println!("\nFinal fork hash: {forkhash:?}");
         println!("===================================\n");
         println!(
             "Current timestamp: {}",

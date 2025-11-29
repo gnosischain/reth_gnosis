@@ -179,8 +179,7 @@ fn test_rewrite_bytecodes_all_addresses_processed() {
         let account = evm.db_mut().basic(*addr).unwrap().unwrap();
         assert_eq!(
             account.code_hash, *expected_code_hash,
-            "Address {:?} should have expected code hash",
-            addr
+            "Address {addr:?} should have expected code hash"
         );
     }
 }
@@ -280,7 +279,7 @@ fn test_rewrite_bytecodes_idempotent() {
             AccountInfo {
                 balance: U256::from(100),
                 nonce: 1,
-                code_hash: keccak256(&[0xba, 0xd]),
+                code_hash: keccak256([0xba, 0xd]),
                 code: Some(Bytecode::new_legacy(Bytes::from_static(&[0xba, 0xd]))),
             },
         );

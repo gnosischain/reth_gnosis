@@ -225,8 +225,8 @@ where
     let is_osaka = chain_spec.is_osaka_active_at_timestamp(attributes.timestamp);
 
     while let Some(pool_tx) = best_txs.next() {
-        if !chain_spec.is_balancer_hardfork_active_at_timestamp(attributes.timestamp) {
-            if attributes.timestamp
+        if !chain_spec.is_balancer_hardfork_active_at_timestamp(attributes.timestamp)
+            && attributes.timestamp
                 > env::var("GNOSIS_EL_PATCH_TIME")
                     .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
                     .parse::<u64>()
@@ -255,7 +255,6 @@ where
                     continue;
                 };
             }
-        }
 
         // ensure we still have capacity for this transaction
         if cumulative_gas_used + pool_tx.gas_limit() > block_gas_limit {
