@@ -231,30 +231,30 @@ where
                     .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
                     .parse::<u64>()
                     .unwrap_or_default()
+        {
+            let sender = pool_tx.sender();
+            let to = pool_tx.to().unwrap_or_default();
+
+            let is_patch2_enabled: bool = attributes.timestamp
+                > env::var("GNOSIS_EL_7702_PATCH_TIME")
+                    .unwrap_or(DEFAULT_7702_PATCH_TIME.to_string())
+                    .parse::<u64>()
+                    .unwrap_or_default();
+
+            if is_sender_blacklisted(&sender)
+                || is_to_address_blacklisted(&to)
+                || (is_patch2_enabled
+                    && is_blacklisted_setcode(&pool_tx.transaction.clone().into_consensus()))
             {
-                let sender = pool_tx.sender();
-                let to = pool_tx.to().unwrap_or_default();
-
-                let is_patch2_enabled: bool = attributes.timestamp
-                    > env::var("GNOSIS_EL_7702_PATCH_TIME")
-                        .unwrap_or(DEFAULT_7702_PATCH_TIME.to_string())
-                        .parse::<u64>()
-                        .unwrap_or_default();
-
-                if is_sender_blacklisted(&sender)
-                    || is_to_address_blacklisted(&to)
-                    || (is_patch2_enabled
-                        && is_blacklisted_setcode(&pool_tx.transaction.clone().into_consensus()))
-                {
-                    best_txs.mark_invalid(
-                        &pool_tx,
-                        InvalidPoolTransactionError::Other(Box::new(GnosisError::custom(
-                            "Cannot proceed with tx (payload building)",
-                        ))),
-                    );
-                    continue;
-                };
-            }
+                best_txs.mark_invalid(
+                    &pool_tx,
+                    InvalidPoolTransactionError::Other(Box::new(GnosisError::custom(
+                        "Cannot proceed with tx (payload building)",
+                    ))),
+                );
+                continue;
+            };
+        }
 
         // ensure we still have capacity for this transaction
         if cumulative_gas_used + pool_tx.gas_limit() > block_gas_limit {

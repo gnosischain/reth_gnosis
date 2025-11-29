@@ -109,28 +109,28 @@ impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
                     .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
                     .parse::<u64>()
                     .unwrap_or_default()
-            {
-                let is_patch2_enabled: bool = block.timestamp
-                    > env::var("GNOSIS_EL_7702_PATCH_TIME")
-                        .unwrap_or(DEFAULT_7702_PATCH_TIME.to_string())
-                        .parse::<u64>()
-                        .unwrap_or_default();
+        {
+            let is_patch2_enabled: bool = block.timestamp
+                > env::var("GNOSIS_EL_7702_PATCH_TIME")
+                    .unwrap_or(DEFAULT_7702_PATCH_TIME.to_string())
+                    .parse::<u64>()
+                    .unwrap_or_default();
 
-                for (sender, tx) in block.transactions_with_sender() {
-                    if is_sender_blacklisted(sender)
-                        || is_to_address_blacklisted(&tx.to().unwrap_or_default())
-                        || (is_patch2_enabled && is_blacklisted_setcode(tx))
-                    {
-                        return Err(NewPayloadError::other(GnosisError::custom(format!(
+            for (sender, tx) in block.transactions_with_sender() {
+                if is_sender_blacklisted(sender)
+                    || is_to_address_blacklisted(&tx.to().unwrap_or_default())
+                    || (is_patch2_enabled && is_blacklisted_setcode(tx))
+                {
+                    return Err(NewPayloadError::other(GnosisError::custom(format!(
                             "Unable to proceed (ensure_well_formed_payload) - signer: {}, to: {:?}, block: {}, {}",
                             &sender,
                             &tx.to().unwrap_or_default(),
                             &block.number,
                             &hash
                         ))));
-                    }
                 }
             }
+        }
 
         Ok(block)
     }
