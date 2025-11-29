@@ -228,8 +228,6 @@ where
     type Validator = GnosisEngineValidator;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
-        Ok(GnosisEngineValidator::new(Arc::new(
-            ctx.config.chain.inner.clone(),
-        )))
+        Ok(GnosisEngineValidator::new(ctx.config.chain.clone()))
     }
 }

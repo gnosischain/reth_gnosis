@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use core::fmt::Display;
 
@@ -583,5 +583,12 @@ impl GnosisChainSpec {
 
         println!("\nFinal fork hash: {:?}", forkhash);
         println!("===================================\n");
+        println!(
+            "Current timestamp: {}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        );
     }
 }
