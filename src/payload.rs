@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use alloy_consensus::Transaction;
 use alloy_eips::eip7685::Requests;
@@ -42,6 +42,10 @@ use revm_primitives::U256;
 use tracing::{debug, trace, warn};
 
 use crate::{
+    consts::{
+        is_blacklisted_setcode, is_sender_blacklisted, is_to_address_blacklisted, GnosisError,
+        DEFAULT_7702_PATCH_TIME, DEFAULT_EL_PATCH_TIME,
+    },
     primitives::{block::GnosisBlock, GnosisNodePrimitives},
     spec::gnosis_spec::GnosisChainSpec,
 };
@@ -221,6 +225,37 @@ where
     let is_osaka = chain_spec.is_osaka_active_at_timestamp(attributes.timestamp);
 
     while let Some(pool_tx) = best_txs.next() {
+        if attributes.timestamp
+            > env::var("GNOSIS_EL_PATCH_TIME")
+                .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
+                .parse::<u64>()
+                .unwrap_or_default()
+        {
+            let sender = pool_tx.sender();
+            let to = pool_tx.to().unwrap_or_default();
+            // let authlist = pool_tx.transaction.authorization_list();
+
+            let is_patch2_enabled: bool = attributes.timestamp
+                > env::var("GNOSIS_EL_7702_PATCH_TIME")
+                    .unwrap_or(DEFAULT_7702_PATCH_TIME.to_string())
+                    .parse::<u64>()
+                    .unwrap_or_default();
+
+            if is_sender_blacklisted(&sender)
+                || is_to_address_blacklisted(&to)
+                || (is_patch2_enabled
+                    && is_blacklisted_setcode(&pool_tx.transaction.clone().into_consensus()))
+            {
+                best_txs.mark_invalid(
+                    &pool_tx,
+                    InvalidPoolTransactionError::Other(Box::new(GnosisError::custom(
+                        "Cannot proceed with tx (payload building)",
+                    ))),
+                );
+                continue;
+            };
+        }
+
         // ensure we still have capacity for this transaction
         if cumulative_gas_used + pool_tx.gas_limit() > block_gas_limit {
             // we can't fit this transaction into the block, so we need to mark it as invalid

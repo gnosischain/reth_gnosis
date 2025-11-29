@@ -1,20 +1,24 @@
 use crate::errors::GnosisBlockExecutionError;
+use crate::spec::gnosis_spec::{BalancerHardforkConfig, GnosisHardForks};
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
 use alloy_primitives::U256;
 use alloy_primitives::{map::HashMap, Address, Bytes};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
+use figlet_rs::FIGfont;
 use reth_evm::{
     block::{StateChangePostBlockSource, StateChangeSource, SystemCaller},
     eth::spec::EthExecutorSpec,
     execute::{BlockExecutionError, InternalBlockExecutionError},
     Evm,
 };
+use revm::Database;
 use revm::{
     context::result::{ExecutionResult, Output, ResultAndState},
     DatabaseCommit,
 };
+use revm_state::{Account, AccountInfo};
 use std::fmt::Display;
 
 // Codegen from https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
@@ -46,7 +50,7 @@ fn apply_withdrawals_contract_call<SPEC>(
     system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<Bytes, BlockExecutionError>
 where
-    SPEC: EthExecutorSpec,
+    SPEC: EthExecutorSpec + GnosisHardForks,
 {
     // TODO: Only do the call post-merge
     // TODO: Should this call be made for the genesis block?
@@ -108,7 +112,7 @@ fn apply_block_rewards_contract_call<SPEC>(
     system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<HashMap<Address, u128>, BlockExecutionError>
 where
-    SPEC: EthExecutorSpec,
+    SPEC: EthExecutorSpec + GnosisHardForks,
 {
     let ResultAndState { result, state } = match evm.transact_system_call(
         alloy_eips::eip4788::SYSTEM_ADDRESS,
@@ -205,17 +209,16 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_post_block_system_calls<SPEC>(
     chain_spec: &SPEC,
-    // evm_config: &EvmConfig,
     block_rewards_contract: Address,
     withdrawal_contract: Address,
     block_timestamp: u64,
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
-    evm: &mut impl Evm<DB: DatabaseCommit>,
+    evm: &mut impl Evm<DB: Database + DatabaseCommit>,
     system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<(HashMap<alloy_primitives::Address, u128>, Bytes), BlockExecutionError>
 where
-    SPEC: EthExecutorSpec,
+    SPEC: EthExecutorSpec + GnosisHardForks,
 {
     let mut withdrawal_requests = Bytes::new();
 
@@ -231,4 +234,54 @@ where
         apply_block_rewards_contract_call(block_rewards_contract, coinbase, evm, system_caller)?;
 
     Ok((balance_increments, withdrawal_requests))
+}
+
+pub fn rewrite_bytecodes(
+    evm: &mut impl Evm<DB: Database + DatabaseCommit>,
+    balancer_hardfork_config: &BalancerHardforkConfig,
+) {
+    let mut state: HashMap<Address, Account> = Default::default();
+    for (addr, code, expected_code_hash) in &balancer_hardfork_config.config {
+        let original_account_info = evm
+            .db_mut()
+            .basic(*addr)
+            .unwrap_or_default()
+            .unwrap_or_default();
+        if &original_account_info.code_hash == expected_code_hash {
+            // No need to rewrite
+            tracing::trace!(">>> Skipping rewrite for address: {}", addr);
+            tracing::trace!("    Code hash matches expected: {}", expected_code_hash);
+            continue;
+        }
+        let modified_account_info = AccountInfo {
+            code_hash: if let Some(ref code) = code {
+                code.hash_slow()
+            } else {
+                KECCAK_EMPTY
+            },
+            code: code.clone(),
+            ..original_account_info
+        };
+        let account = Account {
+            info: modified_account_info,
+            storage: HashMap::default(),
+            status: revm_state::AccountStatus::Touched,
+            transaction_id: 0,
+        };
+        if let Ok(standard_font) = FIGfont::standard() {
+            if let Some(figure) = standard_font.convert(&format!("Rewriting Bytecode")) {
+                tracing::info!(
+                    "\n{} Addr: {}; From: {}; To: {}",
+                    figure,
+                    addr,
+                    original_account_info.code_hash,
+                    account.info.code_hash
+                );
+            }
+        }
+        state.insert(*addr, account);
+    }
+
+    // commit the modified accounts to the EVM database
+    evm.db_mut().commit(state);
 }

@@ -32,8 +32,8 @@ use revm_database::State;
 use revm_primitives::{Address, Log};
 
 use crate::evm::factory::GnosisEvmFactory;
-use crate::gnosis::apply_post_block_system_calls;
-use crate::spec::gnosis_spec::GnosisChainSpec;
+use crate::gnosis::{apply_post_block_system_calls, rewrite_bytecodes};
+use crate::spec::gnosis_spec::{GnosisChainSpec, GnosisHardForks};
 
 // REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/op-evm/src/block/mod.rs#L42
 /// Block executor for Ethereum.
@@ -106,6 +106,14 @@ where
             .spec
             .is_spurious_dragon_active_at_block(self.evm.block().number.saturating_to());
         self.evm.db_mut().set_state_clear_flag(state_clear_flag);
+
+        if self
+            .spec
+            .is_balancer_hardfork_active_at_timestamp(self.evm.block().timestamp.to())
+                && self.spec.balancer_hardfork_config.is_some()
+        {
+            rewrite_bytecodes(&mut self.evm, self.spec.balancer_hardfork_config.as_ref().unwrap());
+        }
 
         self.system_caller
             .apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
