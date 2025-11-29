@@ -110,9 +110,12 @@ where
         if self
             .spec
             .is_balancer_hardfork_active_at_timestamp(self.evm.block().timestamp.to())
-                && self.spec.balancer_hardfork_config.is_some()
+            && self.spec.balancer_hardfork_config.is_some()
         {
-            rewrite_bytecodes(&mut self.evm, self.spec.balancer_hardfork_config.as_ref().unwrap());
+            rewrite_bytecodes(
+                &mut self.evm,
+                self.spec.balancer_hardfork_config.as_ref().unwrap(),
+            );
         }
 
         self.system_caller
