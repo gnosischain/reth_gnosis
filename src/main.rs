@@ -1,6 +1,9 @@
+use std::env;
+
 use clap::{Args, Parser};
 use reth_cli_commands::common::EnvironmentArgs;
 use reth_gnosis::cli::gnosis_cli::Commands;
+use reth_gnosis::consts::{DEFAULT_7702_PATCH_TIME, DEFAULT_EL_PATCH_TIME};
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{
@@ -22,6 +25,18 @@ type CliGnosis = GnosisCli<GnosisChainSpecParser, NoArgs>;
 fn main() {
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
+
+    let timestamp = env::var("GNOSIS_EL_PATCH_TIME")
+        .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
+        .parse::<u64>()
+        .unwrap_or_default();
+    println!("Gnosis EL Patch Time is set to: {timestamp}");
+
+    let is_patch2_enabled = env::var("GNOSIS_EL_7702_PATCH_TIME")
+        .unwrap_or(DEFAULT_7702_PATCH_TIME.to_string())
+        .parse::<u64>()
+        .unwrap_or_default();
+    println!("GNOSIS_EL_7702_PATCH_TIME Time is set to: {is_patch2_enabled}");
 
     // Fetch pre-merge state from a URL and load into the DB
     if let Commands::Node(ref node_cmd) = user_cli.command {
