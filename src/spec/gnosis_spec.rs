@@ -387,6 +387,10 @@ impl From<Genesis> for GnosisChainSpec {
         };
 
         // Paris
+        dbg!(
+            ">> TTD from genesis: ",
+            &genesis.config.terminal_total_difficulty
+        );
         let paris_block_and_final_difficulty =
             if let Some(ttd) = genesis.config.terminal_total_difficulty {
                 hardforks.push((
@@ -403,10 +407,7 @@ impl From<Genesis> for GnosisChainSpec {
                     },
                 ));
 
-                genesis
-                    .config
-                    .merge_netsplit_block
-                    .map(|block| (block, ttd))
+                Some((genesis.config.merge_netsplit_block.unwrap_or_default(), ttd))
             } else {
                 None
             };
@@ -460,12 +461,18 @@ impl From<Genesis> for GnosisChainSpec {
 
         let hardforks = ChainHardforks::new(hardforks);
 
+        let is_paris_active_at_genesis =
+            genesis.config.terminal_total_difficulty == Some(U256::ZERO);
+
         let mut genesis_header = GnosisHeader::from(make_genesis_header(&genesis, &hardforks));
-        genesis_header.mix_hash = None;
-        genesis_header.nonce = None;
-        genesis_header.aura_seal = Some(FixedBytes::<65>::ZERO);
-        genesis_header.aura_step = Some(U256::ZERO);
+        if !is_paris_active_at_genesis {
+            genesis_header.mix_hash = None;
+            genesis_header.nonce = None;
+            genesis_header.aura_seal = Some(FixedBytes::<65>::ZERO);
+            genesis_header.aura_step = Some(U256::ZERO);
+        }
         let genesis_header = SealedHeader::new_unhashed(genesis_header);
+        dbg!(&genesis_header);
 
         Self {
             inner: ChainSpec {
