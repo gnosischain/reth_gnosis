@@ -64,6 +64,10 @@ fn run_reth(cli: CliGnosis) {
             .node(GnosisNode::new())
             .launch_with_debug_capabilities()
             .await?;
+
+        // Log fork IDs after node startup when tracing is initialized
+        handle.node.chain_spec().log_all_fork_ids();
+
         handle.node_exit_future.await
     }) {
         eprintln!("Error: {err:?}");

@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::SystemTime};
 
 use core::fmt::Display;
+use tracing::debug;
 
 use crate::{
     blobs::gnosis_blob_schedule, consts::parse_balancer_hardfork_config,
@@ -266,8 +267,6 @@ impl Hardforks for GnosisChainSpec {
                 _ => return None,
             })
         });
-
-        self.print_all_fork_ids();
 
         ForkFilter::new(head, self.genesis_hash(), self.genesis_timestamp(), forks)
     }
@@ -539,19 +538,18 @@ impl GnosisHardForks for GnosisChainSpec {
 }
 
 impl GnosisChainSpec {
-    /// Print fork IDs for all hardforks, including future ones
-    pub fn print_all_fork_ids(&self) {
-        println!("=== Fork IDs for all hardforks ===");
+    /// Log fork IDs for all hardforks, including future ones
+    pub fn log_all_fork_ids(&self) {
+        debug!(target: "reth::gnosis", "=== Fork IDs for all hardforks ===");
 
         let genesis_hash = genesis_hash(self.chain_id(), self.genesis_hash());
         let mut forkhash = ForkHash::from(genesis_hash);
         let mut current_applied = 0;
 
-        println!("Genesis hash: {genesis_hash}");
-        println!("Initial fork hash: {forkhash:?}\n");
+        debug!(target: "reth::gnosis", %genesis_hash, ?forkhash, "Genesis info");
 
-        // Print block-based forks
-        println!("Block-based forks:");
+        // Log block-based forks
+        debug!(target: "reth::gnosis", "Block-based forks:");
         for (hardfork, cond) in self.hardforks.forks_iter() {
             match cond {
                 ForkCondition::Block(block)
@@ -563,44 +561,46 @@ impl GnosisChainSpec {
                         forkhash += block;
                         current_applied = block;
                     }
-                    println!(
-                        "  {} @ block {}: hash={:?}, next={}",
-                        hardfork.name(),
+                    debug!(
+                        target: "reth::gnosis",
+                        hardfork = %hardfork.name(),
                         block,
-                        forkhash,
-                        block
+                        ?forkhash,
+                        "Block fork"
                     );
                 }
                 _ => {}
             }
         }
 
-        // Print timestamp-based forks
-        println!("\nTimestamp-based forks:");
+        // Log timestamp-based forks
+        debug!(target: "reth::gnosis", "Timestamp-based forks:");
         for (hardfork, cond) in self.hardforks.forks_iter() {
             if let ForkCondition::Timestamp(timestamp) = cond {
                 if timestamp > self.genesis.timestamp && timestamp != current_applied {
                     forkhash += timestamp;
                     current_applied = timestamp;
                 }
-                println!(
-                    "  {} @ timestamp {}: hash={:?}, next={}",
-                    hardfork.name(),
+                debug!(
+                    target: "reth::gnosis",
+                    hardfork = %hardfork.name(),
                     timestamp,
-                    forkhash,
-                    timestamp
+                    ?forkhash,
+                    "Timestamp fork"
                 );
             }
         }
 
-        println!("\nFinal fork hash: {forkhash:?}");
-        println!("===================================\n");
-        println!(
-            "Current timestamp: {}",
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
+        let current_timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        debug!(
+            target: "reth::gnosis",
+            ?forkhash,
+            current_timestamp,
+            "Final fork hash"
         );
     }
 }
