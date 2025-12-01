@@ -387,10 +387,6 @@ impl From<Genesis> for GnosisChainSpec {
         };
 
         // Paris
-        dbg!(
-            ">> TTD from genesis: ",
-            &genesis.config.terminal_total_difficulty
-        );
         let paris_block_and_final_difficulty =
             if let Some(ttd) = genesis.config.terminal_total_difficulty {
                 hardforks.push((
@@ -482,7 +478,6 @@ impl From<Genesis> for GnosisChainSpec {
             genesis_header.aura_step = Some(U256::ZERO);
         }
         let genesis_header = SealedHeader::new_unhashed(genesis_header);
-        dbg!(&genesis_header);
 
         Self {
             inner: ChainSpec {
