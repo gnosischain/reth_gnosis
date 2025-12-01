@@ -29,54 +29,47 @@ pub const CHIADO_DOWNLOAD_SPEC: DownloadStateSpec = DownloadStateSpec {
 };
 
 // ────────────────────────────────────────────────────────────
-// Download/combine Gnosis state before the node boots
+// R2 hosted state files
 // ────────────────────────────────────────────────────────────
-const LFS_BATCH: &str = "https://github.com/gnosischain/reth-init-state.git/info/lfs/objects/batch";
+const R2_BASE: &str = "https://initstate.gnosischain.com";
 
-// Chunk OIDs and sizes
-const GNOSIS_CHUNKS: [(&str, u64); 2] = [
-    (
-        "610f2c013d695a1f60ccbdc2b125436121ab71be050dd18ba31fbfa214e7072f",
-        4_294_967_296,
-    ),
-    (
-        "a77414288d24c2e23685dbb3e6e53a21a6d1e5d6839c0cd60ed8a0eff3815cdd",
-        1_377_976_148,
-    ),
-];
-
-const CHIADO_CHUNKS: [(&str, u64); 1] = [(
-    "3b30b1e0ace67b6f3ac1735fa19dc3ddc6327d04dabf748b8296dbb4b7c69fdf",
-    22_468_068,
-)];
-
-fn get_chunks(chain: &str) -> Vec<(&'static str, u64)> {
+fn get_state_url(chain: &str) -> String {
     match chain {
-        "gnosis" => GNOSIS_CHUNKS.to_vec(),
-        "chiado" => CHIADO_CHUNKS.to_vec(),
+        "gnosis" => format!("{R2_BASE}/gnosis/compressed_state_26478650.jsonl.zst"),
+        "chiado" => format!("{R2_BASE}/chiado/compressed_state_700000.jsonl.zst"),
         _ => unreachable!(),
     }
 }
 
-const HEADER_FILE: &str = "header.rlp";
-
-fn get_header_url(chain: &str) -> &'static str {
+fn get_header_url(chain: &str) -> String {
     match chain {
-        "gnosis" => "https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/gnosis/header_26478650.rlp",
-        "chiado" => "https://media.githubusercontent.com/media/gnosischain/reth-init-state/refs/heads/main/chiado/header_700000.rlp",
+        "gnosis" => format!("{R2_BASE}/gnosis/header_26478650.rlp"),
+        "chiado" => format!("{R2_BASE}/chiado/header_700000.rlp"),
         _ => unreachable!(),
     }
 }
 
-const STATE_FILE: &str = "state.jsonl";
+/// Compressed .zst file size
+fn get_compressed_state_size(chain: &str) -> u64 {
+    match chain {
+        "gnosis" => 5_672_943_444,
+        "chiado" => 22_468_068,
+        _ => unreachable!(),
+    }
+}
 
-fn get_state_size(chain: &str) -> u64 {
+/// Decompressed state.jsonl file size
+fn get_decompressed_state_size(chain: &str) -> u64 {
     match chain {
         "gnosis" => 27_498_292_407,
         "chiado" => 111_610_557,
         _ => unreachable!(),
     }
 }
+
+const HEADER_FILE: &str = "header.rlp";
+const STATE_FILE: &str = "state.jsonl";
+const COMPRESSED_STATE_FILE: &str = "state.jsonl.zst";
 
 fn decompress_zstd(input_path: &str, output_path: &str, expected_size: u64) -> std::io::Result<()> {
     let input_file = File::open(input_path)?;
@@ -104,6 +97,37 @@ fn decompress_zstd(input_path: &str, output_path: &str, expected_size: u64) -> s
     Ok(())
 }
 
+/// Downloads a file with progress bar
+async fn download_file(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    expected_size: u64,
+) -> anyhow::Result<()> {
+    let tmp = dest.with_extension("part");
+
+    let pb = ProgressBar::new(expected_size);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} {bytes}/{total_bytes} [{bar:40.cyan/blue}] {bytes_per_sec} ETA {eta}",
+        )
+        .unwrap()
+        .progress_chars("#>-"),
+    );
+
+    let mut file = fs::File::create(&tmp).await?;
+    let mut resp = client.get(url).send().await?.error_for_status()?;
+    while let Some(chunk) = resp.chunk().await? {
+        file.write_all(&chunk).await?;
+        pb.inc(chunk.len() as u64);
+    }
+    file.flush().await?;
+    pb.finish();
+
+    fs::rename(&tmp, dest).await?;
+    Ok(())
+}
+
 /// Downloads the initial state
 pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
     fs::create_dir_all(data_dir).await?;
@@ -120,83 +144,54 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
         .timeout(Duration::from_secs(600))
         .build()?;
 
-    // download/verify each chunk
-    for (idx, (oid, size)) in get_chunks(chain).iter().enumerate() {
-        let name = format!("chunk_{idx:02}");
-        let out = data_dir.join(&name);
-        if file_has_size(&out, *size).await? {
-            println!("✅  {name} already complete");
-            continue;
-        }
+    let state_path = data_dir.join(STATE_FILE);
+    let compressed_path = data_dir.join(COMPRESSED_STATE_FILE);
+    let header_path = data_dir.join(HEADER_FILE);
 
-        println!("⬇️   downloading {name} …");
-
-        let batch_req = serde_json::json!({
-            "operation": "download",
-            "transfer": ["basic"],
-            "objects": [{ "oid": oid, "size": size }]
-        });
-
-        #[derive(serde::Deserialize)]
-        struct Batch {
-            objects: Vec<Item>,
-        }
-        #[derive(serde::Deserialize)]
-        struct Item {
-            actions: Act,
-        }
-        #[derive(serde::Deserialize)]
-        struct Act {
-            download: Href,
-        }
-        #[derive(serde::Deserialize)]
-        struct Href {
-            href: String,
-        }
-
-        let href = client
-            .post(LFS_BATCH)
-            .json(&batch_req)
-            .header("Accept", "application/vnd.git-lfs+json")
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Batch>()
-            .await?
-            .objects
-            .first()
-            .map(|o| &o.actions.download.href)
-            .context("missing download URL")?
-            .to_owned();
-
-        // total size is known beforehand (`size`), so build a bar with that length
-        let pb = ProgressBar::new(*size);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.green} {bytes}/{total_bytes} [{bar:40.cyan/blue}] {bytes_per_sec} ETA {eta}",
+    // Check if final decompressed state already exists
+    if file_has_size(&state_path, get_decompressed_state_size(chain)).await? {
+        println!("✅  state already complete");
+    } else {
+        // Download compressed state if needed
+        if !file_has_size(&compressed_path, get_compressed_state_size(chain)).await? {
+            println!("⬇️   downloading compressed state …");
+            download_file(
+                &client,
+                &get_state_url(chain),
+                &compressed_path,
+                get_compressed_state_size(chain),
             )
-            .unwrap()
-            .progress_chars("#>-"),
-        );
+            .await
+            .context("failed to download compressed state")?;
 
-        let tmp = out.with_extension("part");
-        let mut file = fs::File::create(&tmp).await?;
-        let mut resp = client.get(href).send().await?.error_for_status()?;
-        while let Some(chunk) = resp.chunk().await? {
-            file.write_all(&chunk).await?;
-            pb.inc(chunk.len() as u64);
+            if !file_has_size(&compressed_path, get_compressed_state_size(chain)).await? {
+                bail!("compressed state size mismatch");
+            }
+            println!("✅  compressed state downloaded");
+        } else {
+            println!("✅  compressed state already present");
         }
-        file.flush().await?;
-        fs::rename(&tmp, &out).await?;
-        if !file_has_size(&out, *size).await? {
-            bail!("size mismatch for {name}");
+
+        // Decompress
+        println!("🛠   decompressing state …");
+        decompress_zstd(
+            compressed_path.to_str().unwrap(),
+            state_path.with_extension("part").to_str().unwrap(),
+            get_decompressed_state_size(chain),
+        )?;
+
+        fs::rename(state_path.with_extension("part"), &state_path).await?;
+
+        if !file_has_size(&state_path, get_decompressed_state_size(chain)).await? {
+            bail!("decompressed state size mismatch");
         }
+        println!("✅  state decompressed");
+
+        // Clean up compressed file
+        fs::remove_file(&compressed_path).await.ok();
     }
 
-    println!("✅  all chunks present");
-
-    // header
-    let header_path = data_dir.join(HEADER_FILE);
+    // Download header if needed
     if !header_path.exists() {
         println!("⬇️   downloading header …");
         let bytes = client
@@ -207,38 +202,9 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
             .bytes()
             .await?;
         fs::write(&header_path, &bytes).await?;
-    }
-
-    // combine chunks
-    let state_path = data_dir.join(STATE_FILE);
-    if file_has_size(&state_path, get_state_size(chain)).await? {
-        println!("✅  state already complete");
-        return Ok(());
-    }
-
-    println!("🛠   combining chunks → {STATE_FILE}");
-    let tmp = state_path.with_extension(".zst.part");
-    let mut out = fs::File::create(&tmp).await?;
-    for idx in 0..get_chunks(chain).len() {
-        let mut f = fs::File::open(data_dir.join(format!("chunk_{idx:02}"))).await?;
-        tokio::io::copy(&mut f, &mut out).await?;
-    }
-    out.flush().await?;
-    fs::rename(&tmp, &state_path.with_extension("zst")).await?;
-
-    println!("🛠   decompressing state");
-    decompress_zstd(
-        state_path.with_extension("zst").to_str().unwrap(),
-        state_path.with_extension("part").to_str().unwrap(),
-        get_state_size(chain),
-    )?;
-    println!("✅  full state written");
-
-    fs::remove_file(state_path.with_extension("zst")).await?;
-    fs::rename(state_path.with_extension("part"), &state_path).await?;
-
-    if !file_has_size(&state_path, get_state_size(chain)).await? {
-        bail!("combined state size mismatch");
+        println!("✅  header downloaded");
+    } else {
+        println!("✅  header already present");
     }
 
     println!("✅  state + header ready");

@@ -9,9 +9,10 @@ use reth_errors::BlockExecutionError;
 use reth_ethereum_primitives::Receipt;
 use reth_evm::{
     block::BlockExecutorFactory,
-    eth::EthBlockExecutionCtx,
     execute::{BlockAssembler, BlockAssemblerInput},
 };
+
+use crate::block::GnosisBlockExecutionCtx;
 use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
@@ -50,7 +51,7 @@ impl<ChainSpec> Clone for GnosisBlockAssembler<ChainSpec> {
 impl<F, ChainSpec> BlockAssembler<F> for GnosisBlockAssembler<ChainSpec>
 where
     F: for<'a> BlockExecutorFactory<
-        ExecutionCtx<'a> = EthBlockExecutionCtx<'a>,
+        ExecutionCtx<'a> = GnosisBlockExecutionCtx<'a>,
         Transaction = TransactionSigned,
         Receipt = Receipt,
     >,

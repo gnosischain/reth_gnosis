@@ -25,7 +25,7 @@ use reth_tracing::FileWorkerGuard;
 use tracing::info;
 
 use crate::{
-    evm_config::GnosisEvmConfig,
+    evm_config::{GnosisEvmConfig, NoopHeaderLookup},
     primitives::GnosisNodePrimitives,
     spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
     GnosisNode,
@@ -134,7 +134,7 @@ where
     {
         let components = |spec: Arc<C::ChainSpec>| {
             (
-                GnosisEvmConfig::new(spec.clone()),
+                GnosisEvmConfig::new(spec.clone(), NoopHeaderLookup),
                 Arc::new(EthBeaconConsensus::new(spec))
                     as Arc<dyn FullConsensus<GnosisNodePrimitives, Error = ConsensusError>>,
             )
@@ -150,7 +150,7 @@ where
     pub fn with_runner_and_components(
         mut self,
         runner: CliRunner,
-        _components: impl CliComponentsBuilder<GnosisNode>,
+        components: impl CliComponentsBuilder<GnosisNode>,
         launcher: impl AsyncFnOnce(
             WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, C::ChainSpec>>,
             Ext,
@@ -186,7 +186,8 @@ where
             Commands::Db(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
-            Commands::Stage(_command) => unimplemented!(),
+            Commands::Stage(command) => runner
+                .run_command_until_exit(|ctx| command.execute::<GnosisNode, _>(ctx, components)),
             Commands::P2P(_command) => unimplemented!(),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
