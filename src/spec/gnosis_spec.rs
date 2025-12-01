@@ -407,7 +407,10 @@ impl From<Genesis> for GnosisChainSpec {
                     },
                 ));
 
-                Some((genesis.config.merge_netsplit_block.unwrap_or_default(), ttd))
+                genesis
+                    .config
+                    .merge_netsplit_block
+                    .map(|block| (block, ttd))
             } else {
                 None
             };
@@ -461,10 +464,17 @@ impl From<Genesis> for GnosisChainSpec {
 
         let hardforks = ChainHardforks::new(hardforks);
 
-        let is_paris_active_at_genesis =
-            genesis.config.terminal_total_difficulty == Some(U256::ZERO);
+        // true means paris is active at genesis => genesis needs to be in post-merge format
+        let is_paris_active_at_genesis = if let Some(ttd) = genesis.config.terminal_total_difficulty
+        {
+            genesis.difficulty >= ttd
+        } else {
+            false
+        };
 
         let mut genesis_header = GnosisHeader::from(make_genesis_header(&genesis, &hardforks));
+        // by default genesis is post-merge, so if paris is not active at genesis, we need to
+        // convert it to pre-merge format
         if !is_paris_active_at_genesis {
             genesis_header.mix_hash = None;
             genesis_header.nonce = None;
