@@ -6,7 +6,6 @@ use alloy_primitives::U256;
 use alloy_primitives::{map::HashMap, Address, Bytes};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
-use figlet_rs::FIGfont;
 use reth_evm::{
     block::{StateChangePostBlockSource, StateChangeSource, SystemCaller},
     eth::spec::EthExecutorSpec,
@@ -268,17 +267,12 @@ pub fn rewrite_bytecodes(
             status: revm_state::AccountStatus::Touched,
             transaction_id: 0,
         };
-        if let Ok(standard_font) = FIGfont::standard() {
-            if let Some(figure) = standard_font.convert("Rewriting Bytecode") {
-                tracing::info!(
-                    "\n{} Addr: {}; From: {}; To: {}",
-                    figure,
-                    addr,
-                    original_account_info.code_hash,
-                    account.info.code_hash
-                );
-            }
-        }
+        tracing::info!(
+            "Rewriting Bytecode >>> Addr: {}; From: {}; To: {}",
+            addr,
+            original_account_info.code_hash,
+            account.info.code_hash
+        );
         state.insert(*addr, account);
     }
 
