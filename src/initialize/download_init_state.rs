@@ -67,9 +67,64 @@ fn get_decompressed_state_size(chain: &str) -> u64 {
     }
 }
 
+// ────────────────────────────────────────────────────────────
+// BLAKE3 hashes for integrity verification
+// ────────────────────────────────────────────────────────────
+fn get_compressed_state_hash(chain: &str) -> &'static str {
+    match chain {
+        "gnosis" => "68b4c88e3dc02592ec2a1e27cc0556004931a9b4712a4510c8db6aae2f0baaff",
+        "chiado" => "e071cb58c5975b66e0db5aea05e4371bbe08b32c41211c5dd9c0c75ca2d592f9",
+        _ => unreachable!(),
+    }
+}
+
+fn get_header_hash(chain: &str) -> &'static str {
+    match chain {
+        "gnosis" => "9ece59f2a6af4c4af200a0e2ffd19f8dcd9a215b3513171f69a2659651ffa961",
+        "chiado" => "b7fa17cc30104ed71791046f894704a60d72150235925240efd538de29d3036b",
+        _ => unreachable!(),
+    }
+}
+
 const HEADER_FILE: &str = "header.rlp";
 const STATE_FILE: &str = "state.jsonl";
 const COMPRESSED_STATE_FILE: &str = "state.jsonl.zst";
+
+/// Verifies a file's BLAKE3 hash matches the expected value
+fn verify_file_hash(path: &Path, expected_hash: &str) -> anyhow::Result<bool> {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => return Ok(false),
+    };
+
+    let file_size = file.metadata()?.len();
+    let mut reader = BufReader::new(file);
+    let mut hasher = blake3::Hasher::new();
+
+    let pb = ProgressBar::new(file_size);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.yellow/blue}] {bytes}/{total_bytes} (verifying)")
+            .unwrap()
+            .progress_chars("=>-"),
+    );
+
+    let mut buffer = [0u8; 65536]; // 64KB buffer for fast hashing
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+        pb.inc(bytes_read as u64);
+    }
+
+    pb.finish_and_clear();
+
+    let hash = hasher.finalize();
+    let hash_hex = hash.to_hex();
+    Ok(hash_hex.as_str() == expected_hash)
+}
 
 fn decompress_zstd(input_path: &str, output_path: &str, expected_size: u64) -> std::io::Result<()> {
     let input_file = File::open(input_path)?;
@@ -148,12 +203,24 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
     let compressed_path = data_dir.join(COMPRESSED_STATE_FILE);
     let header_path = data_dir.join(HEADER_FILE);
 
-    // Check if final decompressed state already exists
+    // Check if final decompressed state already exists (size check only)
     if file_has_size(&state_path, get_decompressed_state_size(chain)).await? {
         println!("✅  state already complete");
     } else {
-        // Download compressed state if needed
-        if !file_has_size(&compressed_path, get_compressed_state_size(chain)).await? {
+        // Check compressed state with BLAKE3 hash
+        let compressed_valid = if compressed_path.exists() {
+            println!("🔍  verifying compressed state …");
+            verify_file_hash(&compressed_path, get_compressed_state_hash(chain))?
+        } else {
+            false
+        };
+
+        if !compressed_valid {
+            if compressed_path.exists() {
+                println!("⚠️   hash mismatch, re-downloading …");
+                fs::remove_file(&compressed_path).await.ok();
+            }
+
             println!("⬇️   downloading compressed state …");
             download_file(
                 &client,
@@ -164,12 +231,14 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
             .await
             .context("failed to download compressed state")?;
 
-            if !file_has_size(&compressed_path, get_compressed_state_size(chain)).await? {
-                bail!("compressed state size mismatch");
+            println!("🔍  verifying download …");
+            if !verify_file_hash(&compressed_path, get_compressed_state_hash(chain))? {
+                fs::remove_file(&compressed_path).await.ok();
+                bail!("compressed state hash mismatch - file corrupted");
             }
-            println!("✅  compressed state downloaded");
+            println!("✅  compressed state verified");
         } else {
-            println!("✅  compressed state already present");
+            println!("✅  compressed state verified");
         }
 
         // Decompress
@@ -191,8 +260,19 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
         fs::remove_file(&compressed_path).await.ok();
     }
 
-    // Download header if needed
-    if !header_path.exists() {
+    // Check header with BLAKE3 hash
+    let header_valid = if header_path.exists() {
+        verify_file_hash(&header_path, get_header_hash(chain))?
+    } else {
+        false
+    };
+
+    if !header_valid {
+        if header_path.exists() {
+            println!("⚠️   header hash mismatch, re-downloading …");
+            fs::remove_file(&header_path).await.ok();
+        }
+
         println!("⬇️   downloading header …");
         let bytes = client
             .get(get_header_url(chain))
@@ -202,9 +282,14 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
             .bytes()
             .await?;
         fs::write(&header_path, &bytes).await?;
-        println!("✅  header downloaded");
+
+        if !verify_file_hash(&header_path, get_header_hash(chain))? {
+            fs::remove_file(&header_path).await.ok();
+            bail!("header hash mismatch - file corrupted");
+        }
+        println!("✅  header verified");
     } else {
-        println!("✅  header already present");
+        println!("✅  header verified");
     }
 
     println!("✅  state + header ready");
