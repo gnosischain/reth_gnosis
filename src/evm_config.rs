@@ -1,13 +1,13 @@
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use gnosis_primitives::header::GnosisHeader;
 use reth::rpc::types::engine::ExecutionData;
-use reth_evm::eth::EthBlockExecutionCtx;
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 use reth_primitives::TxTy;
 use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
 use reth_provider::errors::any::AnyError;
+use reth_provider::HeaderProvider;
 use revm::context_interface::block::BlobExcessGasAndPrice;
 
 use alloy_eips::Decodable2718;
@@ -22,7 +22,7 @@ use std::borrow::Cow;
 use std::{convert::Infallible, sync::Arc};
 
 use crate::blobs::CANCUN_BLOB_PARAMS;
-use crate::block::GnosisBlockExecutorFactory;
+use crate::block::{GnosisBlockExecutionCtx, GnosisBlockExecutorFactory};
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
 use crate::primitives::block::GnosisBlock;
@@ -42,9 +42,27 @@ pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -
     cfg
 }
 
+/// Minimal trait for looking up block headers by hash.
+/// This trait is dyn-compatible (object-safe) unlike the full `HeaderProvider`.
+/// We only need the `header` method for looking up parent timestamps.
+pub trait HeaderLookup: Debug + Send + Sync {
+    /// Get a header by block hash.
+    fn header_by_hash(&self, hash: &B256) -> Option<GnosisHeader>;
+}
+
+/// Blanket implementation of `HeaderLookup` for any `HeaderProvider`.
+impl<T> HeaderLookup for T
+where
+    T: HeaderProvider<Header = GnosisHeader> + Debug + Send + Sync,
+{
+    fn header_by_hash(&self, hash: &B256) -> Option<GnosisHeader> {
+        self.header(hash).ok().flatten()
+    }
+}
+
 // REF: https://github.com/paradigmxyz/reth/blob/d3b299754fe79b051bec022e67e922f6792f2a17/crates/ethereum/evm/src/lib.rs#L54
 /// Custom EVM configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GnosisEvmConfig {
     /// Inner [`GnosisBlockExecutorFactory`].
     pub executor_factory: GnosisBlockExecutorFactory<RethReceiptBuilder, GnosisEvmFactory>,
@@ -52,11 +70,27 @@ pub struct GnosisEvmConfig {
     pub block_assembler: GnosisBlockAssembler<GnosisChainSpec>,
     /// Spec.
     chain_spec: Arc<GnosisChainSpec>,
+    /// Header lookup for getting parent block timestamps.
+    header_lookup: Arc<dyn HeaderLookup>,
+}
+
+impl Debug for GnosisEvmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GnosisEvmConfig")
+            .field("executor_factory", &self.executor_factory)
+            .field("block_assembler", &self.block_assembler)
+            .field("chain_spec", &self.chain_spec)
+            .field("header_lookup", &"<dyn HeaderLookup>")
+            .finish()
+    }
 }
 
 impl GnosisEvmConfig {
-    /// Creates a new [`GnosisEvmConfig`] with the given chain spec.
-    pub fn new(chain_spec: Arc<GnosisChainSpec>) -> Self {
+    /// Creates a new [`GnosisEvmConfig`] with the given chain spec and header lookup.
+    pub fn new(
+        chain_spec: Arc<GnosisChainSpec>,
+        header_lookup: impl HeaderLookup + 'static,
+    ) -> Self {
         // Parsing fields MANDATORY for GnosisBlockExecutorFactory
         let fee_collector_address = chain_spec
             .genesis()
@@ -87,6 +121,7 @@ impl GnosisEvmConfig {
                 block_rewards_address,
             ),
             chain_spec,
+            header_lookup: Arc::new(header_lookup),
         }
     }
 
@@ -237,12 +272,19 @@ impl ConfigureEvm for GnosisEvmConfig {
     fn context_for_block<'a>(
         &self,
         block: &'a SealedBlock<GnosisBlock>,
-    ) -> Result<EthBlockExecutionCtx<'a>, Self::Error> {
-        Ok(EthBlockExecutionCtx {
+    ) -> Result<GnosisBlockExecutionCtx<'a>, Self::Error> {
+        // Look up parent header to get its timestamp for hardfork activation checks
+        let parent_timestamp = self
+            .header_lookup
+            .header_by_hash(&block.header().parent_hash)
+            .map(|h| h.timestamp)
+            .unwrap_or(0);
+
+        Ok(GnosisBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
-            ommers: &[],
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
+            parent_timestamp,
         })
     }
 
@@ -250,12 +292,12 @@ impl ConfigureEvm for GnosisEvmConfig {
         &self,
         parent: &SealedHeader<GnosisHeader>,
         attributes: Self::NextBlockEnvCtx,
-    ) -> Result<EthBlockExecutionCtx<'_>, Self::Error> {
-        Ok(EthBlockExecutionCtx {
+    ) -> Result<GnosisBlockExecutionCtx<'_>, Self::Error> {
+        Ok(GnosisBlockExecutionCtx {
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
-            ommers: &[],
             withdrawals: attributes.withdrawals.map(Cow::Owned),
+            parent_timestamp: parent.timestamp,
         })
     }
     // modifications to EIP-1559 gas accounting handler has been moved to Handler in gnosis_evm.rs
@@ -316,14 +358,21 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
     }
 
     fn context_for_payload<'a>(&self, payload: &'a ExecutionData) -> ExecutionCtxFor<'a, Self> {
-        EthBlockExecutionCtx {
+        // Look up parent header to get its timestamp for hardfork activation checks
+        let parent_timestamp = self
+            .header_lookup
+            .header_by_hash(&payload.parent_hash())
+            .map(|h| h.timestamp)
+            .unwrap_or(0);
+
+        GnosisBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
-            ommers: &[],
             withdrawals: payload
                 .payload
                 .withdrawals()
                 .map(|w| Cow::Owned(w.clone().into())),
+            parent_timestamp,
         }
     }
 
@@ -339,5 +388,17 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
                 let signer = tx.try_recover().map_err(AnyError::new)?;
                 Ok::<_, AnyError>(tx.with_signer(signer))
             })
+    }
+}
+
+/// A no-op header lookup that always returns None.
+/// Used in CLI contexts (like stage commands) where the idempotent
+/// bytecode rewrite check handles correctness.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoopHeaderLookup;
+
+impl HeaderLookup for NoopHeaderLookup {
+    fn header_by_hash(&self, _hash: &B256) -> Option<GnosisHeader> {
+        None
     }
 }

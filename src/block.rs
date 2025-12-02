@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use alloy_consensus::{Transaction, TxReceipt};
+use alloy_eips::eip4895::Withdrawals;
 use alloy_eips::eip7002::WITHDRAWAL_REQUEST_TYPE;
 use alloy_eips::eip7251;
 use alloy_eips::{eip7685::Requests, Encodable2718};
@@ -11,6 +12,7 @@ use alloy_evm::{
     FromTxWithEncoded,
 };
 use alloy_evm::{Database, Evm};
+use alloy_primitives::B256;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_evm::{
@@ -21,7 +23,6 @@ use reth_evm::{
     eth::{
         receipt_builder::{AlloyReceiptBuilder, ReceiptBuilder, ReceiptBuilderCtx},
         spec::EthExecutorSpec,
-        EthBlockExecutionCtx,
     },
     EvmFactory, FromRecoveredTx, OnStateHook,
 };
@@ -35,15 +36,29 @@ use crate::evm::factory::GnosisEvmFactory;
 use crate::gnosis::{apply_post_block_system_calls, rewrite_bytecodes};
 use crate::spec::gnosis_spec::{GnosisChainSpec, GnosisHardForks};
 
+/// Gnosis-specific block execution context.
+/// Extends the standard Ethereum context with parent timestamp for hardfork activation checks.
+#[derive(Debug, Clone)]
+pub struct GnosisBlockExecutionCtx<'a> {
+    /// Hash of the parent block.
+    pub parent_hash: B256,
+    /// Parent beacon block root (for EIP-4788).
+    pub parent_beacon_block_root: Option<B256>,
+    /// Withdrawals for this block.
+    pub withdrawals: Option<Cow<'a, Withdrawals>>,
+    /// Parent block timestamp - used for detecting hardfork activation boundaries.
+    pub parent_timestamp: u64,
+}
+
 // REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/op-evm/src/block/mod.rs#L42
-/// Block executor for Ethereum.
+/// Block executor for Gnosis.
 #[derive(Debug)]
 pub struct GnosisBlockExecutor<'a, Evm, R: ReceiptBuilder> {
     /// Reference to the specification object.
     spec: GnosisChainSpec,
 
     /// Context for block execution.
-    pub ctx: EthBlockExecutionCtx<'a>,
+    pub ctx: GnosisBlockExecutionCtx<'a>,
     /// Inner EVM.
     evm: Evm,
     /// Utility to call system smart contracts.
@@ -67,7 +82,7 @@ where
     /// Creates a new [`GnosisBlockExecutor`]
     pub fn new(
         evm: Evm,
-        ctx: EthBlockExecutionCtx<'a>,
+        ctx: GnosisBlockExecutionCtx<'a>,
         spec: &GnosisChainSpec,
         receipt_builder: R,
         block_rewards_address: Address,
@@ -334,7 +349,7 @@ where
     Self: 'static,
 {
     type EvmFactory = EvmF;
-    type ExecutionCtx<'a> = EthBlockExecutionCtx<'a>;
+    type ExecutionCtx<'a> = GnosisBlockExecutionCtx<'a>;
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
 
