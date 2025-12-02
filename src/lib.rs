@@ -19,7 +19,7 @@ use reth_node_builder::{
     PayloadAttributesBuilder, PayloadTypes,
 };
 use reth_node_ethereum::EthereumEthApiBuilder;
-use reth_provider::EthStorage;
+use reth_provider::{EthStorage, HeaderProvider};
 use spec::gnosis_spec::GnosisChainSpec;
 use std::sync::Arc;
 
@@ -181,12 +181,13 @@ impl<Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
 where
     Node: FullNodeTypes<
         Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+        Provider: HeaderProvider<Header = GnosisHeader> + std::fmt::Debug + Clone + Unpin + 'static,
     >,
 {
     type EVM = GnosisEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = GnosisEvmConfig::new(ctx.chain_spec());
+        let evm_config = GnosisEvmConfig::new(ctx.chain_spec(), ctx.provider().clone());
 
         Ok(evm_config)
     }
