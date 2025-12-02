@@ -34,14 +34,14 @@ use crate::{
 };
 
 mod blobs;
-mod block;
+pub mod block;
 mod build;
 pub mod cli;
 pub mod consts;
 mod engine;
 mod errors;
 pub mod evm;
-mod evm_config;
+pub mod evm_config;
 pub mod gnosis;
 pub mod initialize;
 mod network;
