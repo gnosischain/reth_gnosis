@@ -33,8 +33,8 @@ use revm_database::State;
 use revm_primitives::{Address, Log};
 
 use crate::evm::factory::GnosisEvmFactory;
-use crate::gnosis::apply_post_block_system_calls;
-use crate::spec::gnosis_spec::GnosisChainSpec;
+use crate::gnosis::{apply_post_block_system_calls, rewrite_bytecodes};
+use crate::spec::gnosis_spec::{GnosisChainSpec, GnosisHardForks};
 
 /// Gnosis-specific block execution context.
 /// Extends the standard Ethereum context with parent timestamp for hardfork activation checks.
@@ -121,6 +121,26 @@ where
             .spec
             .is_spurious_dragon_active_at_block(self.evm.block().number.saturating_to());
         self.evm.db_mut().set_state_clear_flag(state_clear_flag);
+
+        // Only apply bytecode rewrites at the hardfork activation block
+        // (active in current block but NOT active in parent block)
+        let current_timestamp: u64 = self.evm.block().timestamp.to();
+        let is_balancer_active_now = self
+            .spec
+            .is_balancer_hardfork_active_at_timestamp(current_timestamp);
+        let was_balancer_active_in_parent = self
+            .spec
+            .is_balancer_hardfork_active_at_timestamp(self.ctx.parent_timestamp);
+
+        if is_balancer_active_now
+            && !was_balancer_active_in_parent
+            && self.spec.balancer_hardfork_config.is_some()
+        {
+            rewrite_bytecodes(
+                &mut self.evm,
+                self.spec.balancer_hardfork_config.as_ref().unwrap(),
+            );
+        }
 
         self.system_caller
             .apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;

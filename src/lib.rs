@@ -34,14 +34,15 @@ use crate::{
 };
 
 mod blobs;
-mod block;
+pub mod block;
 mod build;
 pub mod cli;
+pub mod consts;
 mod engine;
 mod errors;
-mod evm;
-mod evm_config;
-mod gnosis;
+pub mod evm;
+pub mod evm_config;
+pub mod gnosis;
 pub mod initialize;
 mod network;
 mod payload;
@@ -228,8 +229,6 @@ where
     type Validator = GnosisEngineValidator;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
-        Ok(GnosisEngineValidator::new(Arc::new(
-            ctx.config.chain.inner.clone(),
-        )))
+        Ok(GnosisEngineValidator::new(ctx.config.chain.clone()))
     }
 }
