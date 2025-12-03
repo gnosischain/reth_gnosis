@@ -1,8 +1,12 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use core::fmt::Display;
+use tracing::debug;
 
-use crate::{blobs::gnosis_blob_schedule, primitives::block::GnosisHeader};
+use crate::{
+    blobs::gnosis_blob_schedule, consts::parse_balancer_hardfork_config,
+    primitives::block::GnosisHeader,
+};
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use derive_more::{Constructor, Deref, From, Into};
@@ -17,6 +21,7 @@ use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use reth_primitives::SealedHeader;
 use revm_primitives::{b256, Address, FixedBytes, B256, U256};
+use revm_state::Bytecode;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Chain {
@@ -76,6 +81,7 @@ hardfork!(
     GnosisHardfork {
         ConstantinopleFix,
         POSDAOActivation,
+        BalancerFork,
     }
 );
 
@@ -98,6 +104,12 @@ pub struct GnosisChainSpecBuilder {
     _inner: ChainSpecBuilder,
 }
 
+#[derive(Debug, Clone, Default, Into, Constructor, PartialEq, Eq)]
+pub struct BalancerHardforkConfig {
+    pub activation_time: u64,
+    pub config: Vec<(Address, Option<Bytecode>, B256)>,
+}
+
 /// Gnosis chain spec type.
 #[derive(Debug, Clone, Default, Deref, Into, Constructor, PartialEq, Eq)]
 pub struct GnosisChainSpec {
@@ -105,6 +117,7 @@ pub struct GnosisChainSpec {
     #[deref]
     pub inner: ChainSpec,
     pub genesis_header: SealedHeader<GnosisHeader>,
+    pub balancer_hardfork_config: Option<BalancerHardforkConfig>,
 }
 
 impl EthChainSpec for GnosisChainSpec {
@@ -128,7 +141,7 @@ impl EthChainSpec for GnosisChainSpec {
 
     fn genesis_hash(&self) -> B256 {
         // self.inner.genesis_hash()
-        genesis_hash(self.chain_id(), self.inner.genesis_hash())
+        genesis_hash(self.chain_id(), self.genesis_header.hash())
     }
 
     fn prune_delete_limit(&self) -> usize {
@@ -175,7 +188,7 @@ impl Hardforks for GnosisChainSpec {
     }
 
     fn fork_id(&self, head: &Head) -> ForkId {
-        let mut forkhash = ForkHash::from(genesis_hash(self.chain_id(), self.genesis_hash()));
+        let mut forkhash = ForkHash::from(self.genesis_hash());
         let mut current_applied = 0;
 
         // handle all block forks before handling timestamp based forks. see: https://eips.ethereum.org/EIPS/eip-6122
@@ -255,12 +268,7 @@ impl Hardforks for GnosisChainSpec {
             })
         });
 
-        ForkFilter::new(
-            head,
-            genesis_hash(self.chain_id(), self.genesis_hash()),
-            self.genesis_timestamp(),
-            forks,
-        )
+        ForkFilter::new(head, self.genesis_hash(), self.genesis_timestamp(), forks)
     }
 }
 
@@ -282,7 +290,7 @@ impl From<Genesis> for GnosisChainSpec {
         let chain_id = genesis.config.chain_id;
 
         // Block-based hardforks
-        let mainnet_hardfork_opts: [(Box<dyn Hardfork>, Option<u64>); 12] = [
+        let mainnet_hardfork_opts: [(Box<dyn Hardfork>, Option<u64>); 11] = [
             (
                 EthereumHardfork::Homestead.boxed(),
                 genesis.config.homestead_block,
@@ -304,8 +312,6 @@ impl From<Genesis> for GnosisChainSpec {
                 EthereumHardfork::Constantinople.boxed(),
                 genesis.config.constantinople_block,
             ),
-            (GnosisHardfork::ConstantinopleFix.boxed(), Some(2508800)),
-            (GnosisHardfork::POSDAOActivation.boxed(), Some(9186425)),
             (
                 EthereumHardfork::Petersburg.boxed(),
                 genesis.config.petersburg_block,
@@ -314,6 +320,7 @@ impl From<Genesis> for GnosisChainSpec {
                 EthereumHardfork::Istanbul.boxed(),
                 genesis.config.istanbul_block,
             ),
+            (GnosisHardfork::POSDAOActivation.boxed(), Some(9186425)),
             (
                 EthereumHardfork::Berlin.boxed(),
                 genesis.config.berlin_block,
@@ -403,39 +410,36 @@ impl From<Genesis> for GnosisChainSpec {
                 None
             };
 
+        let balancer_hardfork_config = parse_balancer_hardfork_config(
+            genesis.config.extra_fields.get("balancerHardforkTime"),
+            genesis.config.extra_fields.get("balancerHardforkConfig"),
+        );
+
         // Time-based hardforks
-        let time_hardfork_opts = [
+        let time_hardfork_opts: [(Box<dyn Hardfork>, Option<u64>); 5] = [
             (
                 EthereumHardfork::Shanghai.boxed(),
                 genesis.config.shanghai_time,
             ),
             (EthereumHardfork::Cancun.boxed(), genesis.config.cancun_time),
             (EthereumHardfork::Prague.boxed(), genesis.config.prague_time),
+            (
+                GnosisHardfork::BalancerFork.boxed(),
+                balancer_hardfork_config
+                    .as_ref()
+                    .map(|cfg| cfg.activation_time),
+            ),
             (EthereumHardfork::Osaka.boxed(), genesis.config.osaka_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts
             .into_iter()
             .filter_map(|(hardfork, opt)| {
-                opt.map(|time| (hardfork, ForkCondition::Timestamp(time)))
+                opt.map(|time| (hardfork.clone(), ForkCondition::Timestamp(time)))
             })
             .collect::<Vec<_>>();
 
         hardforks.append(&mut time_hardforks);
-
-        // Ordered Hardforks
-        let mainnet_hardforks: ChainHardforks = EthereumHardfork::mainnet().into();
-        let mainnet_order = mainnet_hardforks.forks_iter();
-
-        let mut ordered_hardforks = Vec::with_capacity(hardforks.len());
-        for (hardfork, _) in mainnet_order {
-            if let Some(pos) = hardforks.iter().position(|(e, _)| **e == *hardfork) {
-                ordered_hardforks.push(hardforks.remove(pos));
-            }
-        }
-
-        // append the remaining unknown hardforks to ensure we don't filter any out
-        ordered_hardforks.append(&mut hardforks);
 
         // NOTE: in full node, we prune all receipts except the deposit contract's. We do not
         // have the deployment block in the genesis file, so we use block zero. We use the same
@@ -453,13 +457,25 @@ impl From<Genesis> for GnosisChainSpec {
                     ),
                 });
 
-        let hardforks = ChainHardforks::new(ordered_hardforks);
+        let hardforks = ChainHardforks::new(hardforks);
+
+        // true means paris is active at genesis => genesis needs to be in post-merge format
+        let is_paris_active_at_genesis = if let Some(ttd) = genesis.config.terminal_total_difficulty
+        {
+            genesis.difficulty >= ttd
+        } else {
+            false
+        };
 
         let mut genesis_header = GnosisHeader::from(make_genesis_header(&genesis, &hardforks));
-        genesis_header.mix_hash = None;
-        genesis_header.nonce = None;
-        genesis_header.aura_seal = Some(FixedBytes::<65>::ZERO);
-        genesis_header.aura_step = Some(U256::ZERO);
+        // by default genesis is post-merge, so if paris is not active at genesis, we need to
+        // convert it to pre-merge format
+        if !is_paris_active_at_genesis {
+            genesis_header.mix_hash = None;
+            genesis_header.nonce = None;
+            genesis_header.aura_seal = Some(FixedBytes::<65>::ZERO);
+            genesis_header.aura_step = Some(U256::ZERO);
+        }
         let genesis_header = SealedHeader::new_unhashed(genesis_header);
 
         Self {
@@ -477,6 +493,7 @@ impl From<Genesis> for GnosisChainSpec {
                 ..Default::default()
             },
             genesis_header,
+            balancer_hardfork_config,
         }
     }
 }
@@ -507,4 +524,83 @@ pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<GnosisChainSpec>, eyre::E
         "gnosis" => Arc::new(GnosisChainSpec::from(GNOSIS_GENESIS.clone())),
         _ => Arc::new(parse_genesis(s)?.into()),
     })
+}
+
+pub trait GnosisHardForks {
+    fn is_balancer_hardfork_active_at_timestamp(&self, timestamp: u64) -> bool;
+}
+
+impl GnosisHardForks for GnosisChainSpec {
+    fn is_balancer_hardfork_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.fork(GnosisHardfork::BalancerFork)
+            .active_at_timestamp(timestamp)
+    }
+}
+
+impl GnosisChainSpec {
+    /// Log fork IDs for all hardforks, including future ones
+    pub fn log_all_fork_ids(&self) {
+        debug!(target: "reth::gnosis", "=== Fork IDs for all hardforks ===");
+
+        let genesis_hash = genesis_hash(self.chain_id(), self.genesis_hash());
+        let mut forkhash = ForkHash::from(genesis_hash);
+        let mut current_applied = 0;
+
+        debug!(target: "reth::gnosis", %genesis_hash, ?forkhash, "Genesis info");
+
+        // Log block-based forks
+        debug!(target: "reth::gnosis", "Block-based forks:");
+        for (hardfork, cond) in self.hardforks.forks_iter() {
+            match cond {
+                ForkCondition::Block(block)
+                | ForkCondition::TTD {
+                    fork_block: Some(block),
+                    ..
+                } => {
+                    if block != current_applied {
+                        forkhash += block;
+                        current_applied = block;
+                    }
+                    debug!(
+                        target: "reth::gnosis",
+                        hardfork = %hardfork.name(),
+                        block,
+                        ?forkhash,
+                        "Block fork"
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // Log timestamp-based forks
+        debug!(target: "reth::gnosis", "Timestamp-based forks:");
+        for (hardfork, cond) in self.hardforks.forks_iter() {
+            if let ForkCondition::Timestamp(timestamp) = cond {
+                if timestamp > self.genesis.timestamp && timestamp != current_applied {
+                    forkhash += timestamp;
+                    current_applied = timestamp;
+                }
+                debug!(
+                    target: "reth::gnosis",
+                    hardfork = %hardfork.name(),
+                    timestamp,
+                    ?forkhash,
+                    "Timestamp fork"
+                );
+            }
+        }
+
+        let current_timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        debug!(
+            target: "reth::gnosis",
+            ?forkhash,
+            current_timestamp,
+            "Final fork hash"
+        );
+    }
 }

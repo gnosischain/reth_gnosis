@@ -19,7 +19,7 @@ use reth_node_builder::{
     PayloadAttributesBuilder, PayloadTypes,
 };
 use reth_node_ethereum::EthereumEthApiBuilder;
-use reth_provider::EthStorage;
+use reth_provider::{EthStorage, HeaderProvider};
 use spec::gnosis_spec::GnosisChainSpec;
 use std::sync::Arc;
 
@@ -34,14 +34,15 @@ use crate::{
 };
 
 mod blobs;
-mod block;
+pub mod block;
 mod build;
 pub mod cli;
+pub mod consts;
 mod engine;
 mod errors;
-mod evm;
-mod evm_config;
-mod gnosis;
+pub mod evm;
+pub mod evm_config;
+pub mod gnosis;
 pub mod initialize;
 mod network;
 mod payload;
@@ -181,12 +182,13 @@ impl<Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
 where
     Node: FullNodeTypes<
         Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
+        Provider: HeaderProvider<Header = GnosisHeader> + std::fmt::Debug + Clone + Unpin + 'static,
     >,
 {
     type EVM = GnosisEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = GnosisEvmConfig::new(ctx.chain_spec());
+        let evm_config = GnosisEvmConfig::new(ctx.chain_spec(), ctx.provider().clone());
 
         Ok(evm_config)
     }
@@ -227,8 +229,6 @@ where
     type Validator = GnosisEngineValidator;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
-        Ok(GnosisEngineValidator::new(Arc::new(
-            ctx.config.chain.inner.clone(),
-        )))
+        Ok(GnosisEngineValidator::new(ctx.config.chain.clone()))
     }
 }

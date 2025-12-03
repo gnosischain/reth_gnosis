@@ -280,7 +280,6 @@ where
 
 /// Custom EVM configuration.
 #[derive(Debug, Clone, Default)]
-#[non_exhaustive]
 pub struct GnosisEvmFactory {
     pub fee_collector_address: Address,
 }
