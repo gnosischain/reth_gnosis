@@ -55,29 +55,26 @@ where
         pre_execution::validate_against_state_and_deduct_caller::<EVM::Context, ERROR>(evm.ctx())?;
 
         // GNOSIS-SPECIFIC // START
-        let spec: SpecId = evm.ctx().cfg().spec().into();
+        let (block, tx, cfg, journal, _, _) = evm.ctx().all_mut();
+        let spec: SpecId = cfg.spec().into();
         let mut blob_gas_cost = U256::ZERO;
         // EIP-4844
-        if evm.ctx().tx().tx_type() == TransactionType::Eip4844 {
-            let blob_price = evm.ctx().block().blob_gasprice().unwrap_or_default();
-            let blob_gas = evm.ctx().tx().total_blob_gas() as u128;
+        if tx.tx_type() == TransactionType::Eip4844 {
+            let blob_price = block.blob_gasprice().unwrap_or_default();
+            let blob_gas = tx.total_blob_gas() as u128;
             blob_gas_cost = U256::from(blob_price).saturating_mul(U256::from(blob_gas));
         }
 
         if spec.is_enabled_in(SpecId::PRAGUE) {
-            let fee_collector_account = evm
-                .ctx()
-                .journal_mut()
-                .load_account(self.fee_collector)?
-                .data;
-            // Set new fee collector account balance.
-            fee_collector_account.info.balance = fee_collector_account
-                .info
-                .balance
+            let mut fee_collector_account =
+                journal.load_account_with_code_mut(self.fee_collector)?;
+            let new_balance = fee_collector_account
+                .balance()
                 .saturating_add(blob_gas_cost);
+            fee_collector_account.set_balance(new_balance);
 
             // Touch account so we know it is changed.
-            fee_collector_account.mark_touch();
+            fee_collector_account.touch();
         }
         // GNOSIS-SPECIFIC // END
 
@@ -90,20 +87,21 @@ where
         exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
     ) -> Result<(), Self::Error> {
         post_execution::reward_beneficiary(evm.ctx(), exec_result.gas_mut())?;
-        let spec: SpecId = evm.ctx().cfg().spec().into();
+
+        let (block, _, cfg, journal, _, _) = evm.ctx().all_mut();
+        let spec: SpecId = cfg.spec().into();
         if spec.is_enabled_in(SpecId::LONDON) {
             // mint basefee to collector address
-            let basefee = evm.ctx().block().basefee() as u128;
+            let basefee = block.basefee() as u128;
             let gas_used =
                 (exec_result.gas().spent() - exec_result.gas().refunded() as u64) as u128;
 
-            let mut collector_account = evm.ctx().journal_mut().load_account(self.fee_collector)?;
-            collector_account.mark_touch();
-            collector_account.data.info.balance = collector_account
-                .data
-                .info
-                .balance
+            let mut collector_account = journal.load_account_with_code_mut(self.fee_collector)?;
+            let new_balance = collector_account
+                .balance()
                 .saturating_add(U256::from(basefee * gas_used));
+            collector_account.set_balance(new_balance);
+            collector_account.touch();
         }
         Ok(())
     }
@@ -136,6 +134,38 @@ where
     type Instructions = I;
     type Precompiles = P;
     type Frame = EthFrame<EthInterpreter>;
+
+    #[inline]
+    fn all(
+        &self,
+    ) -> (
+        &Self::Context,
+        &Self::Instructions,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+    ) {
+        let ctx = &self.0.ctx;
+        let instructions = &self.0.instruction;
+        let precompiles = &self.0.precompiles;
+        let frame_stack = &self.0.frame_stack;
+        (ctx, instructions, precompiles, frame_stack)
+    }
+
+    #[inline]
+    fn all_mut(
+        &mut self,
+    ) -> (
+        &mut Self::Context,
+        &mut Self::Instructions,
+        &mut Self::Precompiles,
+        &mut FrameStack<Self::Frame>,
+    ) {
+        let ctx = &mut self.0.ctx;
+        let instructions = &mut self.0.instruction;
+        let precompiles = &mut self.0.precompiles;
+        let frame_stack = &mut self.0.frame_stack;
+        (ctx, instructions, precompiles, frame_stack)
+    }
 
     #[inline]
     fn ctx(&mut self) -> &mut Self::Context {
@@ -171,9 +201,9 @@ where
 
         Ok(res.map_frame(|token| {
             if is_first_init {
-                self.0.frame_stack.end_init(token);
+                unsafe { self.0.frame_stack.end_init(token) };
             } else {
-                self.0.frame_stack.push(token);
+                unsafe { self.0.frame_stack.push(token) };
             }
             self.0.frame_stack.get()
         }))
@@ -281,6 +311,39 @@ where
     INSP: Inspector<CTX, I::InterpreterTypes>,
 {
     type Inspector = INSP;
+
+    fn all_inspector(
+        &self,
+    ) -> (
+        &Self::Context,
+        &Self::Instructions,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+        &Self::Inspector,
+    ) {
+        let ctx = &self.0.ctx;
+        let frame = &self.0.frame_stack;
+        let instructions = &self.0.instruction;
+        let precompiles = &self.0.precompiles;
+        let inspector = &self.0.inspector;
+        (ctx, instructions, precompiles, frame, inspector)
+    }
+    fn all_mut_inspector(
+        &mut self,
+    ) -> (
+        &mut Self::Context,
+        &mut Self::Instructions,
+        &mut Self::Precompiles,
+        &mut FrameStack<Self::Frame>,
+        &mut Self::Inspector,
+    ) {
+        let ctx = &mut self.0.ctx;
+        let frame = &mut self.0.frame_stack;
+        let instructions = &mut self.0.instruction;
+        let precompiles = &mut self.0.precompiles;
+        let inspector = &mut self.0.inspector;
+        (ctx, instructions, precompiles, frame, inspector)
+    }
 
     fn inspector(&mut self) -> &mut Self::Inspector {
         &mut self.0.inspector
