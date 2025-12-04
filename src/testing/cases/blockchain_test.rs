@@ -28,8 +28,8 @@ use reth_provider::{
 };
 use reth_revm::{database::StateProviderDatabase, witness::ExecutionWitnessRecord, State};
 use reth_stateless::{
-    stateless_validation_with_trie, trie::StatelessSparseTrie, validation::stateless_validation,
-    ExecutionWitness, UncompressedPublicKey,
+    stateless_validation_with_trie, trie::StatelessSparseTrie, ExecutionWitness,
+    UncompressedPublicKey,
 };
 use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
 use reth_trie_db::DatabaseStateRoot;
