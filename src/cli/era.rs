@@ -18,15 +18,12 @@ use reth_ethereum_primitives::Receipt;
 use reth_etl::Collector;
 use reth_primitives_traits::{Block, FullBlockBody, FullBlockHeader, NodePrimitives};
 use reth_provider::{
-    providers::StaticFileProviderRWRefMut, writer::UnifiedStorageWriter, BlockBodyIndicesProvider,
-    BlockWriter, ProviderError, StateWriter, StaticFileProviderFactory, StaticFileSegment,
-    StaticFileWriter, StorageLocation,
+    providers::StaticFileProviderRWRefMut, BlockBodyIndicesProvider, BlockWriter, ProviderError,
+    StateWriter, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
 };
 use reth_storage_api::{
-    DBProvider, DatabaseProviderFactory, HeaderProvider, NodePrimitivesProvider,
-    StageCheckpointWriter,
+    DBProvider, DatabaseProviderFactory, NodePrimitivesProvider, StageCheckpointWriter,
 };
-use revm_primitives::U256;
 use std::{
     error::Error,
     fmt::{Display, Formatter},
@@ -83,11 +80,6 @@ where
         .get_highest_static_file_block(StaticFileSegment::Headers)
         .unwrap_or_default();
 
-    // Find the latest total difficulty
-    let mut td = static_file_provider
-        .header_td_by_number(height)?
-        .ok_or(ProviderError::TotalDifficultyNotFound(height))?;
-
     while let Some(meta) = rx.recv()? {
         let receipt_height = static_file_provider
             .get_highest_static_file_tx(StaticFileSegment::Receipts)
@@ -114,13 +106,12 @@ where
             &mut static_file_provider.latest_writer(StaticFileSegment::Receipts)?,
             &provider,
             hash_collector,
-            &mut td,
             range,
         )?;
 
         save_stage_checkpoints(&provider, from, height, height, height)?;
 
-        UnifiedStorageWriter::commit(provider)?;
+        provider.commit()?;
 
         if stop {
             break;
@@ -131,7 +122,7 @@ where
 
     build_index(&provider, hash_collector)?;
 
-    UnifiedStorageWriter::commit(provider)?;
+    provider.commit()?;
 
     Ok(height)
 }
@@ -200,7 +191,6 @@ pub fn process<Era, P, B, BB, BH>(
     receipts_writer: &mut StaticFileProviderRWRefMut<'_, <P as NodePrimitivesProvider>::Primitives>,
     provider: &P,
     hash_collector: &mut Collector<BlockHash, BlockNumber>,
-    total_difficulty: &mut U256,
     block_numbers: impl RangeBounds<BlockNumber>,
 ) -> eyre::Result<BlockNumber>
 where
@@ -230,7 +220,6 @@ where
         receipts_writer,
         provider,
         hash_collector,
-        total_difficulty,
         block_numbers,
     )
 }
@@ -279,7 +268,6 @@ pub fn process_iter<P, B, BB, BH>(
     receipts_writer: &mut StaticFileProviderRWRefMut<'_, <P as NodePrimitivesProvider>::Primitives>,
     provider: &P,
     hash_collector: &mut Collector<BlockHash, BlockNumber>,
-    total_difficulty: &mut U256,
     block_numbers: impl RangeBounds<BlockNumber>,
 ) -> eyre::Result<BlockNumber>
 where
@@ -324,18 +312,11 @@ where
         let hash = header.hash_slow();
         last_header_number = number;
 
-        // Increase total difficulty
-        *total_difficulty += header.difficulty();
-
         // Append to Headers segment
-        header_writer.append_header(&header, *total_difficulty, &hash)?;
+        header_writer.append_header(&header, &hash)?;
 
         // Write bodies to database.
-        provider.append_block_bodies(
-            vec![(header.number(), Some(body))],
-            // We are writing transactions directly to static files.
-            StorageLocation::StaticFiles,
-        )?;
+        provider.append_block_bodies(vec![(header.number(), Some(body))])?;
 
         // GNOSIS-SPECIFIC: Write receipts to static files
         let idx = provider.block_body_indices(number);
