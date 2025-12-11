@@ -33,7 +33,7 @@ fn create_test_chain_spec_with_balancer_hardfork() -> GnosisChainSpec {
         json!(HARDFORK_ACTIVATION_TIME),
     );
     genesis.config.extra_fields.insert(
-        "balancerHardforkConfig".to_string(),
+        "balancerHardforkBytecodes".to_string(),
         json!({
             "0x1111111111111111111111111111111111111111": "",
             "0x2222222222222222222222222222222222222222": TEST_BYTECODE

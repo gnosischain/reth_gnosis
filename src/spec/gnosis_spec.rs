@@ -412,7 +412,7 @@ impl From<Genesis> for GnosisChainSpec {
 
         let balancer_hardfork_config = parse_balancer_hardfork_config(
             genesis.config.extra_fields.get("balancerHardforkTime"),
-            genesis.config.extra_fields.get("balancerHardforkConfig"),
+            genesis.config.extra_fields.get("balancerHardforkBytecodes"),
         );
 
         // Time-based hardforks
