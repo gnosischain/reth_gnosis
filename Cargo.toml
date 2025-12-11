@@ -12,60 +12,60 @@ name = "reth"
 path = "src/main.rs"
 
 [dependencies]
-gnosis-primitives = { git = "https://github.com/gnosischain/gnosis-stuff.git", tag = "v0.1.9" }
+gnosis-primitives = { git = "https://github.com/gnosischain/gnosis-stuff.git", tag = "v0.1.91" }
 
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-engine-local = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli-runner = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-prune-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-fs-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-etl = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-era = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-era-downloader = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-era-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
+reth = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-revm = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-engine-local = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-node-api = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-node-builder = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-node-metrics = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-chain-state = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-consensus = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-cli = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-cli-runner = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-cli-util = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-prune-types = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-fs-util = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-db = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-db-common = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-etl = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-era = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-era-downloader = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-era-utils = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-errors = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis", features = [
     "test-utils",
 ] }
-reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-stages = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-stages-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-stages-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-static-file-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-stateless = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-rpc = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-stages = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-stages-api = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-stages-types = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-static-file-types = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-stateless = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-storage-api = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-trie = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-trie-db = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
+reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", branch = "v1.9.3-gnosis" }
 
 eyre = "0.6"
 clap = { version = "4.5.6", features = ["derive"] }
