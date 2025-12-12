@@ -103,7 +103,7 @@ pub fn parse_balancer_hardfork_config(
 
     let parsed_mapping =
         serde_json::from_value::<HashMap<Address, String>>(config_value.unwrap().clone())
-            .expect("Error parsing balancerHardforkConfig");
+            .expect("Error parsing balancerHardforkBytecodes");
 
     let config = parsed_mapping
         .into_iter()
