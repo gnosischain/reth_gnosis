@@ -12,9 +12,10 @@ use reth_db_common::init::init_from_state_dump;
 use reth_db_common::DbTool;
 use reth_primitives::{SealedHeader, StaticFileSegment};
 use reth_provider::{
-    BlockNumReader, DatabaseProviderFactory, StaticFileProviderFactory, StaticFileWriter,
+    BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
+    StaticFileWriter,
 };
-use revm_primitives::{B256, U256};
+use revm_primitives::B256;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -43,7 +44,6 @@ fn import_state(
     state: PathBuf,
     header: PathBuf,
     header_hash: &str,
-    total_difficulty: &str,
 ) -> Result<(), eyre::Error> {
     let Environment {
         config,
@@ -57,7 +57,6 @@ fn import_state(
     // ensure header, total difficulty and header hash are provided
     let header = read_header_from_file(header)?;
     let header_hash = B256::from_str(header_hash)?;
-    let total_difficulty = U256::from_str(total_difficulty)?;
 
     let last_block_number = provider_rw.last_block_number()?;
 
@@ -67,7 +66,6 @@ fn import_state(
             // &header,
             // header_hash,
             SealedHeader::new(header, header_hash),
-            total_difficulty,
             |number| GnosisHeader {
                 number,
                 ..Default::default()
@@ -136,7 +134,7 @@ pub fn download_and_import_init_state(
 
     // Enable backtraces unless a RUST_BACKTRACE value has already been explicitly provided.
     if std::env::var_os("RUST_BACKTRACE").is_none() {
-        std::env::set_var("RUST_BACKTRACE", "1");
+        unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
 
     let state_file: PathBuf = state_path.join("state.jsonl");
@@ -147,7 +145,6 @@ pub fn download_and_import_init_state(
         state_file,
         header_file.clone(),
         download_spec.header_hash,
-        download_spec.total_difficulty,
     )
     .unwrap();
 

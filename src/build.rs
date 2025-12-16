@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use alloy_consensus::{proofs, BlockBody, Header, Transaction, TxReceipt, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{proofs, BlockBody, BlockHeader, Header, TxReceipt, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::Bytes;
 use gnosis_primitives::header::GnosisHeader;
@@ -14,6 +14,7 @@ use reth_evm::{
 use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
+use revm::context::Block;
 
 use crate::{block::GnosisBlockExecutionCtx, primitives::block::GnosisBlock};
 
@@ -30,8 +31,7 @@ impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             chain_spec,
-            // extra data representing "reth@v0.0.1-alpha0"
-            extra_data: Bytes::from("reth@v0.1.7".as_bytes().to_vec()),
+            extra_data: Bytes::from("reth@v0.1.9".as_bytes().to_vec()),
         }
     }
 }
@@ -71,12 +71,13 @@ where
                     receipts,
                     requests,
                     gas_used,
+                    blob_gas_used,
                 },
             state_root,
             ..
         } = input;
 
-        let timestamp = evm_env.block_env.timestamp.saturating_to();
+        let timestamp = evm_env.block_env.timestamp().saturating_to();
 
         let transactions_root = proofs::calculate_transaction_root(&transactions);
         let receipts_root = Receipt::calculate_receipt_root_no_memo(receipts);
@@ -96,16 +97,11 @@ where
             .then(|| requests.requests_hash());
 
         let mut excess_blob_gas = None;
-        let mut blob_gas_used = None;
+        let mut block_blob_gas_used = None;
 
         // only determine cancun fields when active
         if self.chain_spec.is_cancun_active_at_timestamp(timestamp) {
-            blob_gas_used = Some(
-                transactions
-                    .iter()
-                    .map(|tx| tx.blob_gas_used().unwrap_or_default())
-                    .sum(),
-            );
+            block_blob_gas_used = Some(*blob_gas_used);
             excess_blob_gas = if self
                 .chain_spec
                 .is_cancun_active_at_timestamp(parent.timestamp)
@@ -126,23 +122,23 @@ where
         let header = Header {
             parent_hash: ctx.parent_hash,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
-            beneficiary: evm_env.block_env.beneficiary,
+            beneficiary: evm_env.block_env.beneficiary(),
             state_root,
             transactions_root,
             receipts_root,
             withdrawals_root,
             logs_bloom,
             timestamp,
-            mix_hash: evm_env.block_env.prevrandao.unwrap_or_default(),
+            mix_hash: evm_env.block_env.prevrandao().unwrap_or_default(),
             nonce: BEACON_NONCE.into(),
-            base_fee_per_gas: Some(evm_env.block_env.basefee),
-            number: evm_env.block_env.number.saturating_to(),
-            gas_limit: evm_env.block_env.gas_limit,
-            difficulty: evm_env.block_env.difficulty,
+            base_fee_per_gas: Some(evm_env.block_env.basefee()),
+            number: evm_env.block_env.number().saturating_to(),
+            gas_limit: evm_env.block_env.gas_limit(),
+            difficulty: evm_env.block_env.difficulty(),
             gas_used: *gas_used,
             extra_data: self.extra_data.clone(),
             parent_beacon_block_root: ctx.parent_beacon_block_root,
-            blob_gas_used,
+            blob_gas_used: block_blob_gas_used,
             excess_blob_gas,
             requests_hash,
         };

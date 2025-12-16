@@ -12,6 +12,7 @@ use reth_evm::{
     execute::{BlockExecutionError, InternalBlockExecutionError},
     Evm,
 };
+use revm::context::Block;
 use revm::Database;
 use revm::{
     context::result::{ExecutionResult, Output, ResultAndState},
@@ -79,7 +80,7 @@ where
 
     // Clean-up post system tx context
     state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
-    state.remove(&evm.block().beneficiary);
+    state.remove(&evm.block().beneficiary());
 
     system_caller.invoke_hook_with(|hook| {
         hook.on_state(

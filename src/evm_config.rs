@@ -56,7 +56,7 @@ where
     T: HeaderProvider<Header = GnosisHeader> + Debug + Send + Sync,
 {
     fn header_by_hash(&self, hash: &B256) -> Option<GnosisHeader> {
-        self.header(hash).ok().flatten()
+        self.header(*hash).ok().flatten()
     }
 }
 
@@ -305,7 +305,7 @@ impl ConfigureEvm for GnosisEvmConfig {
 }
 
 impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
-    fn evm_env_for_payload(&self, payload: &ExecutionData) -> EvmEnvFor<Self> {
+    fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();
 
@@ -354,10 +354,13 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
             blob_excess_gas_and_price,
         };
 
-        EvmEnv { cfg_env, block_env }
+        Ok(EvmEnv { cfg_env, block_env })
     }
 
-    fn context_for_payload<'a>(&self, payload: &'a ExecutionData) -> ExecutionCtxFor<'a, Self> {
+    fn context_for_payload<'a>(
+        &self,
+        payload: &'a ExecutionData,
+    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
         // Look up parent header to get its timestamp for hardfork activation checks
         let parent_timestamp = self
             .header_lookup
@@ -365,7 +368,7 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
             .map(|h| h.timestamp)
             .unwrap_or(0);
 
-        GnosisBlockExecutionCtx {
+        Ok(GnosisBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             withdrawals: payload
@@ -373,11 +376,14 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
                 .withdrawals()
                 .map(|w| Cow::Owned(w.clone().into())),
             parent_timestamp,
-        }
+        })
     }
 
-    fn tx_iterator_for_payload(&self, payload: &ExecutionData) -> impl ExecutableTxIterator<Self> {
-        payload
+    fn tx_iterator_for_payload(
+        &self,
+        payload: &ExecutionData,
+    ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
+        Ok(payload
             .payload
             .transactions()
             .clone()
@@ -387,7 +393,7 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
                     .map_err(AnyError::new)?;
                 let signer = tx.try_recover().map_err(AnyError::new)?;
                 Ok::<_, AnyError>(tx.with_signer(signer))
-            })
+            }))
     }
 }
 
