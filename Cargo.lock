@@ -3597,13 +3597,14 @@ dependencies = [
 
 [[package]]
 name = "gnosis-primitives"
-version = "0.1.8"
-source = "git+https://github.com/gnosischain/gnosis-stuff.git?tag=v0.1.91#0a42e804550a6a1eebd9b31eda6eeff180216684"
+version = "0.1.93"
+source = "git+https://github.com/gnosischain/gnosis-stuff.git?tag=v0.1.93#3392be766cdf3455616eb57d0db4c80028bb4213"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-serde",
  "alloy-trie",
  "derive_more",
  "modular-bitfield",
