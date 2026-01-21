@@ -45,6 +45,7 @@ fn main() {
             config: node_cmd.config.clone(),
             chain: node_cmd.chain.clone(),
             db: node_cmd.db,
+            static_files: node_cmd.static_files,
         };
 
         match node_cmd.chain.chain().id() {

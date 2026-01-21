@@ -8,7 +8,7 @@ use crate::{
         DEFAULT_7702_PATCH_TIME, DEFAULT_EL_PATCH_TIME,
     },
     payload::GnosisBuiltPayload,
-    primitives::block::{GnosisBlock, IntoGnosisBlock},
+    primitives::block::{GnosisBlock, IntoGnosisBlock, TransactionSigned},
     spec::gnosis_spec::{GnosisChainSpec, GnosisHardForks},
 };
 use alloy_consensus::Transaction;
@@ -24,7 +24,7 @@ use reth_node_builder::{
     NewPayloadError, PayloadOrAttributes, PayloadTypes, PayloadValidator,
 };
 use reth_payload_builder::EthPayloadBuilderAttributes;
-use reth_primitives::{NodePrimitives, RecoveredBlock, TransactionSigned};
+use reth_primitives::{NodePrimitives, RecoveredBlock};
 use reth_primitives_traits::SealedBlock;
 use serde::{Deserialize, Serialize};
 use std::{env, sync::Arc};
@@ -88,18 +88,13 @@ impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
         &self,
         payload: ExecutionData,
     ) -> Result<RecoveredBlock<GnosisBlock>, NewPayloadError> {
-        let sealed_block = self
-            .inner
-            .ensure_well_formed_payload::<TransactionSigned>(payload)?;
-        let result = sealed_block
-            .try_recover()
-            .map_err(|e| NewPayloadError::Other(e.into()));
+        // Convert payload to sealed GnosisBlock
+        let sealed_block = self.convert_payload_to_block(payload)?;
 
-        let block = result.unwrap();
-        let senders = block.senders().to_owned();
-        let hash = block.hash();
-        let gnosis_block: GnosisBlock = block.into_block().into_gnosis_block();
-        let block = RecoveredBlock::<GnosisBlock>::new(gnosis_block, senders, hash);
+        // Recover transaction senders
+        let block = sealed_block
+            .try_recover()
+            .map_err(|e| NewPayloadError::Other(e.into()))?;
 
         if !self
             .chain_spec()
@@ -126,13 +121,30 @@ impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
                             &sender,
                             &tx.to().unwrap_or_default(),
                             &block.number,
-                            &hash
+                            &block.hash()
                         ))));
                 }
             }
         }
 
         Ok(block)
+    }
+
+    fn convert_payload_to_block(
+        &self,
+        payload: ExecutionData,
+    ) -> Result<SealedBlock<Self::Block>, NewPayloadError> {
+        // Use the inner validator to ensure the payload is well-formed
+        let sealed_block = self
+            .inner
+            .ensure_well_formed_payload::<TransactionSigned>(payload)?;
+
+        // Extract hash and convert to GnosisBlock
+        let hash = sealed_block.hash();
+        let gnosis_block = sealed_block.into_block().into_gnosis_block();
+
+        // Create the sealed GnosisBlock with the same hash
+        Ok(SealedBlock::new_unchecked(gnosis_block, hash))
     }
 }
 

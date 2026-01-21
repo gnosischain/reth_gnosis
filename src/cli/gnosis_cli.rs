@@ -19,7 +19,6 @@ use reth_cli_commands::{
 };
 use reth_consensus::FullConsensus;
 use reth_db::DatabaseEnv;
-use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
@@ -136,7 +135,7 @@ where
             (
                 GnosisEvmConfig::new(spec.clone(), NoopHeaderLookup),
                 Arc::new(EthBeaconConsensus::new(spec))
-                    as Arc<dyn FullConsensus<GnosisNodePrimitives, Error = ConsensusError>>,
+                    as Arc<dyn FullConsensus<GnosisNodePrimitives>>,
             )
         };
 
@@ -184,21 +183,27 @@ where
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                runner.run_blocking_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
             }
             Commands::Stage(command) => runner
                 .run_command_until_exit(|ctx| command.execute::<GnosisNode, _>(ctx, components)),
-            Commands::P2P(_command) => unimplemented!(),
+            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<GnosisNode>()),
-            Commands::Import(_command) => unimplemented!(),
+            Commands::Import(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _>(components))
+            }
             // Commands::Debug(_command) => todo!(),
             Commands::ImportEra(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
-            Commands::Download(_) => unimplemented!(),
+            Commands::Download(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+            }
             Commands::ExportEra(_export_era_command) => unimplemented!(),
-            Commands::ReExecute(_command) => unimplemented!(),
+            Commands::ReExecute(command) => {
+                runner.run_until_ctrl_c(command.execute::<GnosisNode>(components))
+            }
         }
     }
 

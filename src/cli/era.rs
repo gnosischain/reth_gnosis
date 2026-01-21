@@ -9,8 +9,9 @@ use futures_util::{Stream, StreamExt};
 use reth_db::transaction::DbTxMut;
 use reth_db_api::table::Value;
 use reth_era::{
-    e2s_types::E2sError, era1_file::BlockTupleIterator, era_file_ops::StreamReader,
-    execution_types::BlockTuple, DecodeCompressed,
+    common::{decode::DecodeCompressedRlp, file_ops::StreamReader},
+    e2s::error::E2sError,
+    era1::{file::BlockTupleIterator, types::execution::BlockTuple},
 };
 use reth_era_downloader::EraMeta;
 use reth_era_utils::{build_index, open, save_stage_checkpoints};
@@ -316,7 +317,7 @@ where
         header_writer.append_header(&header, &hash)?;
 
         // Write bodies to database.
-        provider.append_block_bodies(vec![(header.number(), Some(body))])?;
+        provider.append_block_bodies(vec![(header.number(), Some(&body))])?;
 
         // GNOSIS-SPECIFIC: Write receipts to static files
         let idx = provider.block_body_indices(number);
