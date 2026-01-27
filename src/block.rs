@@ -29,7 +29,7 @@ use reth_evm::{
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;
 use revm::{context::result::ResultAndState, DatabaseCommit, Inspector};
-use revm_database::State;
+use revm_database::{DatabaseCommitExt, State};
 use revm_primitives::{Address, Log};
 
 use crate::evm::factory::GnosisEvmFactory;
@@ -317,6 +317,10 @@ where
 
     fn evm(&self) -> &Self::Evm {
         &self.evm
+    }
+
+    fn receipts(&self) -> &[Self::Receipt] {
+        &self.receipts
     }
 }
 

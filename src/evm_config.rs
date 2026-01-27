@@ -33,7 +33,7 @@ use crate::spec::gnosis_spec::GnosisChainSpec;
 pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -> CfgEnv {
     let mut cfg = CfgEnv::new()
         .with_chain_id(chain_spec.chain().id())
-        .with_spec(spec);
+        .with_spec_and_mainnet_gas_params(spec);
 
     if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
         // EIP-170 is enabled at the Shanghai Fork on Gnosis Chain

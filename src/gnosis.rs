@@ -267,6 +267,7 @@ pub fn rewrite_bytecodes(
             storage: HashMap::default(),
             status: revm_state::AccountStatus::Touched,
             transaction_id: 0,
+            original_info: Box::new(original_account_info.clone()),
         };
         tracing::info!(
             "Rewriting Bytecode >>> Addr: {}; From: {}; To: {}",

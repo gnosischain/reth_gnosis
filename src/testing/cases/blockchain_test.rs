@@ -24,7 +24,7 @@ use reth_primitives_traits::{RecoveredBlock, SealedBlock};
 use reth_provider::{
     test_utils::create_test_provider_factory_with_chain_spec, BlockWriter, DatabaseProviderFactory,
     ExecutionOutcome, HeaderProvider, HistoryWriter, OriginalValuesKnown, StateProofProvider,
-    StateWriter, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
+    StateWriteConfig, StateWriter, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
 };
 use reth_revm::{database::StateProviderDatabase, witness::ExecutionWitnessRecord, State};
 use reth_stateless::{
@@ -320,7 +320,7 @@ fn run_case(
             .map_err(|err| Error::block_failed(block_number, program_inputs.clone(), err))?;
 
         // Consensus checks after block execution
-        validate_block_post_execution(block, &chain_spec, &output.receipts, &output.requests)
+        validate_block_post_execution(block, &chain_spec, &output.receipts, &output.requests, None)
             .map_err(|err| Error::block_failed(block_number, program_inputs.clone(), err))?;
 
         // Generate the stateless witness
@@ -380,6 +380,7 @@ fn run_case(
             .write_state(
                 &ExecutionOutcome::single(block.number, output),
                 OriginalValuesKnown::Yes,
+                StateWriteConfig::default(),
             )
             .map_err(|err| Error::block_failed(block_number, program_inputs.clone(), err))?;
 
