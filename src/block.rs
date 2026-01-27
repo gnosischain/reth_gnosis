@@ -137,14 +137,10 @@ where
             .spec
             .is_balancer_hardfork_active_at_timestamp(self.ctx.parent_timestamp);
 
-        if is_balancer_active_now
-            && !was_balancer_active_in_parent
-            && self.spec.balancer_hardfork_config.is_some()
-        {
-            rewrite_bytecodes(
-                &mut self.evm,
-                self.spec.balancer_hardfork_config.as_ref().unwrap(),
-            );
+        if is_balancer_active_now && !was_balancer_active_in_parent {
+            if let Some(config) = self.spec.balancer_hardfork_config.as_ref() {
+                rewrite_bytecodes(&mut self.evm, config);
+            }
         }
 
         self.system_caller
