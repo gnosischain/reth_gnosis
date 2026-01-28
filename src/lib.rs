@@ -7,7 +7,6 @@ use pool::GnosisPoolBuilder;
 use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
 use reth_engine_local::LocalPayloadAttributesBuilder;
-use reth_errors::ConsensusError;
 use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
 use reth_node_builder::{
@@ -139,7 +138,8 @@ impl<N: FullNodeComponents<Types = Self>> DebugNode<N> for GnosisNode {
 
     fn local_payload_attributes_builder(
         chain_spec: &Self::ChainSpec,
-    ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes> {
+    ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes, GnosisHeader>
+    {
         LocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone()))
     }
 }
@@ -205,7 +205,7 @@ where
         Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
     >,
 {
-    type Consensus = Arc<dyn FullConsensus<GnosisNodePrimitives, Error = ConsensusError>>;
+    type Consensus = Arc<dyn FullConsensus<GnosisNodePrimitives>>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
         Ok(Arc::new(EthBeaconConsensus::new(ctx.chain_spec())))

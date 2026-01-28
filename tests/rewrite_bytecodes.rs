@@ -62,6 +62,7 @@ fn test_rewrite_bytecodes_rewrites_when_code_differs() {
             nonce: 5,
             code_hash: original_code_hash,
             code: Some(original_code),
+            account_id: None,
         },
     );
 
@@ -102,6 +103,7 @@ fn test_rewrite_bytecodes_skips_when_code_matches_expected() {
             nonce: 10,
             code_hash: expected_code_hash, // Already matches expected!
             code: expected_bytecode.clone(),
+            account_id: None,
         },
     );
 
@@ -166,6 +168,7 @@ fn test_rewrite_bytecodes_all_addresses_processed() {
                 nonce: 1,
                 code_hash: wrong_code.hash_slow(),
                 code: Some(wrong_code.clone()),
+                account_id: None,
             },
         );
     }
@@ -209,6 +212,7 @@ fn test_rewrite_bytecodes_clears_code_when_none() {
                 nonce: 42,
                 code_hash: existing_code.hash_slow(),
                 code: Some(existing_code),
+                account_id: None,
             },
         );
 
@@ -248,6 +252,7 @@ fn test_rewrite_bytecodes_sets_specific_code() {
                 nonce: 7,
                 code_hash: KECCAK_EMPTY,
                 code: None,
+                account_id: None,
             },
         );
 
@@ -281,6 +286,7 @@ fn test_rewrite_bytecodes_idempotent() {
                 nonce: 1,
                 code_hash: keccak256([0xba, 0xd]),
                 code: Some(Bytecode::new_legacy(Bytes::from_static(&[0xba, 0xd]))),
+                account_id: None,
             },
         );
     }

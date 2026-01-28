@@ -24,7 +24,7 @@ use reth_primitives_traits::{RecoveredBlock, SealedBlock};
 use reth_provider::{
     test_utils::create_test_provider_factory_with_chain_spec, BlockWriter, DatabaseProviderFactory,
     ExecutionOutcome, HeaderProvider, HistoryWriter, OriginalValuesKnown, StateProofProvider,
-    StateWriter, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
+    StateWriteConfig, StateWriter, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
 };
 use reth_revm::{database::StateProviderDatabase, witness::ExecutionWitnessRecord, State};
 use reth_stateless::{
@@ -261,7 +261,7 @@ fn run_case(
     .unwrap();
 
     provider
-        .insert_block(genesis_block.clone())
+        .insert_block(&genesis_block.clone())
         .map_err(|err| Error::block_failed(0, Default::default(), err))?;
 
     // Increment block number for receipts static file
@@ -292,7 +292,7 @@ fn run_case(
 
         // Insert the block into the database
         provider
-            .insert_block(block.clone())
+            .insert_block(&block.clone())
             .map_err(|err| Error::block_failed(block_number, Default::default(), err))?;
         // Commit static files, so we can query the headers for stateless execution below
         provider
@@ -320,7 +320,7 @@ fn run_case(
             .map_err(|err| Error::block_failed(block_number, program_inputs.clone(), err))?;
 
         // Consensus checks after block execution
-        validate_block_post_execution(block, &chain_spec, &output.receipts, &output.requests)
+        validate_block_post_execution(block, &chain_spec, &output.receipts, &output.requests, None)
             .map_err(|err| Error::block_failed(block_number, program_inputs.clone(), err))?;
 
         // Generate the stateless witness
@@ -362,9 +362,11 @@ fn run_case(
         // Compute and check the post state root
         let hashed_state =
             HashedPostState::from_bundle_state::<KeccakKeyHasher>(output.state.state());
-        let (computed_state_root, _) =
-            StateRoot::overlay_root_with_updates(provider.tx_ref(), hashed_state.clone())
-                .map_err(|err| Error::block_failed(block_number, program_inputs.clone(), err))?;
+        let (computed_state_root, _) = StateRoot::overlay_root_with_updates(
+            provider.tx_ref(),
+            &hashed_state.clone_into_sorted(),
+        )
+        .map_err(|err| Error::block_failed(block_number, program_inputs.clone(), err))?;
         if computed_state_root != block.state_root {
             return Err(Error::block_failed(
                 block_number,
@@ -378,6 +380,7 @@ fn run_case(
             .write_state(
                 &ExecutionOutcome::single(block.number, output),
                 OriginalValuesKnown::Yes,
+                StateWriteConfig::default(),
             )
             .map_err(|err| Error::block_failed(block_number, program_inputs.clone(), err))?;
 

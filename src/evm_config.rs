@@ -33,7 +33,7 @@ use crate::spec::gnosis_spec::GnosisChainSpec;
 pub fn get_cfg_env(chain_spec: &GnosisChainSpec, spec: SpecId, timestamp: u64) -> CfgEnv {
     let mut cfg = CfgEnv::new()
         .with_chain_id(chain_spec.chain().id())
-        .with_spec(spec);
+        .with_spec_and_mainnet_gas_params(spec);
 
     if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
         // EIP-170 is enabled at the Shanghai Fork on Gnosis Chain
@@ -383,17 +383,15 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
         &self,
         payload: &ExecutionData,
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
-        Ok(payload
-            .payload
-            .transactions()
-            .clone()
-            .into_iter()
-            .map(|tx| {
-                let tx = TxTy::<Self::Primitives>::decode_2718_exact(tx.as_ref())
-                    .map_err(AnyError::new)?;
-                let signer = tx.try_recover().map_err(AnyError::new)?;
-                Ok::<_, AnyError>(tx.with_signer(signer))
-            }))
+        let txs = payload.payload.transactions().clone();
+        let convert = |tx: Bytes| {
+            let tx =
+                TxTy::<Self::Primitives>::decode_2718_exact(tx.as_ref()).map_err(AnyError::new)?;
+            let signer = tx.try_recover().map_err(AnyError::new)?;
+            Ok::<_, AnyError>(tx.with_signer(signer))
+        };
+
+        Ok((txs, convert))
     }
 }
 

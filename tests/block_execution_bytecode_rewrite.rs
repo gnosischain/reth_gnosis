@@ -79,6 +79,7 @@ fn setup_db_with_wrong_bytecode(config: &BalancerHardforkConfig) -> CacheDB<Empt
                 nonce: 5,
                 code_hash: wrong_code.hash_slow(),
                 code: Some(wrong_code.clone()),
+                account_id: None,
             },
         );
     }
@@ -97,6 +98,7 @@ fn setup_db_with_correct_bytecode(config: &BalancerHardforkConfig) -> CacheDB<Em
                 nonce: 5,
                 code_hash: *expected_hash,
                 code: expected_code.clone(),
+                account_id: None,
             },
         );
     }

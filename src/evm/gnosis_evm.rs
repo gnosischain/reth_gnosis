@@ -1,5 +1,6 @@
 use revm::{
     context::{
+        journaled_state::account::JournaledAccountTr,
         result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, ResultAndState},
         Block, Cfg, ContextSetters, ContextTr, Evm, FrameStack, JournalTr, Transaction,
         TransactionType,

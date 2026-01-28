@@ -212,6 +212,7 @@ where
                     storage: Default::default(),
                     // we force the account to be created by changing the status
                     status: AccountStatus::Touched | AccountStatus::Created,
+                    original_info: Box::new(AccountInfo::default()),
                     transaction_id: 0,
                 };
                 res.state
