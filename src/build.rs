@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use crate::version::default_gnosis_extra_data_bytes;
 use alloy_consensus::{proofs, BlockBody, BlockHeader, Header, TxReceipt, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::Bytes;
-use crate::version::default_gnosis_extra_data_bytes;
 use gnosis_primitives::header::GnosisHeader;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::BlockExecutionError;

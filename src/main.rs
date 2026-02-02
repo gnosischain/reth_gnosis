@@ -7,8 +7,10 @@ use reth_gnosis::consts::{DEFAULT_7702_PATCH_TIME, DEFAULT_EL_PATCH_TIME};
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{
-    cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser,
-    version::{default_gnosis_extra_data, init_gnosis_version, RETH_UPSTREAM_VERSION}, GnosisNode,
+    cli::gnosis_cli::GnosisCli,
+    spec::gnosis_spec::GnosisChainSpecParser,
+    version::{default_gnosis_extra_data, init_gnosis_version, RETH_UPSTREAM_VERSION},
+    GnosisNode,
 };
 use tracing::info;
 
