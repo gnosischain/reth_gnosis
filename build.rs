@@ -26,7 +26,10 @@ fn try_set_version_info() -> Result<(), Box<dyn std::error::Error>> {
     let build = BuildBuilder::default().build_timestamp(true).build()?;
     emitter.add_instructions(&build)?;
 
-    let cargo = CargoBuilder::default().features(true).target_triple(true).build()?;
+    let cargo = CargoBuilder::default()
+        .features(true)
+        .target_triple(true)
+        .build()?;
     emitter.add_instructions(&cargo)?;
 
     let git = Git2Builder::default()
@@ -112,5 +115,7 @@ fn set_fallback_version_info() {
     println!("cargo:rustc-env=RETH_GNOSIS_LONG_VERSION_2=Build Timestamp: unknown");
     println!("cargo:rustc-env=RETH_GNOSIS_LONG_VERSION_3=Build Features: unknown");
     println!("cargo:rustc-env=RETH_GNOSIS_LONG_VERSION_4=Build Profile: unknown");
-    println!("cargo:rustc-env=RETH_GNOSIS_P2P_CLIENT_VERSION=reth_gnosis/v{pkg_version}-unknown/unknown");
+    println!(
+        "cargo:rustc-env=RETH_GNOSIS_P2P_CLIENT_VERSION=reth_gnosis/v{pkg_version}-unknown/unknown"
+    );
 }
