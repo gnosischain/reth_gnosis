@@ -9221,7 +9221,7 @@ dependencies = [
 
 [[package]]
 name = "reth_gnosis"
-version = "0.1.0"
+version = "1.0.2"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -9313,6 +9313,8 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "tracing",
+ "vergen",
+ "vergen-git2",
  "walkdir",
  "zstd 0.12.4",
 ]

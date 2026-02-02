@@ -7,8 +7,12 @@ use reth_gnosis::consts::{DEFAULT_7702_PATCH_TIME, DEFAULT_EL_PATCH_TIME};
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{
-    cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode,
+    cli::gnosis_cli::GnosisCli,
+    spec::gnosis_spec::GnosisChainSpecParser,
+    version::{default_gnosis_extra_data, init_gnosis_version, RETH_UPSTREAM_VERSION},
+    GnosisNode,
 };
+use tracing::info;
 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
@@ -23,8 +27,15 @@ pub struct NoArgs;
 type CliGnosis = GnosisCli<GnosisChainSpecParser, NoArgs>;
 
 fn main() {
+    // MUST be called before CLI parsing to override reth's version metadata
+    init_gnosis_version();
+
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
+
+    // Log upstream reth version once at startup
+    info!(target: "reth::cli", "Based on reth {}", RETH_UPSTREAM_VERSION);
+    info!(target: "reth::cli", "Block extra_data: {}", default_gnosis_extra_data());
 
     let timestamp = env::var("GNOSIS_EL_PATCH_TIME")
         .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
