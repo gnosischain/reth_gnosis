@@ -1,6 +1,6 @@
 [package]
 name = "reth_gnosis"
-version = "0.1.0"
+version = "1.0.2"
 edition = "2021"
 
 [lib]
@@ -128,3 +128,7 @@ jemalloc = ["dep:tikv-jemallocator"]
 testing = []
 failing-tests = []
 serde = []
+
+[build-dependencies]
+vergen = { version = "9.1.0", features = ["build", "cargo", "emit_and_set"] }
+vergen-git2 = "9.1.0"

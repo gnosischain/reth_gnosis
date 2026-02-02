@@ -3,6 +3,7 @@ use std::sync::Arc;
 use alloy_consensus::{proofs, BlockBody, BlockHeader, Header, TxReceipt, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::Bytes;
+use crate::version::default_gnosis_extra_data_bytes;
 use gnosis_primitives::header::GnosisHeader;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::BlockExecutionError;
@@ -31,7 +32,7 @@ impl<ChainSpec> GnosisBlockAssembler<ChainSpec> {
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             chain_spec,
-            extra_data: Bytes::from("reth_gnosis@v1.0.1".as_bytes().to_vec()),
+            extra_data: default_gnosis_extra_data_bytes(),
         }
     }
 }
