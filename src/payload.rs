@@ -18,7 +18,7 @@ use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_ethereum_engine_primitives::{
     BuiltPayloadConversionError, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
-    ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
+    ExecutionPayloadEnvelopeV4, ExecutionPayloadEnvelopeV6, ExecutionPayloadV1,
 };
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_ethereum_primitives::TransactionSigned;
@@ -581,6 +581,13 @@ impl GnosisBuiltPayload {
             execution_requests: requests.unwrap_or_default(),
         })
     }
+
+    /// Try converting built payload into [`ExecutionPayloadEnvelopeV6`].
+    ///
+    /// Note: Amsterdam fork is not yet implemented, so this conversion is not yet supported.
+    pub fn try_into_v6(self) -> Result<ExecutionPayloadEnvelopeV6, BuiltPayloadConversionError> {
+        unimplemented!("ExecutionPayloadEnvelopeV6 not yet supported")
+    }
 }
 
 impl BuiltPayload for GnosisBuiltPayload {
@@ -645,5 +652,13 @@ impl TryFrom<GnosisBuiltPayload> for ExecutionPayloadEnvelopeV5 {
 
     fn try_from(value: GnosisBuiltPayload) -> Result<Self, Self::Error> {
         value.try_into_v5()
+    }
+}
+
+impl TryFrom<GnosisBuiltPayload> for ExecutionPayloadEnvelopeV6 {
+    type Error = BuiltPayloadConversionError;
+
+    fn try_from(value: GnosisBuiltPayload) -> Result<Self, Self::Error> {
+        value.try_into_v6()
     }
 }

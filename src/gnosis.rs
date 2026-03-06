@@ -3,7 +3,10 @@ use crate::spec::gnosis_spec::{BalancerHardforkConfig, GnosisHardForks};
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
 use alloy_primitives::U256;
-use alloy_primitives::{map::HashMap, Address, Bytes};
+use alloy_primitives::{
+    map::{AddressMap, HashMap},
+    Address, Bytes,
+};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use reth_evm::{
@@ -110,7 +113,7 @@ fn apply_block_rewards_contract_call<SPEC>(
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
     system_caller: &mut SystemCaller<SPEC>,
-) -> Result<HashMap<Address, u128>, BlockExecutionError>
+) -> Result<AddressMap<u128>, BlockExecutionError>
 where
     SPEC: EthExecutorSpec + GnosisHardForks,
 {
@@ -181,7 +184,7 @@ where
     evm.db_mut().commit(state);
 
     // TODO: How to get function return call from evm.transact()?
-    let mut balance_increments = HashMap::default();
+    let mut balance_increments = AddressMap::default();
     for (address, amount) in result
         .receiversNative
         .iter()
@@ -216,7 +219,7 @@ pub(crate) fn apply_post_block_system_calls<SPEC>(
     coinbase: Address,
     evm: &mut impl Evm<DB: Database + DatabaseCommit>,
     system_caller: &mut SystemCaller<SPEC>,
-) -> Result<(HashMap<alloy_primitives::Address, u128>, Bytes), BlockExecutionError>
+) -> Result<(AddressMap<u128>, Bytes), BlockExecutionError>
 where
     SPEC: EthExecutorSpec + GnosisHardForks,
 {

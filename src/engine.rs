@@ -15,7 +15,7 @@ use alloy_consensus::Transaction;
 use reth::rpc::types::engine::{ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV5};
 use reth_ethereum_engine_primitives::{
     EthPayloadAttributes, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
-    ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
+    ExecutionPayloadEnvelopeV4, ExecutionPayloadEnvelopeV6, ExecutionPayloadV1,
 };
 use reth_ethereum_payload_builder::EthereumExecutionPayloadValidator;
 use reth_node_builder::{
@@ -58,6 +58,7 @@ impl EngineTypes for GnosisEngineTypes {
     type ExecutionPayloadEnvelopeV3 = ExecutionPayloadEnvelopeV3;
     type ExecutionPayloadEnvelopeV4 = ExecutionPayloadEnvelopeV4;
     type ExecutionPayloadEnvelopeV5 = ExecutionPayloadEnvelopeV5;
+    type ExecutionPayloadEnvelopeV6 = ExecutionPayloadEnvelopeV6;
 }
 
 /// Custom engine validator

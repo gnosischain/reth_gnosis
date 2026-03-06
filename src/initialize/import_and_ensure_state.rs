@@ -3,7 +3,6 @@ use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 use alloy_rlp::Decodable;
 use gnosis_primitives::header::GnosisHeader;
-use reth::tokio_runtime;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_cli_commands::init_state::without_evm;
 use reth_db::table::{Decompress, Table};
@@ -20,6 +19,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use tokio::runtime::Runtime;
 use tracing::info;
 
 const IMPORTED_FLAG: &str = "imported.flag";
@@ -122,7 +122,7 @@ pub fn download_and_import_init_state(
     let state_path_str = format!("./{chain}-state");
     let state_path = Path::new(&state_path_str);
 
-    if let Err(e) = tokio_runtime()
+    if let Err(e) = Runtime::new()
         .expect("Unable to build runtime")
         .block_on(ensure_state(state_path, chain))
     {
