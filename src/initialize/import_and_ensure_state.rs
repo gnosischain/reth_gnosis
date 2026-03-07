@@ -122,10 +122,10 @@ pub fn download_and_import_init_state(
     let state_path_str = format!("./{chain}-state");
     let state_path = Path::new(&state_path_str);
 
-    if let Err(e) = Runtime::new()
-        .expect("Unable to build runtime")
-        .block_on(ensure_state(state_path, chain))
-    {
+    let runtime = Runtime::new().expect("Unable to build runtime");
+    let _guard = runtime.enter();
+
+    if let Err(e) = runtime.block_on(ensure_state(state_path, chain)) {
         eprintln!("state setup failed: {e}");
         std::process::exit(1);
     }
