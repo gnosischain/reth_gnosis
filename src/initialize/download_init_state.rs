@@ -1,10 +1,15 @@
 use anyhow::{bail, Context};
+use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{BufReader, BufWriter, Read as _, Write as _};
 use std::time::Duration;
 use std::{fs::File, path::Path};
+use tokio::fs::OpenOptions;
 use tokio::{fs, io::AsyncWriteExt};
 use zstd::Decoder;
+
+const MAX_RETRIES: u32 = 5;
+const RETRY_BASE_DELAY_MS: u64 = 2000;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DownloadStateSpec {
@@ -152,8 +157,9 @@ fn decompress_zstd(input_path: &str, output_path: &str, expected_size: u64) -> s
     Ok(())
 }
 
-/// Downloads a file with progress bar
-async fn download_file(
+/// Downloads a file with progress bar, supporting resumable downloads via HTTP Range.
+/// Retries on failure with exponential backoff.
+async fn download_file_resumable(
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
@@ -161,7 +167,20 @@ async fn download_file(
 ) -> anyhow::Result<()> {
     let tmp = dest.with_extension("part");
 
+    let mut current_size: u64 = 0;
+    if tmp.exists() {
+        current_size = fs::metadata(&tmp).await?.len();
+        if current_size >= expected_size {
+            fs::rename(&tmp, dest).await?;
+            return Ok(());
+        }
+        if current_size > 0 {
+            println!("   resuming from {} / {} bytes", current_size, expected_size);
+        }
+    }
+
     let pb = ProgressBar::new(expected_size);
+    pb.set_position(current_size);
     pb.set_style(
         ProgressStyle::with_template(
             "{spinner:.green} {bytes}/{total_bytes} [{bar:40.cyan/blue}] {bytes_per_sec} ETA {eta}",
@@ -170,33 +189,106 @@ async fn download_file(
         .progress_chars("#>-"),
     );
 
-    let mut file = fs::File::create(&tmp).await?;
-    let mut resp = client.get(url).send().await?.error_for_status()?;
-    while let Some(chunk) = resp.chunk().await? {
+    let mut last_err = None;
+    for attempt in 0..MAX_RETRIES {
+        if attempt > 0 {
+            let delay = RETRY_BASE_DELAY_MS * 2u64.pow(attempt - 1);
+            println!("   retry {} in {}s …", attempt + 1, delay / 1000);
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+
+        match try_download_chunk(client, url, &tmp, expected_size, &mut current_size, &pb).await {
+            Ok(()) => {
+                pb.finish();
+                fs::rename(&tmp, dest).await?;
+                return Ok(());
+            }
+            Err(e) => {
+                last_err = Some(e);
+                if current_size > 0 {
+                    println!("   download interrupted, {} bytes received", current_size);
+                }
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("download failed after {} retries", MAX_RETRIES)))
+}
+
+async fn try_download_chunk(
+    client: &reqwest::Client,
+    url: &str,
+    tmp: &Path,
+    expected_size: u64,
+    current_size: &mut u64,
+    pb: &ProgressBar,
+) -> anyhow::Result<()> {
+    let mut request = client.get(url);
+
+    if *current_size > 0 {
+        request = request.header("Range", format!("bytes={}-", *current_size));
+    }
+
+    let resp = request.send().await?.error_for_status()?;
+    let status = resp.status();
+
+    // If we requested Range but got 200, server ignored Range - do NOT truncate or we lose progress.
+    // Retry instead; the partial file stays intact.
+    if *current_size > 0 && status.as_u16() != 206 {
+        bail!(
+            "server returned {} instead of 206 Partial Content (Range not supported), will retry",
+            status
+        );
+    }
+
+    let mut file = if *current_size == 0 {
+        fs::File::create(tmp).await?
+    } else {
+        OpenOptions::new().append(true).open(tmp).await?
+    };
+
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result?;
+        let len = chunk.len() as u64;
         file.write_all(&chunk).await?;
-        pb.inc(chunk.len() as u64);
+        *current_size += len;
+        pb.set_position(*current_size);
     }
     file.flush().await?;
-    pb.finish();
 
-    fs::rename(&tmp, dest).await?;
-    Ok(())
+    if *current_size >= expected_size {
+        Ok(())
+    } else {
+        bail!(
+            "incomplete: got {} / {} bytes",
+            *current_size,
+            expected_size
+        )
+    }
 }
 
 /// Downloads the initial state
 pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
     fs::create_dir_all(data_dir).await?;
 
-    // remove any *.part leftovers
+    // Remove *.part leftovers except compressed state part (for resumable download)
+    let compressed_part = data_dir.join(COMPRESSED_STATE_FILE).with_extension("part");
+    let compressed_part_name = compressed_part
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
     let mut rd = fs::read_dir(data_dir).await?;
     while let Some(entry) = rd.next_entry().await? {
-        if entry.file_name().to_string_lossy().ends_with(".part") {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".part") && name != compressed_part_name {
             fs::remove_file(entry.path()).await.ok();
         }
     }
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(600))
+        .timeout(Duration::from_secs(3600))
+        .connect_timeout(Duration::from_secs(30))
         .build()?;
 
     let state_path = data_dir.join(STATE_FILE);
@@ -221,8 +313,8 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
                 fs::remove_file(&compressed_path).await.ok();
             }
 
-            println!("⬇️   downloading compressed state …");
-            download_file(
+            println!("⬇️   downloading compressed state (resumable) …");
+            download_file_resumable(
                 &client,
                 &get_state_url(chain),
                 &compressed_path,
