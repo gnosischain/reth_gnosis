@@ -34,10 +34,20 @@ pub struct Cases<T> {
 
 impl<T: Case> Cases<T> {
     /// Run the contained test cases.
+    ///
+    /// Uses a custom rayon thread pool with a larger stack size (16 MiB) to
+    /// avoid stack overflows in deeply recursive EVM test cases.
     pub fn run(&self) -> Vec<CaseResult> {
-        self.test_cases
-            .par_iter()
-            .map(|(path, case)| CaseResult::new(path, case.description(), case.run()))
-            .collect()
+        let pool = rayon::ThreadPoolBuilder::new()
+            .stack_size(16 * 1024 * 1024)
+            .build()
+            .expect("failed to build rayon thread pool");
+
+        pool.install(|| {
+            self.test_cases
+                .par_iter()
+                .map(|(path, case)| CaseResult::new(path, case.description(), case.run()))
+                .collect()
+        })
     }
 }
