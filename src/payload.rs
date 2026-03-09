@@ -15,7 +15,7 @@ use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig,
 };
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
-use reth_errors::{BlockExecutionError, BlockValidationError};
+use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
 use reth_ethereum_engine_primitives::{
     BuiltPayloadConversionError, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
     ExecutionPayloadEnvelopeV4, ExecutionPayloadEnvelopeV6, ExecutionPayloadV1,
@@ -218,12 +218,21 @@ where
     let mut block_transactions_rlp_length = 0;
 
     let blob_params = chain_spec.blob_params_at_timestamp(attributes.timestamp);
-    let max_blob_count = blob_params
+    let protocol_max_blob_count = blob_params
         .as_ref()
         .map(|params| params.max_blob_count)
-        .unwrap_or_default();
+        .unwrap_or_else(Default::default);
+
+    // Apply user-configured blob limit (EIP-7872)
+    // Per EIP-7872: if the minimum is zero, set it to one
+    let max_blob_count = builder_config
+        .max_blobs_per_block
+        .map(|user_limit| std::cmp::min(user_limit, protocol_max_blob_count).max(1))
+        .unwrap_or(protocol_max_blob_count);
 
     let is_osaka = chain_spec.is_osaka_active_at_timestamp(attributes.timestamp);
+
+    let withdrawals_rlp_length = attributes.withdrawals().length();
 
     while let Some(pool_tx) = best_txs.next() {
         if !chain_spec.is_balancer_hardfork_active_at_timestamp(attributes.timestamp)
@@ -277,12 +286,10 @@ where
         // convert tx to a signed transaction
         let tx = pool_tx.to_consensus();
 
-        // the logic maintains parity with:
-        // https://github.com/paradigmxyz/reth/blob/db04a19101c922965b8336d960f837537895defb/crates/ethereum/payload/src/lib.rs#L206-L343
-        let estimated_block_size_with_tx = block_transactions_rlp_length
-            + tx.inner().length()
-            + attributes.withdrawals().length()
-            + 1024; // 1Kb of overhead for the block header
+        let tx_rlp_len = tx.inner().length();
+
+        let estimated_block_size_with_tx =
+            block_transactions_rlp_length + tx_rlp_len + withdrawals_rlp_length + 1024; // 1Kb of overhead for the block header
 
         if is_osaka && estimated_block_size_with_tx > MAX_RLP_BLOCK_SIZE {
             best_txs.mark_invalid(
@@ -327,7 +334,7 @@ where
                     break 'sidecar Err(Eip4844PoolTransactionError::MissingEip4844BlobSidecar);
                 };
 
-                if chain_spec.is_osaka_active_at_timestamp(attributes.timestamp) {
+                if is_osaka {
                     if sidecar.is_eip7594() {
                         Ok(sidecar)
                     } else {
@@ -423,6 +430,13 @@ where
 
     let sealed_block = Arc::new(block.sealed_block().clone());
     debug!(target: "payload_builder", id=%attributes.id, sealed_block_header = ?sealed_block.sealed_header(), "sealed built block");
+
+    if is_osaka && sealed_block.rlp_length() > MAX_RLP_BLOCK_SIZE {
+        return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
+            rlp_length: sealed_block.rlp_length(),
+            max_rlp_length: MAX_RLP_BLOCK_SIZE,
+        }));
+    }
 
     let payload = GnosisBuiltPayload::new(attributes.id, sealed_block, total_fees, requests)
         // add blob sidecars from the executed txs
