@@ -37,7 +37,7 @@ impl<T: Case> Cases<T> {
     pub fn run(&self) -> Vec<CaseResult> {
         self.test_cases
             .par_iter()
-            .map(|(path, case)| CaseResult::new(path, case, case.run()))
+            .map(|(path, case)| CaseResult::new(path, case.description(), case.run()))
             .collect()
     }
 }
