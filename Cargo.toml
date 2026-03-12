@@ -56,6 +56,8 @@ reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1", 
     "test-utils",
 ] }
 reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
+reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
+reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-stages = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-stages-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
