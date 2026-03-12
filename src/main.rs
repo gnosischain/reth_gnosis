@@ -31,6 +31,7 @@ fn main() {
             chain: node_cmd.chain.clone(),
             db: node_cmd.db,
             static_files: node_cmd.static_files,
+            storage: node_cmd.storage,
         };
 
         match node_cmd.chain.chain().id() {
