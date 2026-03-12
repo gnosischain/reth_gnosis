@@ -46,6 +46,12 @@ const IMPORTED_FLAG: &str = "imported.flag";
 /// ETL buffer size for state import: 128 MB (vs upstream default of 500 MB)
 const IMPORT_ETL_BUFFER_SIZE: usize = 128 * 1024 * 1024;
 
+/// Maximum total storage entries across all accounts in a single write batch.
+/// `insert_state` creates ~3x copies of storage data internally (state_init +
+/// reverts_init + original), so 500K entries × ~320 bytes peak ≈ 150 MB per copy.
+/// This keeps the dump_state peak well under 2 GB even with a few large contracts.
+const MAX_STORAGE_ENTRIES_PER_BATCH: usize = 500_000;
+
 /// Get an instance of key for given table
 fn table_key<T: Table>(key: &str) -> Result<T::Key, eyre::Error> {
     serde_json::from_str(key).map_err(|e| eyre::eyre!(e))
@@ -146,44 +152,97 @@ where
         + AsRef<Provider>,
 {
     let accounts_len = collector.len();
-    let mut accounts = Vec::with_capacity(AVERAGE_COUNT_ACCOUNTS_PER_GB_STATE_DUMP);
+    let mut accounts: Vec<(Address, GenesisAccount)> = Vec::new();
     let mut total_inserted_accounts = 0;
+    let mut batch_storage_entries: usize = 0;
+
+    /// Flush the current batch to the database.
+    fn flush_batch<Provider>(
+        accounts: &mut Vec<(Address, GenesisAccount)>,
+        provider_rw: &Provider,
+        block: u64,
+        total_inserted: &mut usize,
+        batch_storage: &mut usize,
+    ) -> Result<(), eyre::Error>
+    where
+        Provider: StaticFileProviderFactory
+            + DBProvider<Tx: reth_db_api::transaction::DbTxMut>
+            + HeaderProvider
+            + HashingWriter
+            + HistoryWriter
+            + StateWriter
+            + StorageSettingsCache
+            + RocksDBProviderFactory
+            + NodePrimitivesProvider
+            + AsRef<Provider>,
+    {
+        if accounts.is_empty() {
+            return Ok(());
+        }
+
+        *total_inserted += accounts.len();
+
+        info!(target: "reth::cli",
+            total_inserted_accounts = *total_inserted,
+            batch_accounts = accounts.len(),
+            batch_storage_entries = *batch_storage,
+            "Writing accounts to db"
+        );
+
+        insert_genesis_hashes(
+            provider_rw,
+            accounts.iter().map(|(address, account)| (address, account)),
+        )?;
+
+        insert_history(
+            provider_rw,
+            accounts.iter().map(|(address, account)| (address, account)),
+            block,
+        )?;
+
+        insert_state(
+            provider_rw,
+            accounts.iter().map(|(address, account)| (address, account)),
+            block,
+        )?;
+
+        accounts.clear();
+        *batch_storage = 0;
+        Ok(())
+    }
 
     for (index, entry) in collector.iter()?.enumerate() {
         let (address, account) = entry?;
         let (address, _) = Address::from_compact(address.as_slice(), address.len());
         let (account, _) = GenesisAccount::from_compact(account.as_slice(), account.len());
 
+        let storage_count = account.storage.as_ref().map(|s| s.len()).unwrap_or(0);
+
+        // Flush before adding this account if the batch storage would exceed the limit.
+        if !accounts.is_empty()
+            && (batch_storage_entries + storage_count > MAX_STORAGE_ENTRIES_PER_BATCH)
+        {
+            flush_batch(
+                &mut accounts,
+                provider_rw,
+                block,
+                &mut total_inserted_accounts,
+                &mut batch_storage_entries,
+            )?;
+        }
+
+        batch_storage_entries += storage_count;
         accounts.push((address, account));
 
-        if (index > 0 && index.is_multiple_of(AVERAGE_COUNT_ACCOUNTS_PER_GB_STATE_DUMP))
-            || index == accounts_len - 1
-        {
-            total_inserted_accounts += accounts.len();
-
-            info!(target: "reth::cli",
-                total_inserted_accounts,
-                "Writing accounts to db"
-            );
-
-            insert_genesis_hashes(
+        // Also flush at the end.
+        if index == accounts_len - 1 {
+            flush_batch(
+                &mut accounts,
                 provider_rw,
-                accounts.iter().map(|(address, account)| (address, account)),
-            )?;
-
-            insert_history(
-                provider_rw,
-                accounts.iter().map(|(address, account)| (address, account)),
                 block,
+                &mut total_inserted_accounts,
+                &mut batch_storage_entries,
             )?;
-
-            insert_state(
-                provider_rw,
-                accounts.iter().map(|(address, account)| (address, account)),
-                block,
-            )?;
-
-            accounts.clear();
         }
     }
 
