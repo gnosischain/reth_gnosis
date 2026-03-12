@@ -9234,6 +9234,8 @@ dependencies = [
  "reth-cli-commands",
  "reth-cli-runner",
  "reth-cli-util",
+ "reth-codecs",
+ "reth-config",
  "reth-consensus",
  "reth-db",
  "reth-db-api",

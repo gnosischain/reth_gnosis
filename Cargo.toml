@@ -62,6 +62,8 @@ reth-stages-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.
 reth-static-file-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
+reth-codecs = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
+reth-config = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }

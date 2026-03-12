@@ -1,10 +1,9 @@
 use anyhow::{bail, Context};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::io::{BufReader, BufWriter, Read as _, Write as _};
+use std::io::{BufReader, Read as _};
 use std::time::Duration;
 use std::{fs::File, path::Path};
 use tokio::{fs, io::AsyncWriteExt};
-use zstd::Decoder;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DownloadStateSpec {
@@ -58,15 +57,6 @@ fn get_compressed_state_size(chain: &str) -> u64 {
     }
 }
 
-/// Decompressed state.jsonl file size
-fn get_decompressed_state_size(chain: &str) -> u64 {
-    match chain {
-        "gnosis" => 27_498_292_407,
-        "chiado" => 111_610_557,
-        _ => unreachable!(),
-    }
-}
-
 // ────────────────────────────────────────────────────────────
 // BLAKE3 hashes for integrity verification
 // ────────────────────────────────────────────────────────────
@@ -86,9 +76,8 @@ fn get_header_hash(chain: &str) -> &'static str {
     }
 }
 
-const HEADER_FILE: &str = "header.rlp";
-const STATE_FILE: &str = "state.jsonl";
-const COMPRESSED_STATE_FILE: &str = "state.jsonl.zst";
+pub const HEADER_FILE: &str = "header.rlp";
+pub const COMPRESSED_STATE_FILE: &str = "state.jsonl.zst";
 
 /// Verifies a file's BLAKE3 hash matches the expected value
 fn verify_file_hash(path: &Path, expected_hash: &str) -> anyhow::Result<bool> {
@@ -126,32 +115,6 @@ fn verify_file_hash(path: &Path, expected_hash: &str) -> anyhow::Result<bool> {
     Ok(hash_hex.as_str() == expected_hash)
 }
 
-fn decompress_zstd(input_path: &str, output_path: &str, expected_size: u64) -> std::io::Result<()> {
-    let input_file = File::open(input_path)?;
-    let reader = BufReader::new(input_file);
-    let mut decoder = Decoder::new(reader)?;
-
-    let pb = ProgressBar::new(expected_size);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.magenta/blue}] {bytes}/{total_bytes} ({eta})")
-        .unwrap()
-        .progress_chars("=>-"));
-
-    let mut output_file = BufWriter::new(File::create(output_path)?);
-    let mut buffer = [0u8; 8192];
-    loop {
-        let bytes_read = decoder.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-        output_file.write_all(&buffer[..bytes_read])?;
-        pb.inc(bytes_read as u64);
-    }
-
-    pb.finish_with_message("✅ State Decompressed");
-    Ok(())
-}
-
 /// Downloads a file with progress bar
 async fn download_file(
     client: &reqwest::Client,
@@ -183,7 +146,8 @@ async fn download_file(
     Ok(())
 }
 
-/// Downloads the initial state
+/// Downloads and verifies the compressed state + header files (no decompression).
+/// The caller streams directly from the compressed file during import.
 pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
     fs::create_dir_all(data_dir).await?;
 
@@ -199,65 +163,41 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
         .timeout(Duration::from_secs(600))
         .build()?;
 
-    let state_path = data_dir.join(STATE_FILE);
     let compressed_path = data_dir.join(COMPRESSED_STATE_FILE);
     let header_path = data_dir.join(HEADER_FILE);
 
-    // Check if final decompressed state already exists (size check only)
-    if file_has_size(&state_path, get_decompressed_state_size(chain)).await? {
-        println!("✅  state already complete");
+    // Check compressed state with BLAKE3 hash
+    let compressed_valid = if compressed_path.exists() {
+        println!("🔍  verifying compressed state …");
+        verify_file_hash(&compressed_path, get_compressed_state_hash(chain))?
     } else {
-        // Check compressed state with BLAKE3 hash
-        let compressed_valid = if compressed_path.exists() {
-            println!("🔍  verifying compressed state …");
-            verify_file_hash(&compressed_path, get_compressed_state_hash(chain))?
-        } else {
-            false
-        };
+        false
+    };
 
-        if !compressed_valid {
-            if compressed_path.exists() {
-                println!("⚠️   hash mismatch, re-downloading …");
-                fs::remove_file(&compressed_path).await.ok();
-            }
-
-            println!("⬇️   downloading compressed state …");
-            download_file(
-                &client,
-                &get_state_url(chain),
-                &compressed_path,
-                get_compressed_state_size(chain),
-            )
-            .await
-            .context("failed to download compressed state")?;
-
-            println!("🔍  verifying download …");
-            if !verify_file_hash(&compressed_path, get_compressed_state_hash(chain))? {
-                fs::remove_file(&compressed_path).await.ok();
-                bail!("compressed state hash mismatch - file corrupted");
-            }
-            println!("✅  compressed state verified");
-        } else {
-            println!("✅  compressed state verified");
+    if !compressed_valid {
+        if compressed_path.exists() {
+            println!("⚠️   hash mismatch, re-downloading …");
+            fs::remove_file(&compressed_path).await.ok();
         }
 
-        // Decompress
-        println!("🛠   decompressing state …");
-        decompress_zstd(
-            compressed_path.to_str().unwrap(),
-            state_path.with_extension("part").to_str().unwrap(),
-            get_decompressed_state_size(chain),
-        )?;
+        println!("⬇️   downloading compressed state …");
+        download_file(
+            &client,
+            &get_state_url(chain),
+            &compressed_path,
+            get_compressed_state_size(chain),
+        )
+        .await
+        .context("failed to download compressed state")?;
 
-        fs::rename(state_path.with_extension("part"), &state_path).await?;
-
-        if !file_has_size(&state_path, get_decompressed_state_size(chain)).await? {
-            bail!("decompressed state size mismatch");
+        println!("🔍  verifying download …");
+        if !verify_file_hash(&compressed_path, get_compressed_state_hash(chain))? {
+            fs::remove_file(&compressed_path).await.ok();
+            bail!("compressed state hash mismatch - file corrupted");
         }
-        println!("✅  state decompressed");
-
-        // Clean up compressed file
-        fs::remove_file(&compressed_path).await.ok();
+        println!("✅  compressed state verified");
+    } else {
+        println!("✅  compressed state verified");
     }
 
     // Check header with BLAKE3 hash
@@ -294,11 +234,4 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
 
     println!("✅  state + header ready");
     Ok(())
-}
-
-async fn file_has_size(path: &Path, expected: u64) -> anyhow::Result<bool> {
-    Ok(tokio::fs::metadata(path)
-        .await
-        .map(|m| m.len() == expected)
-        .unwrap_or(false))
 }
