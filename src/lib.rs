@@ -37,7 +37,7 @@ pub mod block;
 mod build;
 pub mod cli;
 pub mod consts;
-mod engine;
+pub mod engine;
 mod errors;
 pub mod evm;
 pub mod evm_config;
