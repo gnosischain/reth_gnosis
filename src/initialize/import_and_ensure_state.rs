@@ -10,11 +10,13 @@ use alloy_rlp::Decodable;
 use gnosis_primitives::header::GnosisHeader;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_cli_commands::init_state::without_evm;
+use reth_codecs::Compact;
 use reth_db::table::{Decompress, Table};
 use reth_db::tables;
 use reth_db_api::transaction::DbTxMut;
 use reth_db_common::init::{insert_genesis_hashes, insert_history, insert_state};
 use reth_db_common::DbTool;
+use reth_etl::Collector;
 use reth_primitives::{SealedHeader, StaticFileSegment};
 use reth_provider::{
     BlockHashReader, BlockNumReader, DBProvider, DatabaseProviderFactory, HashingWriter,
@@ -39,9 +41,15 @@ const IMPORTED_FLAG: &str = "imported.flag";
 /// Soft limit for the number of flushed updates after which to log progress summary.
 const SOFT_LIMIT_COUNT_FLUSHED_UPDATES: usize = 1_000_000;
 
-/// Maximum number of bytes of JSONL text to accumulate before flushing a batch to the database.
-/// Keeping this small bounds peak RAM usage during import.
-const BATCH_BYTE_LIMIT: usize = 256 * 1024 * 1024; // 256 MB
+/// ETL collector buffer size. Accounts are buffered up to this limit before being
+/// sorted and flushed to a temporary file on disk. 256 MB keeps peak RSS low while
+/// still giving the sort pass decent chunk sizes.
+const ETL_BUFFER_BYTES: usize = 256 * 1024 * 1024; // 256 MB
+
+/// Number of accounts to accumulate from the sorted iterator before flushing a
+/// batch to the database. Keeping this moderate avoids large `ExecutionOutcome`
+/// allocations for storage-heavy batches.
+const ACCOUNTS_PER_BATCH: usize = 100_000;
 
 /// Get an instance of key for given table
 fn table_key<T: Table>(key: &str) -> Result<T::Key, eyre::Error> {
@@ -72,8 +80,10 @@ struct GenesisAccountWithAddress {
     address: Address,
 }
 
-/// Imports state by streaming directly from the compressed .zst file, processing
-/// accounts in small batches to keep RAM usage bounded.
+/// Imports state by streaming directly from the compressed .zst file.
+///
+/// Accounts are parsed into an ETL collector (which sorts them and spills to disk),
+/// then iterated in sorted order and written to the database in batches.
 ///
 /// This replaces the upstream `init_from_state_dump` which accumulates unbounded
 /// prefix sets that cause OOM on large state dumps like Gnosis mainnet (~27 GB).
@@ -111,7 +121,7 @@ where
 
     let mut reader = reader;
 
-    // First line is the state root
+    // ── Phase 1: Parse state root ──────────────────────────────────────
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let dump_state_root: StateRoot = serde_json::from_str(&line)?;
@@ -124,10 +134,11 @@ where
     }
     line.clear();
 
-    // Process accounts in batches, bounded by byte size
-    let mut batch: Vec<(Address, GenesisAccount)> = Vec::new();
-    let mut batch_bytes: usize = 0;
-    let mut total_accounts: usize = 0;
+    // ── Phase 2: Parse accounts into ETL collector (sorted, disk-backed) ──
+    info!(target: "reth::cli", "Parsing accounts from compressed state dump into sorted collector");
+    let mut collector: Collector<Address, GenesisAccount> =
+        Collector::new(ETL_BUFFER_BYTES, None);
+    let mut parsed_count: usize = 0;
 
     loop {
         let n = reader.read_line(&mut line)?;
@@ -136,41 +147,53 @@ where
         }
 
         let entry: GenesisAccountWithAddress = serde_json::from_str(&line)?;
-        batch.push((entry.address, entry.genesis_account));
-        batch_bytes += n;
+        collector.insert(entry.address, entry.genesis_account)?;
+        parsed_count += 1;
         line.clear();
 
-        if batch_bytes >= BATCH_BYTE_LIMIT {
-            total_accounts += batch.len();
+        if parsed_count % 500_000 == 0 {
+            info!(target: "reth::cli", parsed_count, "Parsing accounts");
+        }
+    }
+    // Drop the reader to release the zstd decoder / file handle
+    drop(reader);
+
+    info!(target: "reth::cli", parsed_count, "All accounts parsed, writing to database in sorted order");
+
+    // ── Phase 3: Iterate sorted accounts and write to DB in batches ──
+    let total_accounts = collector.len();
+    let mut accounts: Vec<(Address, GenesisAccount)> = Vec::with_capacity(ACCOUNTS_PER_BATCH);
+    let mut total_inserted: usize = 0;
+
+    for (index, entry) in collector.iter()?.enumerate() {
+        let (raw_address, raw_account) = entry?;
+        let (address, _) =
+            Address::from_compact(raw_address.as_slice(), raw_address.len());
+        let (account, _) =
+            GenesisAccount::from_compact(raw_account.as_slice(), raw_account.len());
+
+        accounts.push((address, account));
+
+        let is_last = index == total_accounts - 1;
+        if accounts.len() >= ACCOUNTS_PER_BATCH || is_last {
+            total_inserted += accounts.len();
             info!(target: "reth::cli",
-                batch_accounts = batch.len(),
+                batch_accounts = accounts.len(),
+                total_inserted,
                 total_accounts,
-                "Flushing account batch to database"
+                "Writing account batch to database"
             );
-            flush_batch(&batch, provider_rw, block)?;
-            batch.clear();
-            batch_bytes = 0;
+            flush_batch(&accounts, provider_rw, block)?;
+            accounts.clear();
         }
     }
 
-    // Flush remaining accounts
-    if !batch.is_empty() {
-        total_accounts += batch.len();
-        info!(target: "reth::cli",
-            batch_accounts = batch.len(),
-            total_accounts,
-            "Flushing final account batch to database"
-        );
-        flush_batch(&batch, provider_rw, block)?;
-        batch.clear();
-    }
-
     info!(target: "reth::cli",
-        total_accounts,
+        total_inserted,
         "All accounts written to database, starting state root computation"
     );
 
-    // Compute state root from scratch (no prefix sets needed — avoids unbounded memory).
+    // ── Phase 4: Compute state root from scratch (no prefix sets) ──
     let computed_state_root = compute_state_root_from_scratch(provider_rw)?;
     if computed_state_root != expected_state_root {
         return Err(eyre::eyre!(
@@ -193,7 +216,7 @@ where
     Ok(hash)
 }
 
-/// Flush a batch of accounts to the database (hashes, history, state).
+/// Flush a batch of (sorted) accounts to the database (hashes, history, state).
 fn flush_batch<Provider>(
     batch: &[(Address, GenesisAccount)],
     provider_rw: &Provider,
@@ -229,7 +252,8 @@ where
     let mut total_flushed_updates: usize = 0;
 
     loop {
-        let state_root = StateRootComputer::from_tx(tx).with_intermediate_state(intermediate_state);
+        let state_root =
+            StateRootComputer::from_tx(tx).with_intermediate_state(intermediate_state);
 
         match state_root.root_with_progress()? {
             StateRootProgress::Progress(state, _, updates) => {
@@ -294,7 +318,7 @@ fn import_state(
         // will be unwound according to database checkpoints.
         //
         // Necessary to commit, so the header is accessible to provider_rw and
-        // init_state_dump
+        // the import
         static_file_provider.commit()?;
     } else if last_block_number > 0 && last_block_number < header.number {
         return Err(eyre::eyre!(

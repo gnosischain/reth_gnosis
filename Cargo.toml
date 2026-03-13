@@ -26,6 +26,7 @@ reth-node-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
+reth-codecs = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
