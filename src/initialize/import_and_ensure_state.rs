@@ -42,14 +42,20 @@ const IMPORTED_FLAG: &str = "imported.flag";
 const SOFT_LIMIT_COUNT_FLUSHED_UPDATES: usize = 1_000_000;
 
 /// ETL collector buffer size. Accounts are buffered up to this limit before being
-/// sorted and flushed to a temporary file on disk. 256 MB keeps peak RSS low while
-/// still giving the sort pass decent chunk sizes.
-const ETL_BUFFER_BYTES: usize = 256 * 1024 * 1024; // 256 MB
+/// sorted and flushed to a temporary file on disk. 64 MB keeps peak RSS low
+/// (par_sort needs ~2x working memory during flush).
+const ETL_BUFFER_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 
-/// Number of accounts to accumulate from the sorted iterator before flushing a
-/// batch to the database. Keeping this moderate avoids large `ExecutionOutcome`
-/// allocations for storage-heavy batches.
-const ACCOUNTS_PER_BATCH: usize = 100_000;
+/// Maximum accounts per DB write batch. Kept small because the upstream
+/// `insert_state` / `insert_storage_for_hashing` internally create multiple
+/// redundant copies of storage data (BundleState, RevertsInit, BTreeMaps, etc.),
+/// amplifying memory ~5-10x vs the raw data.
+const MAX_ACCOUNTS_PER_BATCH: usize = 10_000;
+
+/// Maximum total storage entries across all accounts in a DB write batch.
+/// A single contract can have millions of storage slots; this cap prevents
+/// one fat contract from blowing up memory via the intermediate structures.
+const MAX_STORAGE_PER_BATCH: usize = 200_000;
 
 /// Get an instance of key for given table
 fn table_key<T: Table>(key: &str) -> Result<T::Key, eyre::Error> {
@@ -161,8 +167,16 @@ where
     info!(target: "reth::cli", parsed_count, "All accounts parsed, writing to database in sorted order");
 
     // ── Phase 3: Iterate sorted accounts and write to DB in batches ──
+    //
+    // Batch by BOTH account count and total storage entry count, whichever
+    // limit is hit first. This is critical because `insert_state` and
+    // `insert_storage_for_hashing` create multiple intermediate copies of
+    // storage data (BundleStateInit, RevertsInit, BTreeMaps, StateChangeset,
+    // PlainStateReverts), amplifying memory ~5-10x vs the raw data.
     let total_accounts = collector.len();
-    let mut accounts: Vec<(Address, GenesisAccount)> = Vec::with_capacity(ACCOUNTS_PER_BATCH);
+    let mut accounts: Vec<(Address, GenesisAccount)> =
+        Vec::with_capacity(MAX_ACCOUNTS_PER_BATCH);
+    let mut batch_storage_count: usize = 0;
     let mut total_inserted: usize = 0;
 
     for (index, entry) in collector.iter()?.enumerate() {
@@ -172,19 +186,25 @@ where
         let (account, _) =
             GenesisAccount::from_compact(raw_account.as_slice(), raw_account.len());
 
+        batch_storage_count += account.storage.as_ref().map_or(0, |s| s.len());
         accounts.push((address, account));
 
         let is_last = index == total_accounts - 1;
-        if accounts.len() >= ACCOUNTS_PER_BATCH || is_last {
+        if accounts.len() >= MAX_ACCOUNTS_PER_BATCH
+            || batch_storage_count >= MAX_STORAGE_PER_BATCH
+            || is_last
+        {
             total_inserted += accounts.len();
             info!(target: "reth::cli",
                 batch_accounts = accounts.len(),
+                batch_storage_count,
                 total_inserted,
                 total_accounts,
                 "Writing account batch to database"
             );
             flush_batch(&accounts, provider_rw, block)?;
             accounts.clear();
+            batch_storage_count = 0;
         }
     }
 
