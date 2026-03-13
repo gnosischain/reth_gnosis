@@ -1,28 +1,47 @@
 use crate::cli::import_era::ERA_IMPORTED_FLAG;
-use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
+use crate::initialize::download_init_state::{
+    ensure_state, DownloadStateSpec, COMPRESSED_STATE_FILE,
+};
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
+use alloy_consensus::BlockHeader;
+use alloy_genesis::GenesisAccount;
+use alloy_primitives::{Address, B256};
 use alloy_rlp::Decodable;
 use gnosis_primitives::header::GnosisHeader;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_cli_commands::init_state::without_evm;
 use reth_db::table::{Decompress, Table};
 use reth_db::tables;
-use reth_db_common::init::init_from_state_dump;
+use reth_db_api::transaction::DbTxMut;
+use reth_db_common::init::{insert_genesis_hashes, insert_history, insert_state};
 use reth_db_common::DbTool;
 use reth_primitives::{SealedHeader, StaticFileSegment};
 use reth_provider::{
-    BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
-    StaticFileWriter,
+    BlockHashReader, BlockNumReader, DBProvider, DatabaseProviderFactory, HashingWriter,
+    HeaderProvider, HistoryWriter, NodePrimitivesProvider, RocksDBProviderFactory,
+    StageCheckpointWriter, StateWriter, StaticFileProviderFactory, StaticFileWriter,
+    StorageSettingsCache, TrieWriter,
 };
-use revm_primitives::B256;
+use reth_stages_types::{StageCheckpoint, StageId};
+use reth_trie::{IntermediateStateRootState, StateRoot as StateRootComputer, StateRootProgress};
+use reth_trie_db::DatabaseStateRoot;
+use serde::Deserialize;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tokio::runtime::Runtime;
 use tracing::info;
+use zstd::Decoder;
 
 const IMPORTED_FLAG: &str = "imported.flag";
+
+/// Soft limit for the number of flushed updates after which to log progress summary.
+const SOFT_LIMIT_COUNT_FLUSHED_UPDATES: usize = 1_000_000;
+
+/// Maximum number of bytes of JSONL text to accumulate before flushing a batch to the database.
+/// Keeping this small bounds peak RAM usage during import.
+const BATCH_BYTE_LIMIT: usize = 256 * 1024 * 1024; // 256 MB
 
 /// Get an instance of key for given table
 fn table_key<T: Table>(key: &str) -> Result<T::Key, eyre::Error> {
@@ -39,16 +58,217 @@ fn read_header_from_file(path: PathBuf) -> Result<GnosisHeader, eyre::Error> {
     Ok(header)
 }
 
+/// Type to deserialize state root from the first line of the state dump.
+#[derive(Debug, Deserialize)]
+struct StateRoot {
+    root: B256,
+}
+
+/// An account entry as it appears in the state dump JSONL file.
+#[derive(Debug, Deserialize)]
+struct GenesisAccountWithAddress {
+    #[serde(flatten)]
+    genesis_account: GenesisAccount,
+    address: Address,
+}
+
+/// Imports state by streaming directly from the compressed .zst file, processing
+/// accounts in small batches to keep RAM usage bounded.
+///
+/// This replaces the upstream `init_from_state_dump` which accumulates unbounded
+/// prefix sets that cause OOM on large state dumps like Gnosis mainnet (~27 GB).
+fn chunked_import_state<Provider>(
+    reader: impl BufRead,
+    provider_rw: &Provider,
+    block: u64,
+) -> Result<B256, eyre::Error>
+where
+    Provider: StaticFileProviderFactory
+        + DBProvider<Tx: DbTxMut>
+        + BlockNumReader
+        + BlockHashReader
+        + reth_chainspec::ChainSpecProvider
+        + StageCheckpointWriter
+        + HistoryWriter
+        + HeaderProvider
+        + HashingWriter
+        + TrieWriter
+        + StateWriter
+        + StorageSettingsCache
+        + RocksDBProviderFactory
+        + NodePrimitivesProvider
+        + AsRef<Provider>,
+{
+    let hash = provider_rw
+        .block_hash(block)?
+        .ok_or_else(|| eyre::eyre!("Block hash not found for block {}", block))?;
+    let header = provider_rw
+        .header_by_number(block)?
+        .map(reth_primitives_traits::SealedHeader::seal_slow)
+        .ok_or_else(|| eyre::eyre!("Header not found for block {}", block))?;
+
+    let expected_state_root = header.state_root();
+
+    let mut reader = reader;
+
+    // First line is the state root
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let dump_state_root: StateRoot = serde_json::from_str(&line)?;
+    if dump_state_root.root != expected_state_root {
+        return Err(eyre::eyre!(
+            "State root from dump ({:?}) does not match header ({:?})",
+            dump_state_root.root,
+            expected_state_root
+        ));
+    }
+    line.clear();
+
+    // Process accounts in batches, bounded by byte size
+    let mut batch: Vec<(Address, GenesisAccount)> = Vec::new();
+    let mut batch_bytes: usize = 0;
+    let mut total_accounts: usize = 0;
+
+    loop {
+        let n = reader.read_line(&mut line)?;
+        if n == 0 {
+            break;
+        }
+
+        let entry: GenesisAccountWithAddress = serde_json::from_str(&line)?;
+        batch.push((entry.address, entry.genesis_account));
+        batch_bytes += n;
+        line.clear();
+
+        if batch_bytes >= BATCH_BYTE_LIMIT {
+            total_accounts += batch.len();
+            info!(target: "reth::cli",
+                batch_accounts = batch.len(),
+                total_accounts,
+                "Flushing account batch to database"
+            );
+            flush_batch(&batch, provider_rw, block)?;
+            batch.clear();
+            batch_bytes = 0;
+        }
+    }
+
+    // Flush remaining accounts
+    if !batch.is_empty() {
+        total_accounts += batch.len();
+        info!(target: "reth::cli",
+            batch_accounts = batch.len(),
+            total_accounts,
+            "Flushing final account batch to database"
+        );
+        flush_batch(&batch, provider_rw, block)?;
+        batch.clear();
+    }
+
+    info!(target: "reth::cli",
+        total_accounts,
+        "All accounts written to database, starting state root computation"
+    );
+
+    // Compute state root from scratch (no prefix sets needed — avoids unbounded memory).
+    let computed_state_root = compute_state_root_from_scratch(provider_rw)?;
+    if computed_state_root != expected_state_root {
+        return Err(eyre::eyre!(
+            "Computed state root ({:?}) does not match expected ({:?})",
+            computed_state_root,
+            expected_state_root
+        ));
+    }
+
+    info!(target: "reth::cli",
+        ?computed_state_root,
+        "State root verified successfully"
+    );
+
+    // Insert sync stages for stages that require state
+    for stage in StageId::STATE_REQUIRED {
+        provider_rw.save_stage_checkpoint(stage, StageCheckpoint::new(block))?;
+    }
+
+    Ok(hash)
+}
+
+/// Flush a batch of accounts to the database (hashes, history, state).
+fn flush_batch<Provider>(
+    batch: &[(Address, GenesisAccount)],
+    provider_rw: &Provider,
+    block: u64,
+) -> Result<(), eyre::Error>
+where
+    Provider: StaticFileProviderFactory
+        + DBProvider<Tx: DbTxMut>
+        + HeaderProvider
+        + HashingWriter
+        + HistoryWriter
+        + StateWriter
+        + StorageSettingsCache
+        + RocksDBProviderFactory
+        + NodePrimitivesProvider
+        + AsRef<Provider>,
+{
+    let iter = batch.iter().map(|(addr, acct)| (addr, acct));
+    insert_genesis_hashes(provider_rw, iter.clone())?;
+    insert_history(provider_rw, iter.clone(), block)?;
+    insert_state(provider_rw, iter, block)?;
+    Ok(())
+}
+
+/// Compute the state root from scratch by walking the entire hashed state.
+/// This avoids holding prefix sets in memory (which cause OOM on large states).
+fn compute_state_root_from_scratch<Provider>(provider: &Provider) -> Result<B256, eyre::Error>
+where
+    Provider: DBProvider<Tx: DbTxMut> + TrieWriter,
+{
+    let tx = provider.tx_ref();
+    let mut intermediate_state: Option<IntermediateStateRootState> = None;
+    let mut total_flushed_updates: usize = 0;
+
+    loop {
+        let state_root = StateRootComputer::from_tx(tx).with_intermediate_state(intermediate_state);
+
+        match state_root.root_with_progress()? {
+            StateRootProgress::Progress(state, _, updates) => {
+                let updated_len = provider.write_trie_updates(updates)?;
+                total_flushed_updates += updated_len;
+
+                if total_flushed_updates.is_multiple_of(SOFT_LIMIT_COUNT_FLUSHED_UPDATES) {
+                    info!(target: "reth::cli",
+                        total_flushed_updates,
+                        "Flushing trie updates"
+                    );
+                }
+
+                intermediate_state = Some(*state);
+            }
+            StateRootProgress::Complete(root, _, updates) => {
+                let updated_len = provider.write_trie_updates(updates)?;
+                total_flushed_updates += updated_len;
+
+                info!(target: "reth::cli",
+                    %root,
+                    total_flushed_updates,
+                    "State root computation complete"
+                );
+
+                return Ok(root);
+            }
+        }
+    }
+}
+
 fn import_state(
     env: &EnvironmentArgs<GnosisChainSpecParser>,
-    state: PathBuf,
+    compressed_state: PathBuf,
     header: PathBuf,
     header_hash: &str,
 ) -> Result<(), eyre::Error> {
     let Environment {
-        config,
-        provider_factory,
-        ..
+        provider_factory, ..
     } = env.init::<GnosisNode>(AccessRights::RW)?;
 
     let static_file_provider = provider_factory.static_file_provider();
@@ -63,8 +283,6 @@ fn import_state(
     if last_block_number == 0 {
         without_evm::setup_without_evm(
             &provider_rw,
-            // &header,
-            // header_hash,
             SealedHeader::new(header, header_hash),
             |number| GnosisHeader {
                 number,
@@ -84,11 +302,15 @@ fn import_state(
         ));
     }
 
-    info!(target: "reth::cli", "Initiating state dump");
+    info!(target: "reth::cli", "Initiating state import (streaming from compressed file)");
 
-    let reader = BufReader::new(reth_fs_util::open(state)?);
+    // Stream directly from the compressed .zst file — no decompression to disk needed.
+    let file = File::open(&compressed_state)?;
+    let decoder = Decoder::new(BufReader::new(file))?;
+    let reader = BufReader::new(decoder);
 
-    let hash = init_from_state_dump(reader, &provider_rw, config.stages.etl)?;
+    let block = provider_rw.last_block_number()?;
+    let hash = chunked_import_state(reader, &provider_rw, block)?;
 
     provider_rw.commit()?;
 
@@ -137,12 +359,12 @@ pub fn download_and_import_init_state(
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
 
-    let state_file: PathBuf = state_path.join("state.jsonl");
+    let compressed_state_file: PathBuf = state_path.join(COMPRESSED_STATE_FILE);
     let header_file: PathBuf = state_path.join("header.rlp");
 
     import_state(
         &env,
-        state_file,
+        compressed_state_file,
         header_file.clone(),
         download_spec.header_hash,
     )
