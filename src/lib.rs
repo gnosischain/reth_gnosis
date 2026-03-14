@@ -5,10 +5,13 @@ use network::GnosisNetworkBuilder;
 use payload_builder::GnosisPayloadBuilder;
 use pool::GnosisPoolBuilder;
 use reth::api::{AddOnsContext, FullNodeComponents};
+use reth_node_builder::rpc::RpcContext;
+use reth_rpc::eth::EthApiTypes;
 use reth_consensus::FullConsensus;
 use reth_engine_local::LocalPayloadAttributesBuilder;
 use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
+use jsonrpsee::Methods;
 use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
@@ -18,12 +21,16 @@ use reth_node_builder::{
     PayloadAttributesBuilder, PayloadTypes,
 };
 use reth_node_ethereum::EthereumEthApiBuilder;
-use reth_provider::{EthStorage, HeaderProvider};
+use reth_provider::{
+    BlockHashReader, BlockNumReader, EthStorage, HeaderProvider, StateProviderFactory,
+};
 use spec::gnosis_spec::GnosisChainSpec;
 use std::sync::Arc;
 
 use crate::{
+    arb_simulation::{ArbitrageSimulationApiServer, ArbitrageSimulationImpl},
     engine::{GnosisEngineTypes, GnosisEngineValidator},
+    fork_simulation::{ForkSimulationApiServer, ForkSimulationImpl},
     payload::GnosisBuiltPayload,
     primitives::{
         block::{BlockBody, GnosisBlock, TransactionSigned},
@@ -32,9 +39,38 @@ use crate::{
     rpc::GnosisNetwork,
 };
 
+mod arb_simulation;
 mod blobs;
 pub mod block;
 mod build;
+mod fork_simulation;
+
+/// Register eth_forkSyncStatus, eth_callAtBlock, eth_callScriptAtBlock into RPC modules.
+fn register_fork_simulation_rpc<Node, EthApi>(
+    ctx: RpcContext<'_, Node, EthApi>,
+) -> eyre::Result<()>
+where
+    Node: FullNodeComponents<Evm = GnosisEvmConfig>,
+    EthApi: EthApiTypes,
+    Node::Provider: BlockNumReader
+        + BlockHashReader
+        + HeaderProvider<Header = GnosisHeader>
+        + StateProviderFactory
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    let provider = ctx.node().provider().clone();
+    let evm_config = ctx.node().evm_config().clone();
+    let fork_sim = ForkSimulationImpl::new(provider.clone(), evm_config.clone());
+    let arb_sim = ArbitrageSimulationImpl::new(provider, evm_config);
+    let mut methods = Methods::new();
+    methods.merge(fork_sim.into_rpc())?;
+    methods.merge(arb_sim.into_rpc())?;
+    ctx.modules.merge_configured(methods)?;
+    Ok(())
+}
 pub mod cli;
 pub mod consts;
 mod engine;
@@ -151,6 +187,14 @@ pub type GnosisAddOns<N> =
 impl<N> Node<N> for GnosisNode
 where
     N: FullNodeTypes<Types = Self>,
+    <N as FullNodeTypes>::Provider: BlockNumReader
+        + BlockHashReader
+        + HeaderProvider<Header = GnosisHeader>
+        + StateProviderFactory
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
@@ -169,7 +213,7 @@ where
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        GnosisAddOns::default()
+        GnosisAddOns::default().extend_rpc_modules(register_fork_simulation_rpc)
     }
 }
 
