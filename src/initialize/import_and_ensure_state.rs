@@ -24,9 +24,9 @@ use reth_etl::Collector;
 use reth_primitives::{SealedHeader, StaticFileSegment};
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
 use reth_provider::{
-    BlockHashReader, BlockNumReader, DBProvider, DatabaseProviderFactory, HashingWriter,
+    BlockHashReader, BlockNumReader, DBProvider, DatabaseProviderFactory,
     HeaderProvider, HistoryWriter, NodePrimitivesProvider, RocksDBProviderFactory,
-    StageCheckpointWriter, StateWriter, StaticFileProviderFactory, StaticFileWriter,
+    StageCheckpointWriter, StaticFileProviderFactory, StaticFileWriter,
     StorageSettingsCache, TrieWriter,
 };
 use reth_stages_types::{StageCheckpoint, StageId};
@@ -46,18 +46,24 @@ const IMPORTED_FLAG: &str = "imported.flag";
 /// Soft limit for the number of flushed updates after which to log progress summary.
 const SOFT_LIMIT_COUNT_FLUSHED_UPDATES: usize = 1_000_000;
 
-/// ETL collector buffer size. Accounts are buffered up to this limit before being
-/// sorted and flushed to a temporary file on disk. 64 MB keeps peak RSS low
-/// (par_sort needs ~2x working memory during flush).
-const ETL_BUFFER_BYTES: usize = 64 * 1024 * 1024; // 64 MB
+/// ETL collector buffer size. 64 MB keeps peak RSS low during parse phase.
+const ETL_BUFFER_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum accounts per DB write batch.
 const MAX_ACCOUNTS_PER_BATCH: usize = 10_000;
 
 /// Maximum total storage entries across all accounts in a DB write batch.
-/// A single contract can have millions of storage slots; this cap prevents
-/// one fat contract from blowing up memory via intermediate structures.
 const MAX_STORAGE_PER_BATCH: usize = 200_000;
+
+/// Sub-batch size for hashed storage writes. Hashed storage must be sorted by
+/// keccak256, so we collect into a Vec, sort, and write. This limits that Vec
+/// to ~48 MB instead of potentially gigabytes for contracts with millions of slots.
+const HASHED_STORAGE_CHUNK: usize = 500_000;
+
+/// Commit the MDBX write transaction after this many storage entries have been
+/// written. This releases dirty pages back to the OS, preventing unbounded
+/// memory growth from MDBX's copy-on-write page tracking.
+const COMMIT_STORAGE_THRESHOLD: usize = 2_000_000;
 
 /// Get an instance of key for given table
 fn table_key<T: Table>(key: &str) -> Result<T::Key, eyre::Error> {
@@ -69,7 +75,6 @@ fn read_header_from_file(path: PathBuf) -> Result<GnosisHeader, eyre::Error> {
     let mut file = File::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
-
     let header = GnosisHeader::decode(&mut &buf[..])?;
     Ok(header)
 }
@@ -88,168 +93,12 @@ struct GenesisAccountWithAddress {
     address: Address,
 }
 
-/// Imports state by streaming directly from the compressed .zst file.
-///
-/// Accounts are parsed into an ETL collector (which sorts them and spills to disk),
-/// then iterated in sorted order and written to the database in batches.
-///
-/// This replaces the upstream `init_from_state_dump` which:
-/// - accumulates unbounded prefix sets (OOM on large states)
-/// - routes writes through BundleState/ExecutionOutcome/BTreeMaps that amplify
-///   memory 5-10x for storage-heavy batches
-///
-/// Instead we write directly to the DB tables with minimal intermediate allocations.
-fn chunked_import_state<Provider>(
-    reader: impl BufRead,
-    provider_rw: &Provider,
-    block: u64,
-) -> Result<B256, eyre::Error>
-where
-    Provider: StaticFileProviderFactory
-        + DBProvider<Tx: DbTxMut>
-        + BlockNumReader
-        + BlockHashReader
-        + reth_chainspec::ChainSpecProvider
-        + StageCheckpointWriter
-        + HistoryWriter
-        + HeaderProvider
-        + HashingWriter
-        + TrieWriter
-        + StateWriter
-        + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider
-        + AsRef<Provider>,
-{
-    let hash = provider_rw
-        .block_hash(block)?
-        .ok_or_else(|| eyre::eyre!("Block hash not found for block {}", block))?;
-    let header = provider_rw
-        .header_by_number(block)?
-        .map(reth_primitives_traits::SealedHeader::seal_slow)
-        .ok_or_else(|| eyre::eyre!("Header not found for block {}", block))?;
-
-    let expected_state_root = header.state_root();
-
-    let mut reader = reader;
-
-    // ── Phase 1: Parse state root ──────────────────────────────────────
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let dump_state_root: StateRoot = serde_json::from_str(&line)?;
-    if dump_state_root.root != expected_state_root {
-        return Err(eyre::eyre!(
-            "State root from dump ({:?}) does not match header ({:?})",
-            dump_state_root.root,
-            expected_state_root
-        ));
-    }
-    line.clear();
-
-    // ── Phase 2: Parse accounts into ETL collector (sorted, disk-backed) ──
-    info!(target: "reth::cli", "Parsing accounts from compressed state dump into sorted collector");
-    let mut collector: Collector<Address, GenesisAccount> =
-        Collector::new(ETL_BUFFER_BYTES, None);
-    let mut parsed_count: usize = 0;
-
-    loop {
-        let n = reader.read_line(&mut line)?;
-        if n == 0 {
-            break;
-        }
-
-        let entry: GenesisAccountWithAddress = serde_json::from_str(&line)?;
-        collector.insert(entry.address, entry.genesis_account)?;
-        parsed_count += 1;
-        line.clear();
-
-        if parsed_count % 500_000 == 0 {
-            info!(target: "reth::cli", parsed_count, "Parsing accounts");
-        }
-    }
-    // Drop the reader to release the zstd decoder / file handle
-    drop(reader);
-
-    info!(target: "reth::cli", parsed_count, "All accounts parsed, writing to database in sorted order");
-
-    // ── Phase 3: Iterate sorted accounts and write to DB in batches ──
-    //
-    // Batch by BOTH account count and total storage entry count, whichever
-    // limit is hit first. We write directly to DB tables, bypassing the
-    // upstream BundleState / ExecutionOutcome / BTreeMap intermediates that
-    // amplify memory 5-10x.
-    let total_accounts = collector.len();
-    let mut accounts: Vec<(Address, GenesisAccount)> =
-        Vec::with_capacity(MAX_ACCOUNTS_PER_BATCH);
-    let mut batch_storage_count: usize = 0;
-    let mut total_inserted: usize = 0;
-
-    for (index, entry) in collector.iter()?.enumerate() {
-        let (raw_address, raw_account) = entry?;
-        let (address, _) =
-            Address::from_compact(raw_address.as_slice(), raw_address.len());
-        let (account, _) =
-            GenesisAccount::from_compact(raw_account.as_slice(), raw_account.len());
-
-        batch_storage_count += account.storage.as_ref().map_or(0, |s| s.len());
-        accounts.push((address, account));
-
-        let is_last = index == total_accounts - 1;
-        if accounts.len() >= MAX_ACCOUNTS_PER_BATCH
-            || batch_storage_count >= MAX_STORAGE_PER_BATCH
-            || is_last
-        {
-            total_inserted += accounts.len();
-            info!(target: "reth::cli",
-                batch_accounts = accounts.len(),
-                batch_storage_count,
-                total_inserted,
-                total_accounts,
-                "Writing account batch to database"
-            );
-            flush_batch_direct(&accounts, provider_rw, block)?;
-            accounts.clear();
-            batch_storage_count = 0;
-        }
-    }
-
-    info!(target: "reth::cli",
-        total_inserted,
-        "All accounts written to database, starting state root computation"
-    );
-
-    // ── Phase 4: Compute state root from scratch (no prefix sets) ──
-    let computed_state_root = compute_state_root_from_scratch(provider_rw)?;
-    if computed_state_root != expected_state_root {
-        return Err(eyre::eyre!(
-            "Computed state root ({:?}) does not match expected ({:?})",
-            computed_state_root,
-            expected_state_root
-        ));
-    }
-
-    info!(target: "reth::cli",
-        ?computed_state_root,
-        "State root verified successfully"
-    );
-
-    // Insert sync stages for stages that require state
-    for stage in StageId::STATE_REQUIRED {
-        provider_rw.save_stage_checkpoint(stage, StageCheckpoint::new(block))?;
-    }
-
-    Ok(hash)
-}
-
 /// Write a batch of sorted accounts directly to all required DB tables.
 ///
-/// This bypasses the upstream `insert_state` / `insert_genesis_hashes` which
-/// internally create multiple redundant copies of storage data through
-/// BundleStateInit → RevertsInit → BundleState → StateChangeset →
-/// PlainStateReverts and nested BTreeMaps in insert_storage_for_hashing.
-///
-/// Memory per batch ≈ 20 MB (for hashed-storage sort buffer) instead of
-/// the 1-2+ GB the upstream functions use for equivalent data.
+/// Bypasses the upstream `insert_state` / `insert_genesis_hashes` which create
+/// multiple redundant copies of storage data (BundleState, ExecutionOutcome,
+/// nested BTreeMaps). Hashed storage writes are sub-batched to avoid
+/// multi-GB sort buffers for contracts with millions of storage slots.
 fn flush_batch_direct<Provider>(
     batch: &[(Address, GenesisAccount)],
     provider_rw: &Provider,
@@ -287,7 +136,7 @@ where
         }
     }
 
-    // ── PlainStorageState ──
+    // ── PlainStorageState (streaming, no collection) ──
     {
         let mut cursor = tx.cursor_dup_write::<tables::PlainStorageState>()?;
         for (address, ga) in batch {
@@ -302,7 +151,7 @@ where
         }
     }
 
-    // ── AccountChangeSets (sorted addresses within same block → append_dup) ──
+    // ── AccountChangeSets ──
     {
         let mut cursor = tx.cursor_dup_write::<tables::AccountChangeSets>()?;
         for (address, _) in batch {
@@ -316,7 +165,7 @@ where
         }
     }
 
-    // ── StorageChangeSets (sorted by (block,address) then key → append_dup) ──
+    // ── StorageChangeSets (streaming, no collection) ──
     {
         let mut cursor = tx.cursor_dup_write::<tables::StorageChangeSets>()?;
         for (address, ga) in batch {
@@ -363,16 +212,19 @@ where
         }
     }
 
-    // ── HashedStorages (sorted by (keccak256(addr), keccak256(key))) ──
+    // ── HashedStorages (sub-batched: collect HASHED_STORAGE_CHUNK entries,
+    //    sort by (keccak256(addr), keccak256(key)), write, repeat) ──
     {
-        let mut hashed: Vec<(B256, StorageEntry)> = Vec::new();
+        let mut cursor = tx.cursor_dup_write::<tables::HashedStorages>()?;
+        let mut chunk: Vec<(B256, StorageEntry)> = Vec::with_capacity(HASHED_STORAGE_CHUNK);
+
         for (address, ga) in batch {
             if let Some(storage) = &ga.storage {
                 let hashed_addr = keccak256(*address);
                 for (&key, &value) in storage {
                     let value = U256::from_be_bytes(value.0);
                     if !value.is_zero() {
-                        hashed.push((
+                        chunk.push((
                             hashed_addr,
                             StorageEntry {
                                 key: keccak256(key),
@@ -380,18 +232,30 @@ where
                             },
                         ));
                     }
+
+                    if chunk.len() >= HASHED_STORAGE_CHUNK {
+                        chunk.sort_unstable_by(|a, b| {
+                            a.0.cmp(&b.0).then(a.1.key.cmp(&b.1.key))
+                        });
+                        for (ha, entry) in &chunk {
+                            cursor.upsert(*ha, entry)?;
+                        }
+                        chunk.clear();
+                    }
                 }
             }
         }
-        hashed.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.key.cmp(&b.1.key)));
 
-        let mut cursor = tx.cursor_dup_write::<tables::HashedStorages>()?;
-        for (hashed_addr, entry) in &hashed {
-            cursor.upsert(*hashed_addr, entry)?;
+        // Flush remaining
+        if !chunk.is_empty() {
+            chunk.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.key.cmp(&b.1.key)));
+            for (ha, entry) in &chunk {
+                cursor.upsert(*ha, entry)?;
+            }
         }
     }
 
-    // ── History indices (uses EitherWriter internally for MDBX/RocksDB) ──
+    // ── History indices ──
     insert_history(
         provider_rw,
         batch.iter().map(|(a, g)| (a, g)),
@@ -402,7 +266,6 @@ where
 }
 
 /// Compute the state root from scratch by walking the entire hashed state.
-/// This avoids holding prefix sets in memory (which cause OOM on large states).
 fn compute_state_root_from_scratch<Provider>(provider: &Provider) -> Result<B256, eyre::Error>
 where
     Provider: DBProvider<Tx: DbTxMut> + TrieWriter,
@@ -455,47 +318,179 @@ fn import_state(
         provider_factory, ..
     } = env.init::<GnosisNode>(AccessRights::RW)?;
 
-    let static_file_provider = provider_factory.static_file_provider();
-    let provider_rw = provider_factory.database_provider_rw()?;
+    // ── Phase 1: Setup header (own transaction) ─────────────────────────
+    let block = {
+        let static_file_provider = provider_factory.static_file_provider();
+        let provider_rw = provider_factory.database_provider_rw()?;
+        let header = read_header_from_file(header)?;
+        let header_hash = B256::from_str(header_hash)?;
+        let last_block_number = provider_rw.last_block_number()?;
 
-    // ensure header, total difficulty and header hash are provided
-    let header = read_header_from_file(header)?;
-    let header_hash = B256::from_str(header_hash)?;
+        if last_block_number == 0 {
+            without_evm::setup_without_evm(
+                &provider_rw,
+                SealedHeader::new(header, header_hash),
+                |number| GnosisHeader {
+                    number,
+                    ..Default::default()
+                },
+            )?;
+            static_file_provider.commit()?;
+        } else if last_block_number > 0 && last_block_number < header.number {
+            return Err(eyre::eyre!(
+                "Data directory should be empty when calling init-state with --without-evm-history."
+            ));
+        }
 
-    let last_block_number = provider_rw.last_block_number()?;
-
-    if last_block_number == 0 {
-        without_evm::setup_without_evm(
-            &provider_rw,
-            SealedHeader::new(header, header_hash),
-            |number| GnosisHeader {
-                number,
-                ..Default::default()
-            },
-        )?;
-
-        // SAFETY: it's safe to commit static files, since in the event of a crash, they
-        // will be unwound according to database checkpoints.
-        //
-        // Necessary to commit, so the header is accessible to provider_rw and
-        // the import
-        static_file_provider.commit()?;
-    } else if last_block_number > 0 && last_block_number < header.number {
-        return Err(eyre::eyre!(
-            "Data directory should be empty when calling init-state with --without-evm-history."
-        ));
-    }
+        let block = provider_rw.last_block_number()?;
+        provider_rw.commit()?;
+        block
+    };
 
     info!(target: "reth::cli", "Initiating state import (streaming from compressed file)");
 
-    // Stream directly from the compressed .zst file — no decompression to disk needed.
+    // ── Phase 2: Parse state dump into ETL collector ────────────────────
+    let (hash, expected_state_root) = {
+        let provider_rw = provider_factory.database_provider_rw()?;
+        let hash = provider_rw
+            .block_hash(block)?
+            .ok_or_else(|| eyre::eyre!("Block hash not found for block {block}"))?;
+        let header = provider_rw
+            .header_by_number(block)?
+            .map(reth_primitives_traits::SealedHeader::seal_slow)
+            .ok_or_else(|| eyre::eyre!("Header not found for block {block}"))?;
+        (hash, header.state_root())
+    };
+
     let file = File::open(&compressed_state)?;
     let decoder = Decoder::new(BufReader::new(file))?;
-    let reader = BufReader::new(decoder);
+    let mut reader = BufReader::new(decoder);
 
-    let block = provider_rw.last_block_number()?;
-    let hash = chunked_import_state(reader, &provider_rw, block)?;
+    // First line is state root
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let dump_state_root: StateRoot = serde_json::from_str(&line)?;
+    if dump_state_root.root != expected_state_root {
+        return Err(eyre::eyre!(
+            "State root from dump ({:?}) does not match header ({:?})",
+            dump_state_root.root,
+            expected_state_root
+        ));
+    }
+    line.clear();
 
+    info!(target: "reth::cli", "Parsing accounts from compressed state dump");
+    let mut collector: Collector<Address, GenesisAccount> =
+        Collector::new(ETL_BUFFER_BYTES, None);
+    let mut parsed_count: usize = 0;
+
+    loop {
+        let n = reader.read_line(&mut line)?;
+        if n == 0 {
+            break;
+        }
+        let entry: GenesisAccountWithAddress = serde_json::from_str(&line)?;
+        collector.insert(entry.address, entry.genesis_account)?;
+        parsed_count += 1;
+        line.clear();
+
+        if parsed_count % 500_000 == 0 {
+            info!(target: "reth::cli", parsed_count, "Parsing accounts");
+        }
+    }
+    drop(reader);
+
+    info!(target: "reth::cli", parsed_count, "All accounts parsed, writing to database");
+
+    // ── Phase 3: Write sorted accounts to DB with periodic commits ──────
+    //
+    // CRITICAL: We commit the MDBX transaction periodically to release dirty
+    // pages. Without this, MDBX accumulates all copy-on-write pages for the
+    // entire 27 GB import in memory, causing 20+ GB RSS.
+    let total_accounts = collector.len();
+    let mut accounts: Vec<(Address, GenesisAccount)> =
+        Vec::with_capacity(MAX_ACCOUNTS_PER_BATCH);
+    let mut batch_storage_count: usize = 0;
+    let mut total_inserted: usize = 0;
+    let mut storage_since_commit: usize = 0;
+    let mut provider_rw = provider_factory.database_provider_rw()?;
+
+    for (index, entry) in collector.iter()?.enumerate() {
+        let (raw_address, raw_account) = entry?;
+        let (address, _) = Address::from_compact(raw_address.as_slice(), raw_address.len());
+        let (account, _) =
+            GenesisAccount::from_compact(raw_account.as_slice(), raw_account.len());
+
+        let account_storage = account.storage.as_ref().map_or(0, |s| s.len());
+
+        // Flush current batch BEFORE adding if this account would exceed limits
+        if !accounts.is_empty()
+            && (accounts.len() >= MAX_ACCOUNTS_PER_BATCH
+                || batch_storage_count + account_storage > MAX_STORAGE_PER_BATCH)
+        {
+            total_inserted += accounts.len();
+            info!(target: "reth::cli",
+                batch_accounts = accounts.len(),
+                batch_storage_count,
+                total_inserted,
+                total_accounts,
+                "Writing account batch to database"
+            );
+            flush_batch_direct(&accounts, &provider_rw, block)?;
+            storage_since_commit += batch_storage_count;
+            accounts.clear();
+            batch_storage_count = 0;
+
+            // Periodic commit to release MDBX dirty pages
+            if storage_since_commit >= COMMIT_STORAGE_THRESHOLD {
+                info!(target: "reth::cli", storage_since_commit, "Committing transaction to release memory");
+                provider_rw.commit()?;
+                provider_rw = provider_factory.database_provider_rw()?;
+                storage_since_commit = 0;
+            }
+        }
+
+        batch_storage_count += account_storage;
+        accounts.push((address, account));
+
+        // Flush on last account
+        if index == total_accounts - 1 && !accounts.is_empty() {
+            total_inserted += accounts.len();
+            info!(target: "reth::cli",
+                batch_accounts = accounts.len(),
+                batch_storage_count,
+                total_inserted,
+                total_accounts,
+                "Writing final account batch to database"
+            );
+            flush_batch_direct(&accounts, &provider_rw, block)?;
+            accounts.clear();
+        }
+    }
+
+    provider_rw.commit()?;
+
+    info!(target: "reth::cli",
+        total_inserted,
+        "All accounts written, starting state root computation"
+    );
+
+    // ── Phase 4: Compute state root (new transaction) ───────────────────
+    let provider_rw = provider_factory.database_provider_rw()?;
+    let computed_state_root = compute_state_root_from_scratch(&provider_rw)?;
+    if computed_state_root != expected_state_root {
+        return Err(eyre::eyre!(
+            "Computed state root ({:?}) does not match expected ({:?})",
+            computed_state_root,
+            expected_state_root
+        ));
+    }
+
+    info!(target: "reth::cli", ?computed_state_root, "State root verified successfully");
+
+    for stage in StageId::STATE_REQUIRED {
+        provider_rw.save_stage_checkpoint(stage, StageCheckpoint::new(block))?;
+    }
     provider_rw.commit()?;
 
     info!(target: "reth::cli", hash = ?hash, "Genesis block written");
@@ -512,7 +507,6 @@ pub fn download_and_import_init_state(
     let db_dir = datadir.join("db");
 
     if datadir.exists() && db_dir.exists() {
-        // DB is initialized, check if the state is imported
         let imported_flag_path = datadir.join(IMPORTED_FLAG);
         let era_imported_flag_path = datadir.join(ERA_IMPORTED_FLAG);
         if imported_flag_path.exists() {
@@ -538,7 +532,6 @@ pub fn download_and_import_init_state(
 
     reth_cli_util::sigsegv_handler::install();
 
-    // Enable backtraces unless a RUST_BACKTRACE value has already been explicitly provided.
     if std::env::var_os("RUST_BACKTRACE").is_none() {
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
@@ -595,7 +588,6 @@ pub fn download_and_import_init_state(
         }
     };
 
-    // create the IMPORTED_FLAG file
     let imported_flag_path = datadir.join(IMPORTED_FLAG);
     if let Err(e) = std::fs::File::create(imported_flag_path) {
         eprintln!("Failed to create {IMPORTED_FLAG} file: {e}");
