@@ -444,9 +444,10 @@ fn import_state(
     // ── Phase 5: Write HashedStorages from ETL collector ─────────────────
     //
     // The collector was populated during Phase 2 (no MDBX re-read needed).
-    // This avoids re-reading ~7 GB of PlainStorageState mmap pages.
-    // Uses upsert (not append_dup) since hashed sub-keys within the same
-    // hashed address are not sorted. Periodic commits release dirty pages.
+    // ETL collector output is sorted by hashed address. We buffer entries
+    // per address, sort sub-keys, then use append_dup for sequential page
+    // writes. This avoids random B-tree access that keeps the entire table
+    // in mmap (the cause of 22+ GB RSS with upsert).
     info!(target: "reth::cli",
         total = hashed_storage_collector.len(),
         "Phase 5: Writing hashed storage"
@@ -455,30 +456,61 @@ fn import_state(
         let mut provider_rw = provider_factory.database_provider_rw()?;
         let mut entries_since_commit: usize = 0;
         let mut total_written: usize = 0;
+        let mut current_addr: Option<B256> = None;
+        let mut sub_entries: Vec<StorageEntry> = Vec::new();
 
         for entry in hashed_storage_collector.iter()? {
             let (raw_key, raw_value) = entry?;
             let (hashed_addr, _) = B256::from_compact(raw_key.as_slice(), raw_key.len());
             let (storage_entry, _) =
                 StorageEntry::from_compact(raw_value.as_slice(), raw_value.len());
-            provider_rw
-                .tx_ref()
-                .cursor_dup_write::<tables::HashedStorages>()?
-                .upsert(hashed_addr, &storage_entry)?;
 
-            entries_since_commit += 1;
-            total_written += 1;
+            // When the address changes, flush the buffered sub-entries
+            if current_addr.as_ref() != Some(&hashed_addr) {
+                if let Some(addr) = current_addr.take() {
+                    sub_entries.sort_unstable_by_key(|e| e.key);
+                    {
+                        let mut cursor = provider_rw
+                            .tx_ref()
+                            .cursor_dup_write::<tables::HashedStorages>()?;
+                        for se in &sub_entries {
+                            cursor.append_dup(addr, se.clone())?;
+                        }
+                    }
+                    entries_since_commit += sub_entries.len();
+                    total_written += sub_entries.len();
+                    // Release memory from large groups (e.g. 18M-entry contracts)
+                    sub_entries = Vec::new();
 
-            if entries_since_commit >= COMMIT_STORAGE_THRESHOLD {
-                info!(target: "reth::cli",
-                    entries_since_commit,
-                    total_written,
-                    "Committing hashed storage"
-                );
-                provider_rw.commit()?;
-                provider_rw = provider_factory.database_provider_rw()?;
-                entries_since_commit = 0;
+                    if entries_since_commit >= COMMIT_STORAGE_THRESHOLD {
+                        info!(target: "reth::cli",
+                            entries_since_commit,
+                            total_written,
+                            "Committing hashed storage"
+                        );
+                        provider_rw.commit()?;
+                        provider_rw = provider_factory.database_provider_rw()?;
+                        entries_since_commit = 0;
+                    }
+                }
+                current_addr = Some(hashed_addr);
             }
+            sub_entries.push(storage_entry);
+        }
+
+        // Flush last address group
+        if let Some(addr) = current_addr.take() {
+            sub_entries.sort_unstable_by_key(|e| e.key);
+            {
+                let mut cursor = provider_rw
+                    .tx_ref()
+                    .cursor_dup_write::<tables::HashedStorages>()?;
+                for se in &sub_entries {
+                    cursor.append_dup(addr, se.clone())?;
+                }
+            }
+            total_written += sub_entries.len();
+            drop(sub_entries);
         }
         provider_rw.commit()?;
 
