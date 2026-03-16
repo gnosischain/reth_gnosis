@@ -52,7 +52,7 @@ const ETL_BUFFER_BYTES: usize = 64 * 1024 * 1024;
 /// Commit the MDBX write transaction after this many storage entries have been
 /// written. This releases dirty pages back to the OS, preventing unbounded
 /// memory growth from MDBX's copy-on-write page tracking.
-const COMMIT_STORAGE_THRESHOLD: usize = 2_000_000;
+const COMMIT_STORAGE_THRESHOLD: usize = 500_000;
 
 /// Get an instance of key for given table
 fn table_key<T: Table>(key: &str) -> Result<T::Key, eyre::Error> {
@@ -347,7 +347,7 @@ fn import_state(
                     info: None,
                 },
             )?;
-            hist_cursor.upsert(ShardedKey::last(address), &list)?;
+            hist_cursor.append(ShardedKey::last(address), &list)?;
         }
 
         drop(acct_cursor);
@@ -401,7 +401,7 @@ fn import_state(
                                     value: U256::ZERO,
                                 },
                             )?;
-                            hist_cursor.upsert(
+                            hist_cursor.append(
                                 StorageShardedKey::last(addr, se.key),
                                 &list,
                             )?;
