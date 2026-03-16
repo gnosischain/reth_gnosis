@@ -5,7 +5,7 @@ use crate::initialize::download_init_state::{
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 use alloy_consensus::BlockHeader;
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_rlp::Decodable;
 use gnosis_primitives::header::GnosisHeader;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
@@ -13,11 +13,16 @@ use reth_cli_commands::init_state::without_evm;
 use reth_codecs::Compact;
 use reth_db::table::{Decompress, Table};
 use reth_db::tables;
-use reth_db_api::transaction::DbTxMut;
-use reth_db_common::init::{insert_genesis_hashes, insert_history, insert_state};
+use reth_db_api::{
+    cursor::{DbCursorRW, DbDupCursorRW},
+    models::{AccountBeforeTx, BlockNumberAddress},
+    transaction::DbTxMut,
+};
+use reth_db_common::init::insert_history;
 use reth_db_common::DbTool;
 use reth_etl::Collector;
 use reth_primitives::{SealedHeader, StaticFileSegment};
+use reth_primitives_traits::{Account, Bytecode, StorageEntry};
 use reth_provider::{
     BlockHashReader, BlockNumReader, DBProvider, DatabaseProviderFactory, HashingWriter,
     HeaderProvider, HistoryWriter, NodePrimitivesProvider, RocksDBProviderFactory,
@@ -46,15 +51,12 @@ const SOFT_LIMIT_COUNT_FLUSHED_UPDATES: usize = 1_000_000;
 /// (par_sort needs ~2x working memory during flush).
 const ETL_BUFFER_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 
-/// Maximum accounts per DB write batch. Kept small because the upstream
-/// `insert_state` / `insert_storage_for_hashing` internally create multiple
-/// redundant copies of storage data (BundleState, RevertsInit, BTreeMaps, etc.),
-/// amplifying memory ~5-10x vs the raw data.
+/// Maximum accounts per DB write batch.
 const MAX_ACCOUNTS_PER_BATCH: usize = 10_000;
 
 /// Maximum total storage entries across all accounts in a DB write batch.
 /// A single contract can have millions of storage slots; this cap prevents
-/// one fat contract from blowing up memory via the intermediate structures.
+/// one fat contract from blowing up memory via intermediate structures.
 const MAX_STORAGE_PER_BATCH: usize = 200_000;
 
 /// Get an instance of key for given table
@@ -91,8 +93,12 @@ struct GenesisAccountWithAddress {
 /// Accounts are parsed into an ETL collector (which sorts them and spills to disk),
 /// then iterated in sorted order and written to the database in batches.
 ///
-/// This replaces the upstream `init_from_state_dump` which accumulates unbounded
-/// prefix sets that cause OOM on large state dumps like Gnosis mainnet (~27 GB).
+/// This replaces the upstream `init_from_state_dump` which:
+/// - accumulates unbounded prefix sets (OOM on large states)
+/// - routes writes through BundleState/ExecutionOutcome/BTreeMaps that amplify
+///   memory 5-10x for storage-heavy batches
+///
+/// Instead we write directly to the DB tables with minimal intermediate allocations.
 fn chunked_import_state<Provider>(
     reader: impl BufRead,
     provider_rw: &Provider,
@@ -169,10 +175,9 @@ where
     // ── Phase 3: Iterate sorted accounts and write to DB in batches ──
     //
     // Batch by BOTH account count and total storage entry count, whichever
-    // limit is hit first. This is critical because `insert_state` and
-    // `insert_storage_for_hashing` create multiple intermediate copies of
-    // storage data (BundleStateInit, RevertsInit, BTreeMaps, StateChangeset,
-    // PlainStateReverts), amplifying memory ~5-10x vs the raw data.
+    // limit is hit first. We write directly to DB tables, bypassing the
+    // upstream BundleState / ExecutionOutcome / BTreeMap intermediates that
+    // amplify memory 5-10x.
     let total_accounts = collector.len();
     let mut accounts: Vec<(Address, GenesisAccount)> =
         Vec::with_capacity(MAX_ACCOUNTS_PER_BATCH);
@@ -202,7 +207,7 @@ where
                 total_accounts,
                 "Writing account batch to database"
             );
-            flush_batch(&accounts, provider_rw, block)?;
+            flush_batch_direct(&accounts, provider_rw, block)?;
             accounts.clear();
             batch_storage_count = 0;
         }
@@ -236,28 +241,163 @@ where
     Ok(hash)
 }
 
-/// Flush a batch of (sorted) accounts to the database (hashes, history, state).
-fn flush_batch<Provider>(
+/// Write a batch of sorted accounts directly to all required DB tables.
+///
+/// This bypasses the upstream `insert_state` / `insert_genesis_hashes` which
+/// internally create multiple redundant copies of storage data through
+/// BundleStateInit → RevertsInit → BundleState → StateChangeset →
+/// PlainStateReverts and nested BTreeMaps in insert_storage_for_hashing.
+///
+/// Memory per batch ≈ 20 MB (for hashed-storage sort buffer) instead of
+/// the 1-2+ GB the upstream functions use for equivalent data.
+fn flush_batch_direct<Provider>(
     batch: &[(Address, GenesisAccount)],
     provider_rw: &Provider,
     block: u64,
 ) -> Result<(), eyre::Error>
 where
-    Provider: StaticFileProviderFactory
-        + DBProvider<Tx: DbTxMut>
-        + HeaderProvider
-        + HashingWriter
+    Provider: DBProvider<Tx: DbTxMut>
         + HistoryWriter
-        + StateWriter
         + StorageSettingsCache
         + RocksDBProviderFactory
-        + NodePrimitivesProvider
-        + AsRef<Provider>,
+        + NodePrimitivesProvider,
 {
-    let iter = batch.iter().map(|(addr, acct)| (addr, acct));
-    insert_genesis_hashes(provider_rw, iter.clone())?;
-    insert_history(provider_rw, iter.clone(), block)?;
-    insert_state(provider_rw, iter, block)?;
+    let tx = provider_rw.tx_ref();
+
+    // ── PlainAccountState + Bytecodes ──
+    {
+        let mut acct_cursor = tx.cursor_write::<tables::PlainAccountState>()?;
+        let mut code_cursor = tx.cursor_write::<tables::Bytecodes>()?;
+        for (address, ga) in batch {
+            let bytecode_hash = if let Some(code) = &ga.code {
+                let bytecode = Bytecode::new_raw_checked(code.clone())
+                    .map_err(|e| eyre::eyre!("bad bytecode for {address}: {e}"))?;
+                let hash = bytecode.hash_slow();
+                code_cursor.upsert(hash, &bytecode)?;
+                Some(hash)
+            } else {
+                None
+            };
+            let account = Account {
+                nonce: ga.nonce.unwrap_or_default(),
+                balance: ga.balance,
+                bytecode_hash,
+            };
+            acct_cursor.upsert(*address, &account)?;
+        }
+    }
+
+    // ── PlainStorageState ──
+    {
+        let mut cursor = tx.cursor_dup_write::<tables::PlainStorageState>()?;
+        for (address, ga) in batch {
+            if let Some(storage) = &ga.storage {
+                for (&key, &value) in storage {
+                    let value = U256::from_be_bytes(value.0);
+                    if !value.is_zero() {
+                        cursor.upsert(*address, &StorageEntry { key, value })?;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── AccountChangeSets (sorted addresses within same block → append_dup) ──
+    {
+        let mut cursor = tx.cursor_dup_write::<tables::AccountChangeSets>()?;
+        for (address, _) in batch {
+            cursor.append_dup(
+                block,
+                AccountBeforeTx {
+                    address: *address,
+                    info: None,
+                },
+            )?;
+        }
+    }
+
+    // ── StorageChangeSets (sorted by (block,address) then key → append_dup) ──
+    {
+        let mut cursor = tx.cursor_dup_write::<tables::StorageChangeSets>()?;
+        for (address, ga) in batch {
+            if let Some(storage) = &ga.storage {
+                let block_addr = BlockNumberAddress((block, *address));
+                for (&key, _) in storage {
+                    cursor.append_dup(
+                        block_addr,
+                        StorageEntry {
+                            key,
+                            value: U256::ZERO,
+                        },
+                    )?;
+                }
+            }
+        }
+    }
+
+    // ── HashedAccounts (sorted by keccak256(address)) ──
+    {
+        let mut hashed: Vec<_> = batch
+            .iter()
+            .map(|(addr, ga)| {
+                let bytecode_hash = ga.code.as_ref().and_then(|code| {
+                    Bytecode::new_raw_checked(code.clone())
+                        .ok()
+                        .map(|bc| bc.hash_slow())
+                });
+                (
+                    keccak256(*addr),
+                    Account {
+                        nonce: ga.nonce.unwrap_or_default(),
+                        balance: ga.balance,
+                        bytecode_hash,
+                    },
+                )
+            })
+            .collect();
+        hashed.sort_unstable_by_key(|(h, _)| *h);
+
+        let mut cursor = tx.cursor_write::<tables::HashedAccounts>()?;
+        for (hash, account) in &hashed {
+            cursor.upsert(*hash, account)?;
+        }
+    }
+
+    // ── HashedStorages (sorted by (keccak256(addr), keccak256(key))) ──
+    {
+        let mut hashed: Vec<(B256, StorageEntry)> = Vec::new();
+        for (address, ga) in batch {
+            if let Some(storage) = &ga.storage {
+                let hashed_addr = keccak256(*address);
+                for (&key, &value) in storage {
+                    let value = U256::from_be_bytes(value.0);
+                    if !value.is_zero() {
+                        hashed.push((
+                            hashed_addr,
+                            StorageEntry {
+                                key: keccak256(key),
+                                value,
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        hashed.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.key.cmp(&b.1.key)));
+
+        let mut cursor = tx.cursor_dup_write::<tables::HashedStorages>()?;
+        for (hashed_addr, entry) in &hashed {
+            cursor.upsert(*hashed_addr, entry)?;
+        }
+    }
+
+    // ── History indices (uses EitherWriter internally for MDBX/RocksDB) ──
+    insert_history(
+        provider_rw,
+        batch.iter().map(|(a, g)| (a, g)),
+        block,
+    )?;
+
     Ok(())
 }
 
