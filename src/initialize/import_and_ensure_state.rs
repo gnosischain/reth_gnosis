@@ -14,9 +14,9 @@ use reth_codecs::Compact;
 use reth_db::table::{Decompress, Table};
 use reth_db::tables;
 use reth_db_api::{
-    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRW},
+    cursor::{DbCursorRW, DbDupCursorRW},
     models::{storage_sharded_key::StorageShardedKey, AccountBeforeTx, BlockNumberAddress, ShardedKey},
-    transaction::{DbTx, DbTxMut},
+    transaction::DbTxMut,
     BlockNumberList,
 };
 use reth_db_common::DbTool;
@@ -135,7 +135,7 @@ fn import_state(
         provider_factory, ..
     } = env.init::<GnosisNode>(AccessRights::RW)?;
 
-    // ── Phase 1: Setup header (own transaction) ─────────────────────────
+    // ── Setup header ────────────────────────────────────────────────────
     let block = {
         let static_file_provider = provider_factory.static_file_provider();
         let provider_rw = provider_factory.database_provider_rw()?;
@@ -164,7 +164,6 @@ fn import_state(
         block
     };
 
-    // Verify state root from dump
     let (hash, expected_state_root) = {
         let provider_rw = provider_factory.database_provider_rw()?;
         let hash = provider_rw
@@ -177,159 +176,170 @@ fn import_state(
         (hash, header.state_root())
     };
 
-    let file = File::open(&compressed_state)?;
-    let decoder = Decoder::new(BufReader::new(file))?;
-    let mut reader = BufReader::new(decoder);
-
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let dump_state_root: StateRoot = serde_json::from_str(&line)?;
-    if dump_state_root.root != expected_state_root {
-        return Err(eyre::eyre!(
-            "State root from dump ({:?}) does not match header ({:?})",
-            dump_state_root.root,
-            expected_state_root
-        ));
-    }
-    line.clear();
-
-    // ── Phase 2: Parse JSONL → write plain tables + populate ETL collectors ─
+    // ── Step 1: Stream zst → ETL collectors (no MDBX writes) ────────────
     //
-    // Stream from the compressed state dump. For each account:
-    //   1. Upsert to PlainAccountState, PlainStorageState, Bytecodes
-    //   2. Insert hashed entries into ETL collectors (for Phases 4 & 5)
-    //
-    // By populating the hashed ETL collectors HERE we avoid re-reading
-    // the entire PlainStorageState table later, which would pull ~7 GB
-    // of mmap pages back into memory.
-    info!(target: "reth::cli", "Phase 2: Writing plain state from compressed dump");
+    // Parse the compressed state dump in a single pass. Every piece of data
+    // goes into an ETL collector that sorts it for the target table. Nothing
+    // is written to MDBX here, so memory is just the ETL buffers (5×64 MB)
+    // plus the JSON parse of the current line.
+    info!(target: "reth::cli", "Step 1: Parsing compressed state into ETL collectors");
 
+    let mut account_collector: Collector<Address, Account> =
+        Collector::new(ETL_BUFFER_BYTES, None);
+    let mut storage_collector: Collector<Address, StorageEntry> =
+        Collector::new(ETL_BUFFER_BYTES, None);
+    let mut code_collector: Collector<B256, Bytecode> =
+        Collector::new(ETL_BUFFER_BYTES, None);
     let mut hashed_account_collector: Collector<B256, Account> =
         Collector::new(ETL_BUFFER_BYTES, None);
     let mut hashed_storage_collector: Collector<B256, StorageEntry> =
         Collector::new(ETL_BUFFER_BYTES, None);
 
-    let mut provider_rw = provider_factory.database_provider_rw()?;
-    let mut storage_since_commit: usize = 0;
-    let mut parsed_count: usize = 0;
-    let mut total_storage: usize = 0;
+    {
+        let file = File::open(&compressed_state)?;
+        let decoder = Decoder::new(BufReader::new(file))?;
+        let mut reader = BufReader::new(decoder);
+        let mut line = String::new();
 
-    loop {
-        let n = reader.read_line(&mut line)?;
-        if n == 0 {
-            break;
+        // First line is state root
+        reader.read_line(&mut line)?;
+        let dump_state_root: StateRoot = serde_json::from_str(&line)?;
+        if dump_state_root.root != expected_state_root {
+            return Err(eyre::eyre!(
+                "State root from dump ({:?}) does not match header ({:?})",
+                dump_state_root.root,
+                expected_state_root
+            ));
         }
-        let entry: GenesisAccountWithAddress = serde_json::from_str(&line)?;
         line.clear();
 
-        let address = entry.address;
-        let ga = entry.genesis_account;
+        let mut parsed_count: usize = 0;
+        let mut total_storage: usize = 0;
 
-        // Write account + storage in a single cursor scope to avoid
-        // creating 100M+ cursors (one per storage entry).
-        let account = {
-            let tx = provider_rw.tx_ref();
+        loop {
+            let n = reader.read_line(&mut line)?;
+            if n == 0 {
+                break;
+            }
+            let entry: GenesisAccountWithAddress = serde_json::from_str(&line)?;
+            line.clear();
 
-            // PlainAccountState + Bytecodes
+            let address = entry.address;
+            let ga = entry.genesis_account;
+
             let bytecode_hash = if let Some(code) = &ga.code {
                 let bytecode = Bytecode::new_raw_checked(code.clone())
                     .map_err(|e| eyre::eyre!("bad bytecode for {address}: {e}"))?;
                 let hash = bytecode.hash_slow();
-                tx.cursor_write::<tables::Bytecodes>()?
-                    .upsert(hash, &bytecode)?;
+                code_collector.insert(hash, bytecode)?;
                 Some(hash)
             } else {
                 None
             };
+
             let account = Account {
                 nonce: ga.nonce.unwrap_or_default(),
                 balance: ga.balance,
                 bytecode_hash,
             };
-            tx.cursor_write::<tables::PlainAccountState>()?
-                .upsert(address, &account)?;
 
-            // PlainStorageState - one cursor for all entries of this account
+            let hashed_addr = keccak256(address);
+            account_collector.insert(address, account)?;
+            hashed_account_collector.insert(hashed_addr, account)?;
+
             if let Some(storage) = &ga.storage {
-                let mut cursor =
-                    tx.cursor_dup_write::<tables::PlainStorageState>()?;
                 for (&key, &value) in storage {
                     let value = U256::from_be_bytes(value.0);
                     if !value.is_zero() {
-                        cursor.upsert(address, &StorageEntry { key, value })?;
-                        storage_since_commit += 1;
+                        storage_collector
+                            .insert(address, StorageEntry { key, value })?;
+                        hashed_storage_collector.insert(
+                            hashed_addr,
+                            StorageEntry {
+                                key: keccak256(key),
+                                value,
+                            },
+                        )?;
                         total_storage += 1;
                     }
                 }
             }
 
-            account
-        };
-
-        // Populate hashed ETL collectors (spill to disk at 64 MB)
-        let hashed_addr = keccak256(address);
-        hashed_account_collector.insert(hashed_addr, account)?;
-        if let Some(storage) = &ga.storage {
-            for (&key, &value) in storage {
-                let value = U256::from_be_bytes(value.0);
-                if !value.is_zero() {
-                    hashed_storage_collector.insert(
-                        hashed_addr,
-                        StorageEntry {
-                            key: keccak256(key),
-                            value,
-                        },
-                    )?;
-                }
+            parsed_count += 1;
+            if parsed_count % 500_000 == 0 {
+                info!(target: "reth::cli", parsed_count, total_storage, "Parsing progress");
             }
         }
 
-        parsed_count += 1;
-        if parsed_count % 500_000 == 0 {
-            info!(target: "reth::cli",
-                parsed_count,
-                total_storage,
-                storage_since_commit,
-                "Phase 2 progress"
-            );
-        }
-
-        // Commit periodically to release MDBX dirty pages
-        if storage_since_commit >= COMMIT_STORAGE_THRESHOLD {
-            info!(target: "reth::cli",
-                storage_since_commit,
-                parsed_count,
-                "Committing to release memory"
-            );
-            provider_rw.commit()?;
-            provider_rw = provider_factory.database_provider_rw()?;
-            storage_since_commit = 0;
-        }
+        info!(target: "reth::cli", parsed_count, total_storage, "Step 1 complete");
     }
-    provider_rw.commit()?;
-    drop(reader);
 
-    info!(target: "reth::cli",
-        parsed_count,
-        total_storage,
-        "Phase 2 complete: plain state written"
-    );
-
-    // ── Phase 3: Derive changesets from plain tables ────────────────────
+    // ── Step 2: Write all tables from sorted ETL collectors ─────────────
     //
-    // PlainAccountState is sorted by address in MDBX, so we can use
-    // append_dup for AccountChangeSets. StorageChangeSets are split across
-    // multiple commits to avoid unbounded dirty page accumulation.
-    info!(target: "reth::cli", "Phase 3: Writing changesets");
+    // Each collector produces sorted output. We use append/append_dup for
+    // sequential page fills (no random B-tree access). For DupSort tables
+    // we buffer entries per primary key, sort sub-keys, then append_dup.
 
-    // AccountChangeSets (small, single transaction)
+    // Clear tables that setup_without_evm may have pre-populated,
+    // so our sorted append/append_dup calls don't conflict.
     {
         let provider_rw = provider_factory.database_provider_rw()?;
         let tx = provider_rw.tx_ref();
-        let mut read_cursor = tx.cursor_read::<tables::PlainAccountState>()?;
+        tx.clear::<tables::PlainAccountState>()?;
+        tx.clear::<tables::PlainStorageState>()?;
+        tx.clear::<tables::Bytecodes>()?;
+        tx.clear::<tables::AccountChangeSets>()?;
+        tx.clear::<tables::StorageChangeSets>()?;
+        tx.clear::<tables::AccountsHistory>()?;
+        tx.clear::<tables::StoragesHistory>()?;
+        tx.clear::<tables::HashedAccounts>()?;
+        tx.clear::<tables::HashedStorages>()?;
+        tx.clear::<tables::AccountsTrie>()?;
+        tx.clear::<tables::StoragesTrie>()?;
+        provider_rw.commit()?;
+    }
+
+    // 2a: Bytecodes (deduplicated, sorted by code hash)
+    info!(target: "reth::cli", "Step 2a: Writing bytecodes");
+    {
+        let provider_rw = provider_factory.database_provider_rw()?;
+        let tx = provider_rw.tx_ref();
+        let mut cursor = tx.cursor_write::<tables::Bytecodes>()?;
+        let mut prev_hash: Option<B256> = None;
+        for entry in code_collector.iter()? {
+            let (raw_key, raw_value) = entry?;
+            let (hash, _) = B256::from_compact(raw_key.as_slice(), raw_key.len());
+            if prev_hash.as_ref() == Some(&hash) {
+                continue; // skip duplicate code hashes
+            }
+            let (bytecode, _) = Bytecode::from_compact(raw_value.as_slice(), raw_value.len());
+            cursor.append(hash, &bytecode)?;
+            prev_hash = Some(hash);
+        }
+        drop(cursor);
+        provider_rw.commit()?;
+    }
+    drop(code_collector);
+
+    // 2b: Accounts → PlainAccountState + AccountChangeSets + AccountsHistory
+    info!(target: "reth::cli",
+        total = account_collector.len(),
+        "Step 2b: Writing accounts + changesets + history"
+    );
+    {
+        let list = BlockNumberList::new([block]).expect("single block always fits");
+        let provider_rw = provider_factory.database_provider_rw()?;
+        let tx = provider_rw.tx_ref();
+        let mut acct_cursor = tx.cursor_write::<tables::PlainAccountState>()?;
         let mut cs_cursor = tx.cursor_dup_write::<tables::AccountChangeSets>()?;
-        let mut entry = read_cursor.first()?;
-        while let Some((address, _)) = entry {
+        let mut hist_cursor = tx.cursor_write::<tables::AccountsHistory>()?;
+
+        for entry in account_collector.iter()? {
+            let (raw_key, raw_value) = entry?;
+            let (address, _) = Address::from_compact(raw_key.as_slice(), raw_key.len());
+            let (account, _) = Account::from_compact(raw_value.as_slice(), raw_value.len());
+
+            acct_cursor.append(address, &account)?;
             cs_cursor.append_dup(
                 block,
                 AccountBeforeTx {
@@ -337,93 +347,126 @@ fn import_state(
                     info: None,
                 },
             )?;
-            entry = read_cursor.next()?;
+            hist_cursor.upsert(ShardedKey::last(address), &list)?;
         }
-        drop(read_cursor);
+
+        drop(acct_cursor);
         drop(cs_cursor);
+        drop(hist_cursor);
         provider_rw.commit()?;
     }
+    drop(account_collector);
 
-    // StorageChangeSets (large, periodic commits)
-    // append_dup works across commits because we iterate PlainStorageState
-    // in (address, key) order, so new entries are always > committed ones.
+    // 2c: Storage → PlainStorageState + StorageChangeSets + StoragesHistory
+    //
+    // The collector is sorted by address. We buffer entries per address,
+    // sort sub-keys, then write all three tables together with append_dup.
+    info!(target: "reth::cli",
+        total = storage_collector.len(),
+        "Step 2c: Writing storage + changesets + history"
+    );
     {
+        let list = BlockNumberList::new([block]).expect("single block always fits");
         let mut provider_rw = provider_factory.database_provider_rw()?;
         let mut entries_since_commit: usize = 0;
-        let mut total_cs: usize = 0;
-        let mut resume_from: Option<(Address, B256)> = None;
+        let mut total_written: usize = 0;
+        let mut current_addr: Option<Address> = None;
+        let mut sub_entries: Vec<StorageEntry> = Vec::new();
 
-        loop {
-            let tx = provider_rw.tx_ref();
-            let mut read_cursor = tx.cursor_read::<tables::PlainStorageState>()?;
-            let mut cs_cursor =
-                tx.cursor_dup_write::<tables::StorageChangeSets>()?;
+        for entry in storage_collector.iter()? {
+            let (raw_key, raw_value) = entry?;
+            let (address, _) = Address::from_compact(raw_key.as_slice(), raw_key.len());
+            let (storage_entry, _) =
+                StorageEntry::from_compact(raw_value.as_slice(), raw_value.len());
 
-            // Position cursor at resume point
-            let mut entry_opt = if let Some((addr, last_key)) = resume_from {
-                let first = read_cursor.seek(addr)?;
-                // Skip entries we already processed
-                let mut e = first;
-                while let Some((a, se)) = e {
-                    if a != addr || se.key > last_key {
-                        break;
+            if current_addr.as_ref() != Some(&address) {
+                if let Some(addr) = current_addr.take() {
+                    sub_entries.sort_unstable_by_key(|e| e.key);
+                    {
+                        let tx = provider_rw.tx_ref();
+                        let mut plain_cursor =
+                            tx.cursor_dup_write::<tables::PlainStorageState>()?;
+                        let mut cs_cursor =
+                            tx.cursor_dup_write::<tables::StorageChangeSets>()?;
+                        let mut hist_cursor =
+                            tx.cursor_write::<tables::StoragesHistory>()?;
+                        let block_addr = BlockNumberAddress((block, addr));
+
+                        for se in &sub_entries {
+                            plain_cursor.append_dup(addr, se.clone())?;
+                            cs_cursor.append_dup(
+                                block_addr,
+                                StorageEntry {
+                                    key: se.key,
+                                    value: U256::ZERO,
+                                },
+                            )?;
+                            hist_cursor.upsert(
+                                StorageShardedKey::last(addr, se.key),
+                                &list,
+                            )?;
+                        }
                     }
-                    e = read_cursor.next()?;
+                    entries_since_commit += sub_entries.len();
+                    total_written += sub_entries.len();
+                    sub_entries = Vec::new();
+
+                    if entries_since_commit >= COMMIT_STORAGE_THRESHOLD {
+                        info!(target: "reth::cli",
+                            entries_since_commit,
+                            total_written,
+                            "Committing storage tables"
+                        );
+                        provider_rw.commit()?;
+                        provider_rw = provider_factory.database_provider_rw()?;
+                        entries_since_commit = 0;
+                    }
                 }
-                e
-            } else {
-                read_cursor.first()?
-            };
-
-            let mut need_commit = false;
-            while let Some((address, se)) = entry_opt {
-                cs_cursor.append_dup(
-                    BlockNumberAddress((block, address)),
-                    StorageEntry {
-                        key: se.key,
-                        value: U256::ZERO,
-                    },
-                )?;
-                entries_since_commit += 1;
-                total_cs += 1;
-
-                if entries_since_commit >= COMMIT_STORAGE_THRESHOLD {
-                    resume_from = Some((address, se.key));
-                    need_commit = true;
-                    break;
-                }
-                entry_opt = read_cursor.next()?;
+                current_addr = Some(address);
             }
-
-            let done = !need_commit && entry_opt.is_none();
-
-            drop(read_cursor);
-            drop(cs_cursor);
-
-            if entries_since_commit > 0 {
-                info!(target: "reth::cli",
-                    entries_since_commit,
-                    total_cs,
-                    "Committing StorageChangeSets"
-                );
-            }
-            provider_rw.commit()?;
-
-            if done {
-                break;
-            }
-            provider_rw = provider_factory.database_provider_rw()?;
-            entries_since_commit = 0;
+            sub_entries.push(storage_entry);
         }
-    }
-    info!(target: "reth::cli", "Phase 3 complete: changesets written");
 
-    // ── Phase 4: Write HashedAccounts from ETL collector ────────────────
-    //
-    // The collector was populated during Phase 2 (no MDBX re-read needed).
+        // Flush last address group
+        if let Some(addr) = current_addr.take() {
+            sub_entries.sort_unstable_by_key(|e| e.key);
+            {
+                let tx = provider_rw.tx_ref();
+                let mut plain_cursor =
+                    tx.cursor_dup_write::<tables::PlainStorageState>()?;
+                let mut cs_cursor =
+                    tx.cursor_dup_write::<tables::StorageChangeSets>()?;
+                let mut hist_cursor =
+                    tx.cursor_write::<tables::StoragesHistory>()?;
+                let block_addr = BlockNumberAddress((block, addr));
+
+                for se in &sub_entries {
+                    plain_cursor.append_dup(addr, se.clone())?;
+                    cs_cursor.append_dup(
+                        block_addr,
+                        StorageEntry {
+                            key: se.key,
+                            value: U256::ZERO,
+                        },
+                    )?;
+                    hist_cursor.upsert(
+                        StorageShardedKey::last(addr, se.key),
+                        &list,
+                    )?;
+                }
+            }
+            total_written += sub_entries.len();
+        }
+        provider_rw.commit()?;
+
+        info!(target: "reth::cli", total_written, "Step 2c complete");
+    }
+    drop(storage_collector);
+
+    // 2d: HashedAccounts (sorted by keccak256(address))
     info!(target: "reth::cli",
         total = hashed_account_collector.len(),
-        "Phase 4: Writing hashed accounts"
+        "Step 2d: Writing hashed accounts"
     );
     {
         let provider_rw = provider_factory.database_provider_rw()?;
@@ -433,24 +476,17 @@ fn import_state(
             let (raw_key, raw_value) = entry?;
             let (hashed_addr, _) = B256::from_compact(raw_key.as_slice(), raw_key.len());
             let (account, _) = Account::from_compact(raw_value.as_slice(), raw_value.len());
-            cursor.upsert(hashed_addr, &account)?;
+            cursor.append(hashed_addr, &account)?;
         }
         drop(cursor);
         provider_rw.commit()?;
     }
     drop(hashed_account_collector);
-    info!(target: "reth::cli", "Phase 4 complete: hashed accounts written");
 
-    // ── Phase 5: Write HashedStorages from ETL collector ─────────────────
-    //
-    // The collector was populated during Phase 2 (no MDBX re-read needed).
-    // ETL collector output is sorted by hashed address. We buffer entries
-    // per address, sort sub-keys, then use append_dup for sequential page
-    // writes. This avoids random B-tree access that keeps the entire table
-    // in mmap (the cause of 22+ GB RSS with upsert).
+    // 2e: HashedStorages (sorted by keccak256(address), sub-keys sorted per group)
     info!(target: "reth::cli",
         total = hashed_storage_collector.len(),
-        "Phase 5: Writing hashed storage"
+        "Step 2e: Writing hashed storage"
     );
     {
         let mut provider_rw = provider_factory.database_provider_rw()?;
@@ -465,7 +501,6 @@ fn import_state(
             let (storage_entry, _) =
                 StorageEntry::from_compact(raw_value.as_slice(), raw_value.len());
 
-            // When the address changes, flush the buffered sub-entries
             if current_addr.as_ref() != Some(&hashed_addr) {
                 if let Some(addr) = current_addr.take() {
                     sub_entries.sort_unstable_by_key(|e| e.key);
@@ -479,7 +514,6 @@ fn import_state(
                     }
                     entries_since_commit += sub_entries.len();
                     total_written += sub_entries.len();
-                    // Release memory from large groups (e.g. 18M-entry contracts)
                     sub_entries = Vec::new();
 
                     if entries_since_commit >= COMMIT_STORAGE_THRESHOLD {
@@ -510,125 +544,15 @@ fn import_state(
                 }
             }
             total_written += sub_entries.len();
-            drop(sub_entries);
         }
         provider_rw.commit()?;
 
-        info!(target: "reth::cli",
-            total_written,
-            "Phase 5 complete: hashed storage written"
-        );
+        info!(target: "reth::cli", total_written, "Step 2e complete");
     }
     drop(hashed_storage_collector);
 
-    // ── Phase 6: History indices ────────────────────────────────────────
-    //
-    // Write AccountsHistory and StoragesHistory by iterating the plain
-    // tables. Each account/storage entry gets a single-block history entry.
-    info!(target: "reth::cli", "Phase 6: Writing history indices");
-    {
-        let list = BlockNumberList::new([block]).expect("single block always fits");
-
-        // Account history (small, single transaction)
-        {
-            let provider_rw = provider_factory.database_provider_rw()?;
-            let tx = provider_rw.tx_ref();
-            let mut read_cursor = tx.cursor_read::<tables::PlainAccountState>()?;
-            let mut hist_cursor = tx.cursor_write::<tables::AccountsHistory>()?;
-            let mut entry = read_cursor.first()?;
-            while let Some((address, _)) = entry {
-                hist_cursor.upsert(ShardedKey::last(address), &list)?;
-                entry = read_cursor.next()?;
-            }
-            drop(read_cursor);
-            drop(hist_cursor);
-            provider_rw.commit()?;
-        }
-
-        info!(target: "reth::cli", "Account history written");
-
-        // Storage history (large, periodic commits)
-        {
-            let mut provider_rw = provider_factory.database_provider_rw()?;
-            let mut entries_since_commit: usize = 0;
-            let mut total_written: usize = 0;
-            // Track resume position for after commits
-            let mut resume_addr: Option<(Address, B256)> = None;
-
-            loop {
-                let tx = provider_rw.tx_ref();
-                let mut read_cursor =
-                    tx.cursor_read::<tables::PlainStorageState>()?;
-                let mut hist_cursor =
-                    tx.cursor_write::<tables::StoragesHistory>()?;
-
-                // Position cursor
-                let first = if let Some((addr, _last_key)) = resume_addr {
-                    read_cursor.seek(addr)?
-                } else {
-                    read_cursor.first()?
-                };
-
-                // Skip already-processed entries after resume
-                let mut entry_opt = first;
-                if let Some((_addr, last_key)) = resume_addr {
-                    while let Some((a, se)) = entry_opt {
-                        if a != _addr || se.key > last_key {
-                            break;
-                        }
-                        entry_opt = read_cursor.next()?;
-                    }
-                }
-
-                let mut done = false;
-                while let Some((addr, se)) = entry_opt {
-                    hist_cursor.upsert(
-                        StorageShardedKey::last(addr, se.key),
-                        &list,
-                    )?;
-                    entries_since_commit += 1;
-                    total_written += 1;
-
-                    if entries_since_commit >= COMMIT_STORAGE_THRESHOLD {
-                        resume_addr = Some((addr, se.key));
-                        break;
-                    }
-                    entry_opt = read_cursor.next()?;
-                }
-
-                if entry_opt.is_none() && entries_since_commit < COMMIT_STORAGE_THRESHOLD {
-                    done = true;
-                }
-
-                drop(read_cursor);
-                drop(hist_cursor);
-
-                if total_written > 0 {
-                    info!(target: "reth::cli",
-                        entries_since_commit,
-                        total_written,
-                        "Committing storage history"
-                    );
-                }
-
-                provider_rw.commit()?;
-
-                if done {
-                    break;
-                }
-                provider_rw = provider_factory.database_provider_rw()?;
-                entries_since_commit = 0;
-            }
-
-            info!(target: "reth::cli",
-                total_written,
-                "Phase 6 complete: history indices written"
-            );
-        }
-    }
-
-    // ── Phase 7: Compute state root (new transaction) ───────────────────
-    info!(target: "reth::cli", "Phase 7: Computing state root");
+    // ── Step 3: Compute state root ──────────────────────────────────────
+    info!(target: "reth::cli", "Step 3: Computing state root");
     let provider_rw = provider_factory.database_provider_rw()?;
     let computed_state_root = compute_state_root_from_scratch(&provider_rw)?;
     if computed_state_root != expected_state_root {
