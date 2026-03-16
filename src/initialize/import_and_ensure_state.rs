@@ -227,7 +227,7 @@ fn import_state(
 
         // Write account + storage in a single cursor scope to avoid
         // creating 100M+ cursors (one per storage entry).
-        let (account, bytecode_hash) = {
+        let account = {
             let tx = provider_rw.tx_ref();
 
             // PlainAccountState + Bytecodes
@@ -263,7 +263,7 @@ fn import_state(
                 }
             }
 
-            (account, bytecode_hash)
+            account
         };
 
         // Populate hashed ETL collectors (spill to disk at 64 MB)
