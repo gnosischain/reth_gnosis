@@ -124,7 +124,7 @@ pub fn download_and_import_init_state(
     let runtime = Runtime::new().expect("Unable to build runtime");
     let _guard = runtime.enter();
 
-    if let Err(e) = runtime.block_on(ensure_state(state_path, chain)) {
+    if let Err(e) = runtime.block_on(ensure_state(&state_path, chain)) {
         eprintln!("state setup failed: {e}");
         std::process::exit(1);
     }
