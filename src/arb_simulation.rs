@@ -17,9 +17,12 @@ use revm::context::TxEnv;
 use revm::context::result::ExecutionResult;
 use revm::DatabaseCommit;
 use revm_primitives::TxKind;
+use revm_primitives::hardfork::SpecId;
+use revm::context_interface::block::BlobExcessGasAndPrice;
 
 use tracing;
 
+use crate::blobs::CANCUN_BLOB_PARAMS;
 use crate::evm_config::GnosisEvmConfig;
 
 const TX_GAS_LIMIT: u64 = 30_000_000;
@@ -52,8 +55,10 @@ fn create_address(sender: Address, nonce: u64) -> Address {
 const START_FLASH_LOAN_SELECTOR: [u8; 4] = [0x99, 0xf1, 0x80, 0x2a];
 /// startFlashLoanV3(address,uint96,uint96,bool,bytes) selector - V3
 const START_FLASH_LOAN_V3_SELECTOR: [u8; 4] = [0xbb, 0xa5, 0x9c, 0x67];
-/// startFlashLoanV4(address,uint256,bool,bytes) selector - V4 (Currency = address)
+/// startFlashLoanV4(address,uint256,bool,bytes) selector — FlashArbV3V4 only
 const START_FLASH_LOAN_V4_SELECTOR: [u8; 4] = [0x73, 0xf0, 0x06, 0x21];
+/// startFlashLoanBalancer(address,uint256,bool,bytes) — FlashArbitrageUtraLiteUltra Balancer 闪电贷
+const START_FLASH_LOAN_BALANCER_SELECTOR: [u8; 4] = [0x93, 0x8f, 0xbc, 0x15];
 /// executePath(bool,bytes) selector
 const EXECUTE_PATH_SELECTOR: [u8; 4] = [0x91, 0x25, 0x2c, 0x55];
 /// WETH() selector: keccak256("WETH()")[0:4]
@@ -75,7 +80,7 @@ fn decode_revert_selector(sel: &[u8]) -> &'static str {
         [0xd8, 0x6a, 0xd9, 0xcf] => "UnauthorizedCaller(address)",
         [0xc0, 0xd7, 0xa9, 0x0e] => "InvalidPathData()",
         [0xbc, 0x12, 0x81, 0x47] => "InvalidPoolManager()",
-        [0x20, 0xdb, 0x82, 0x67] => "InvalidPath()",
+        [0x20, 0xdb, 0x82, 0x67] => "InvalidPath()", // FlashArbV3V4: 路径含 V2 时 revert
         _ => "unknown",
     }
 }
@@ -217,20 +222,32 @@ where
 pub struct ArbitrageSimRequest {
     pub block_number: u64,
     pub use_flash_loan: bool,
+    /// V2 闪电贷：pair 地址
     #[serde(default)]
     pub flash_loan_pair: Option<Address>,
+    /// V3 闪电贷：pool 地址（首跳的 V3 pool）
     #[serde(default)]
     pub flash_loan_pool: Option<Address>,
+    /// V4 / Balancer：要借的 token 地址（与 `flashLoanAmount` 成对）
     #[serde(default)]
     pub flash_loan_currency: Option<Address>,
+    /// 借入数量 (wei)
     #[serde(default)]
     pub flash_loan_amount: Option<String>,
+    /// true：`flashLoanCurrency`+`flashLoanAmount` 走 `startFlashLoanBalancer`（Ultra）；false：走 `startFlashLoanV4`（FlashArbV3V4）
+    #[serde(default)]
+    pub flash_loan_balancer: bool,
+    /// goodboy `buildArbRequest` 发送 `flashLoanType: "Balancer"` 时与 `flashLoanBalancer: true` 等价
+    #[serde(default)]
+    pub flash_loan_type: Option<String>,
     #[serde(default)]
     pub amount0_out: Option<String>,
     #[serde(default)]
     pub amount1_out: Option<String>,
     pub is_first_last_same_eth: bool,
+    /// arb 合约 init bytecode，模拟时 CREATE 部署
     pub arb_contract_bytecode: Bytes,
+    /// pathData = abi.encode(Hop[])，由调用方编码
     pub path_data: Bytes,
     #[serde(default)]
     pub initial_token: Option<Address>,
@@ -240,6 +257,15 @@ pub struct ArbitrageSimRequest {
     pub funder_address: Option<Address>,
     #[serde(default)]
     pub debug: bool,
+}
+
+#[inline]
+fn use_balancer_flash_selector(request: &ArbitrageSimRequest) -> bool {
+    request.flash_loan_balancer
+        || request
+            .flash_loan_type
+            .as_deref()
+            .is_some_and(|s| s.eq_ignore_ascii_case("balancer"))
 }
 
 /// 分步 trace 信息
@@ -311,6 +337,11 @@ where
         &self,
         request: ArbitrageSimRequest,
     ) -> RpcResult<ArbitrageSimResult> {
+        tracing::info!(
+            block = request.block_number,
+            use_flash_loan = request.use_flash_loan,
+            "arb_simulateArbitrageAtBlock request"
+        );
         if request.use_flash_loan {
             let has_v2 = request.flash_loan_pair.is_some();
             let has_v3 = request.flash_loan_pool.is_some();
@@ -318,7 +349,7 @@ where
             if !has_v2 && !has_v3 && !has_v4 {
                 return Err(ErrorObjectOwned::owned(
                     -32602,
-                    "useFlashLoan=true requires one of: flashLoanPair (V2), flashLoanPool (V3), or flashLoanCurrency+flashLoanAmount (V4)",
+                    "useFlashLoan=true requires one of: flashLoanPair (V2), flashLoanPool (V3), or flashLoanCurrency+flashLoanAmount (Ultra Balancer: set flashLoanBalancer=true or flashLoanType=Balancer; FlashArbV3V4: flashLoanBalancer=false)",
                     None::<()>,
                 ));
             }
@@ -351,10 +382,31 @@ where
                 ErrorObjectOwned::owned(-32000, format!("State not available: {}", e), None::<()>)
             })?;
 
-        let evm_env = self
+        let mut evm_env = self
             .evm_config
             .evm_env(&header)
             .map_err(|e| ErrorObjectOwned::owned(-32000, format!("EVM env error: {}", e), None::<()>))?;
+
+        // `goodboy/foundry/bsc-arbi-sim/foundry.toml` 使用 evm_version = "cancun"。历史块若在链上
+        // Shanghai 激活之前，revm_spec 会偏旧，CREATE 会因 PUSH0/MCOPY 等报 NotActivated；Forge fork
+        // 仍按编译目标执行。套利模拟与 Foundry fork / 独立 revm-simulator 对齐：至少使用 Cancun。
+        if evm_env.cfg_env.spec < SpecId::CANCUN {
+            evm_env
+                .cfg_env
+                .set_spec_and_mainnet_gas_params(SpecId::CANCUN);
+            evm_env
+                .cfg_env
+                .set_max_blobs_per_tx(CANCUN_BLOB_PARAMS.max_blobs_per_tx);
+            if evm_env.block_env.blob_excess_gas_and_price.is_none() {
+                let excess_blob_gas = 0u64;
+                let blob_gasprice = CANCUN_BLOB_PARAMS.calc_blob_fee(excess_blob_gas);
+                evm_env.block_env.blob_excess_gas_and_price =
+                    Some(BlobExcessGasAndPrice {
+                        excess_blob_gas,
+                        blob_gasprice,
+                    });
+            }
+        }
 
         let beneficiary = evm_env.block_env.beneficiary;
         let state_db = StateProviderDatabase::new(&state_provider);
@@ -589,11 +641,15 @@ where
                     request.is_first_last_same_eth,
                     request.path_data.to_vec(),
                 );
-                (START_FLASH_LOAN_V4_SELECTOR, params.abi_encode_params())
+                if use_balancer_flash_selector(&request) {
+                    (START_FLASH_LOAN_BALANCER_SELECTOR, params.abi_encode_params())
+                } else {
+                    (START_FLASH_LOAN_V4_SELECTOR, params.abi_encode_params())
+                }
             } else {
                 return Err(ErrorObjectOwned::owned(
                     -32602,
-                    "useFlashLoan=true requires one of: flashLoanPair (V2), flashLoanPool (V3), or flashLoanCurrency+flashLoanAmount (V4)",
+                    "useFlashLoan=true requires one of: flashLoanPair (V2), flashLoanPool (V3), or flashLoanCurrency+flashLoanAmount (Ultra Balancer: set flashLoanBalancer=true or flashLoanType=Balancer; FlashArbV3V4: flashLoanBalancer=false)",
                     None::<()>,
                 ));
             };
