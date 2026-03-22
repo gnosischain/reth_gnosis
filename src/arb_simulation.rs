@@ -216,6 +216,12 @@ where
     Ok(profit.to_string())
 }
 
+/// 闪电贷 amount0/amount1（wei 十进制字符串）。不得用 `u64`：`parse::<u64>()` 在金额 > 2^64-1 时会失败并变成 0，
+/// 导致 V2 `swap(0,0,...)` 触发 `UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT`。
+fn parse_flash_loan_amount_wei(s: Option<&String>) -> U256 {
+    s.and_then(|x| x.parse::<U256>().ok()).unwrap_or(U256::ZERO)
+}
+
 /// ArbitrageSimRequest
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -612,23 +618,23 @@ where
         tracing::info!("step: executePath");
         let call_result = if request.use_flash_loan {
             let (selector, calldata_params): ([u8; 4], Vec<u8>) = if let Some(pair) = request.flash_loan_pair {
-                let amount0_out: u64 = request.amount0_out.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0);
-                let amount1_out: u64 = request.amount1_out.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0);
+                let amount0_out = parse_flash_loan_amount_wei(request.amount0_out.as_ref());
+                let amount1_out = parse_flash_loan_amount_wei(request.amount1_out.as_ref());
                 let params = (
                     pair,
-                    U256::from(amount0_out),
-                    U256::from(amount1_out),
+                    amount0_out,
+                    amount1_out,
                     request.is_first_last_same_eth,
                     request.path_data.to_vec(),
                 );
                 (START_FLASH_LOAN_SELECTOR, params.abi_encode_params())
             } else if let Some(pool) = request.flash_loan_pool {
-                let amount0: u64 = request.amount0_out.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0);
-                let amount1: u64 = request.amount1_out.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0);
+                let amount0 = parse_flash_loan_amount_wei(request.amount0_out.as_ref());
+                let amount1 = parse_flash_loan_amount_wei(request.amount1_out.as_ref());
                 let params = (
                     pool,
-                    U256::from(amount0),
-                    U256::from(amount1),
+                    amount0,
+                    amount1,
                     request.is_first_last_same_eth,
                     request.path_data.to_vec(),
                 );
