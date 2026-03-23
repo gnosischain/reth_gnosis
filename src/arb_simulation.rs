@@ -19,6 +19,7 @@ use revm::DatabaseCommit;
 use revm_primitives::TxKind;
 use revm_primitives::hardfork::SpecId;
 use revm::context_interface::block::BlobExcessGasAndPrice;
+use revm_state::AccountInfo;
 
 use tracing;
 
@@ -26,6 +27,9 @@ use crate::blobs::CANCUN_BLOB_PARAMS;
 use crate::evm_config::GnosisEvmConfig;
 
 const TX_GAS_LIMIT: u64 = 30_000_000;
+
+/// 模拟用 deployer `0x…02` 在 Gnosis 上链上余额极小，但 CREATE + 后续调用需支付 gas；在 CacheDB 中补足，避免 “lack of funds for max fee”。
+const ARB_SIM_DEPLOYER_MIN_NATIVE_WEI: u128 = 1_000u128 * 10u128.pow(18);
 
 /// CREATE 地址: keccak256(rlp([sender, nonce]))[12:]
 fn create_address(sender: Address, nonce: u64) -> Address {
@@ -415,6 +419,9 @@ where
         }
 
         let beneficiary = evm_env.block_env.beneficiary;
+        let basefee = evm_env.block_env.basefee;
+        let chain_id = evm_env.cfg_env.chain_id;
+        let block_gas_limit = evm_env.block_env.gas_limit;
         let state_db = StateProviderDatabase::new(&state_provider);
         let mut cache_db = CacheDB::new(state_db);
 
@@ -447,11 +454,22 @@ where
             }
         }
 
+        {
+            let mut deployer = cache_db
+                .basic(arb_deployer)
+                .map_err(|e| {
+                    ErrorObjectOwned::owned(-32000, format!("State read error: {}", e), None::<()>)
+                })?
+                .unwrap_or(AccountInfo::default());
+            let floor = U256::from(ARB_SIM_DEPLOYER_MIN_NATIVE_WEI);
+            if deployer.balance < floor {
+                deployer.balance = floor;
+                cache_db.insert_account_info(arb_deployer, deployer);
+            }
+        }
+
         let db = State::builder().with_database(cache_db).build();
 
-        let basefee = evm_env.block_env.basefee;
-        let chain_id = evm_env.cfg_env.chain_id;
-        let block_gas_limit = evm_env.block_env.gas_limit;
         let evm_factory = self.evm_config.executor_factory.evm_factory();
         let mut evm = evm_factory.create_evm(db, evm_env);
 
