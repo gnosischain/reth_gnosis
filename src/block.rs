@@ -12,7 +12,7 @@ use alloy_evm::{
     eth::eip6110::{self, parse_deposits_from_receipts},
     FromTxWithEncoded,
 };
-use alloy_evm::{Database, Evm};
+use alloy_evm::{block::StateDB, Evm};
 use alloy_primitives::B256;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError};
@@ -29,8 +29,9 @@ use reth_evm::{
 };
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;
-use revm::{context::result::ResultAndState, DatabaseCommit, Inspector};
-use revm_database::{DatabaseCommitExt, State};
+use revm::{
+    context::result::ResultAndState, database::DatabaseCommitExt, DatabaseCommit, Inspector,
+};
 use revm_primitives::{Address, Log};
 
 use crate::evm::factory::GnosisEvmFactory;
@@ -108,13 +109,9 @@ where
 
 // REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/evm/src/eth/block.rs#L81
 // ALong with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
-impl<'db, DB, E, R> BlockExecutor for GnosisBlockExecutor<'_, E, R>
+impl<E, R> BlockExecutor for GnosisBlockExecutor<'_, E, R>
 where
-    DB: Database + 'db,
-    E: Evm<
-        DB = &'db mut State<DB>,
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
-    >,
+    E: Evm<DB: StateDB, Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
     R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
 {
     type Transaction = R::Transaction;
@@ -123,12 +120,6 @@ where
     type Result = EthTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        // Set state clear flag if the block is after the Spurious Dragon hardfork.
-        let state_clear_flag = self
-            .spec
-            .is_spurious_dragon_active_at_block(self.evm.block().number().saturating_to());
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
         // Only apply bytecode rewrites at the hardfork activation block
         // (active in current block but NOT active in parent block)
         let current_timestamp: u64 = self.evm.block().timestamp().to();
@@ -392,12 +383,12 @@ where
 
     fn create_executor<'a, DB, I>(
         &'a self,
-        evm: EvmF::Evm<&'a mut State<DB>, I>,
+        evm: EvmF::Evm<DB, I>,
         ctx: Self::ExecutionCtx<'a>,
     ) -> impl BlockExecutorFor<'a, Self, DB, I>
     where
-        DB: Database + 'a,
-        I: Inspector<EvmF::Context<&'a mut State<DB>>> + 'a,
+        DB: StateDB + 'a,
+        I: Inspector<EvmF::Context<DB>> + 'a,
     {
         GnosisBlockExecutor::new(
             evm,

@@ -28,8 +28,8 @@ use reth_evm::{
 };
 use reth_node_builder::{BuiltPayload, PayloadBuilderAttributes, PayloadBuilderError};
 use reth_payload_builder::{BlobSidecars, EthPayloadBuilderAttributes, PayloadId};
-use reth_primitives::SealedBlock;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
+use reth_primitives_traits::SealedBlock;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_transaction_pool::{

@@ -61,7 +61,7 @@ fn run_reth(cli: CliGnosis) {
                     Arc::new(ctx.node().consensus().clone()),
                     ctx.node().evm_config().clone(),
                     ctx.config().rpc.flashbots_config(),
-                    Box::new(ctx.node().task_executor().clone()),
+                    ctx.node().task_executor().clone(),
                     Arc::new(GnosisEngineValidator::new(ctx.config().chain.clone())),
                 );
                 ctx.modules.merge_if_module_configured(

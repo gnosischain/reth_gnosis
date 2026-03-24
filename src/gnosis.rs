@@ -243,7 +243,7 @@ pub fn rewrite_bytecodes(
     evm: &mut impl Evm<DB: Database + DatabaseCommit>,
     balancer_hardfork_config: &BalancerHardforkConfig,
 ) {
-    let mut state: HashMap<Address, Account> = Default::default();
+    let mut state: AddressMap<Account> = Default::default();
     for (addr, code, expected_code_hash) in &balancer_hardfork_config.config {
         let original_account_info = evm
             .db_mut()
@@ -267,7 +267,7 @@ pub fn rewrite_bytecodes(
         };
         let account = Account {
             info: modified_account_info,
-            storage: HashMap::default(),
+            storage: Default::default(),
             status: revm_state::AccountStatus::Touched,
             transaction_id: 0,
             original_info: Box::new(original_account_info.clone()),

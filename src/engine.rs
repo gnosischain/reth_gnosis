@@ -19,8 +19,8 @@ use reth_node_builder::{
     NewPayloadError, PayloadOrAttributes, PayloadTypes, PayloadValidator,
 };
 use reth_payload_builder::EthPayloadBuilderAttributes;
-use reth_primitives::{NodePrimitives, RecoveredBlock};
 use reth_primitives_traits::SealedBlock;
+use reth_primitives_traits::{NodePrimitives, RecoveredBlock};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

@@ -7,11 +7,11 @@ use gnosis_primitives::header::GnosisHeader;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::BlockExecutionError;
 use reth_ethereum_primitives::Receipt;
+use reth_ethereum_primitives::TransactionSigned;
 use reth_evm::{
     block::BlockExecutorFactory,
     execute::{BlockAssembler, BlockAssemblerInput},
 };
-use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;

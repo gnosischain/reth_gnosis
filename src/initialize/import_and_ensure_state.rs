@@ -9,17 +9,17 @@ use reth_db::table::{Decompress, Table};
 use reth_db::tables;
 use reth_db_common::init::init_from_state_dump;
 use reth_db_common::DbTool;
-use reth_primitives::{SealedHeader, StaticFileSegment};
+use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
     StaticFileWriter,
 };
+use reth_static_file_types::StaticFileSegment;
 use revm_primitives::B256;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use tokio::runtime::Runtime;
 use tracing::info;
 
 const IMPORTED_FLAG: &str = "imported.flag";
@@ -44,12 +44,13 @@ fn import_state(
     state: PathBuf,
     header: PathBuf,
     header_hash: &str,
+    runtime: reth::tasks::Runtime,
 ) -> Result<(), eyre::Error> {
     let Environment {
         config,
         provider_factory,
         ..
-    } = env.init::<GnosisNode>(AccessRights::RW)?;
+    } = env.init::<GnosisNode>(AccessRights::RW, runtime)?;
 
     let static_file_provider = provider_factory.static_file_provider();
     let provider_rw = provider_factory.database_provider_rw()?;
@@ -122,10 +123,15 @@ pub fn download_and_import_init_state(
     let state_path_str = format!("./{chain}-state");
     let state_path = Path::new(&state_path_str);
 
-    let runtime = Runtime::new().expect("Unable to build runtime");
-    let _guard = runtime.enter();
+    let reth_runtime = reth::tasks::RuntimeBuilder::new(Default::default())
+        .build()
+        .expect("Unable to build reth runtime");
+    let _guard = reth_runtime.handle().enter();
 
-    if let Err(e) = runtime.block_on(ensure_state(state_path, chain)) {
+    if let Err(e) = reth_runtime
+        .handle()
+        .block_on(ensure_state(state_path, chain))
+    {
         eprintln!("state setup failed: {e}");
         std::process::exit(1);
     }
@@ -145,12 +151,15 @@ pub fn download_and_import_init_state(
         state_file,
         header_file.clone(),
         download_spec.header_hash,
+        reth_runtime.clone(),
     )
     .unwrap();
 
     let Environment {
         provider_factory, ..
-    } = env.init::<GnosisNode>(AccessRights::RO).unwrap();
+    } = env
+        .init::<GnosisNode>(AccessRights::RO, reth_runtime)
+        .unwrap();
     let tool = DbTool::new(provider_factory).unwrap();
     let (key, mask): (u64, usize) = (
         table_key::<tables::Headers>(download_spec.block_num).unwrap(),
