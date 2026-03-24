@@ -44,6 +44,8 @@ reth-db = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a31
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a3148bde43794f559df8ca1c314" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a3148bde43794f559df8ca1c314" }
 reth-etl = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a3148bde43794f559df8ca1c314" }
+reth-codecs = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a3148bde43794f559df8ca1c314" }
+reth-config = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a3148bde43794f559df8ca1c314" }
 reth-era = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a3148bde43794f559df8ca1c314" }
 reth-era-downloader = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a3148bde43794f559df8ca1c314" }
 reth-era-utils = { git = "https://github.com/paradigmxyz/reth", rev = "7b4c07338e098a3148bde43794f559df8ca1c314" }
