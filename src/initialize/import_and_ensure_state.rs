@@ -10,9 +10,10 @@ use reth_db::tables;
 use reth_db_common::init::init_from_state_dump;
 use reth_db_common::DbTool;
 use reth_primitives_traits::SealedHeader;
+use reth_db_api::models::StorageSettings;
 use reth_provider::{
-    BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
-    StaticFileWriter,
+    BlockNumReader, DBProvider, DatabaseProviderFactory, MetadataWriter, StaticFileProviderFactory,
+    StaticFileWriter, StorageSettingsCache,
 };
 use reth_static_file_types::StaticFileSegment;
 use revm_primitives::B256;
@@ -52,6 +53,18 @@ fn import_state(
         ..
     } = env.init::<GnosisNode>(AccessRights::RW, runtime)?;
 
+    // Force v1 storage layout for the state import. With v2, changesets are written to
+    // append-only static files (one write per block). Since init_from_state_dump writes
+    // state in batches at the same block number, v2 fails on the second batch. With v1,
+    // changesets go to MDBX which handles multiple writes at the same block correctly.
+    // TODO: remove this once upstream fixes init_from_state_dump for v2 storage.
+    provider_factory.set_storage_settings_cache(StorageSettings::v1());
+    {
+        let provider_rw_settings = provider_factory.database_provider_rw()?;
+        provider_rw_settings.write_storage_settings(StorageSettings::v1())?;
+        provider_rw_settings.commit()?;
+    }
+
     let static_file_provider = provider_factory.static_file_provider();
     let provider_rw = provider_factory.database_provider_rw()?;
 
@@ -64,8 +77,6 @@ fn import_state(
     if last_block_number == 0 {
         without_evm::setup_without_evm(
             &provider_rw,
-            // &header,
-            // header_hash,
             SealedHeader::new(header, header_hash),
             |number| GnosisHeader {
                 number,
