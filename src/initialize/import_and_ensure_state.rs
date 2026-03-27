@@ -147,8 +147,7 @@ fn import_state(
     // Uses serde_json streaming to avoid loading multi-GB JSON lines into memory.
     const ETL_BUFFER_SIZE: usize = 100 * 1024 * 1024; // 100 MB
     info!(target: "reth::cli", "Parsing accounts into ETL collector (sorting by address)...");
-    let mut collector: Collector<Address, GenesisAccount> =
-        Collector::new(ETL_BUFFER_SIZE, None);
+    let mut collector: Collector<Address, GenesisAccount> = Collector::new(ETL_BUFFER_SIZE, None);
     {
         let mut parsed = 0usize;
         let deserializer = serde_json::Deserializer::from_reader(reader);
@@ -181,8 +180,7 @@ fn import_state(
     for entry in collector.iter()? {
         let (address_raw, account_raw) = entry?;
         let (address, _) = Address::from_compact(address_raw.as_slice(), address_raw.len());
-        let (account, _) =
-            GenesisAccount::from_compact(account_raw.as_slice(), account_raw.len());
+        let (account, _) = GenesisAccount::from_compact(account_raw.as_slice(), account_raw.len());
 
         let account_storage_len = account.storage.as_ref().map_or(0, |s| s.len());
         let account_units = 1 + account_storage_len;
