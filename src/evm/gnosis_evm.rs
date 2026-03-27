@@ -200,7 +200,7 @@ where
         let precompiles = &mut self.0.precompiles;
         let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
 
-        Ok(res.map_frame(|token| {
+        Ok(res.map_item(|token| {
             if is_first_init {
                 unsafe { self.0.frame_stack.end_init(token) };
             } else {
