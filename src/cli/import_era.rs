@@ -19,7 +19,10 @@ use tracing::info;
 
 use crate::{cli::era, initialize::MAINNET_ERA_IMPORT_HEIGHT, primitives::GnosisNodePrimitives};
 
-pub const ERA_IMPORT_URL: &str = "https://gc-era.gnosiscoredevs.io/";
+// NOTE: The #era1 fragment is needed so that reth's EraFileType::from_url detects these as ERA1
+// files. Without it, from_url defaults to ERA type, causing downloads to use .era extension
+// instead of .era1 and resulting in 403 errors from the server.
+pub const ERA_IMPORT_URL: &str = "https://gc-era.gnosiscoredevs.io/#era1";
 pub const ERA_IMPORTED_FLAG: &str = "era-imported.flag";
 
 /// Syncs ERA encoded blocks from a local or remote source.
