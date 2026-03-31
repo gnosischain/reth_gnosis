@@ -11,11 +11,11 @@ use reth_gnosis::{
     version::{default_gnosis_extra_data, init_gnosis_version, RETH_UPSTREAM_VERSION},
     GnosisNode,
 };
-use tracing::info;
 use reth_rpc::ValidationApi;
 use reth_rpc_api::servers::BlockSubmissionValidationApiServer;
 use reth_rpc_builder::{config::RethRpcServerConfig, RethRpcModule};
 use std::sync::Arc;
+use tracing::info;
 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
