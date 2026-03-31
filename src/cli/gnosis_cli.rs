@@ -202,7 +202,9 @@ where
             Commands::Download(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
-            Commands::ExportEra(_export_era_command) => unimplemented!(),
+            Commands::ExportEra(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+            }
             Commands::ReExecute(command) => {
                 runner.run_until_ctrl_c(command.execute::<GnosisNode>(components))
             }
