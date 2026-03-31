@@ -1,0 +1,31 @@
+#!/bin/bash
+# Git pre-push hook to validate version before pushing tags
+# Install with: git config core.hooksPath .githooks
+
+while read local_ref local_sha remote_ref remote_sha; do
+    # Check if pushing a tag
+    if [[ "$local_ref" == refs/tags/v* ]]; then
+        TAG_NAME="${local_ref#refs/tags/}"
+        TAG_VERSION="${TAG_NAME#v}"
+
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+
+        if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: Cannot push tag $TAG_NAME"
+            echo "Cargo.toml version ($CARGO_VERSION) does not match tag version ($TAG_VERSION)"
+            echo ""
+            echo "Please update Cargo.toml:"
+            echo "  sed -i '' 's/^version = .*/version = \"$TAG_VERSION\"/' Cargo.toml"
+            echo ""
+            echo "Then amend your tag:"
+            echo "  git tag -d $TAG_NAME"
+            echo "  git commit -am 'chore: bump version to $TAG_VERSION'"
+            echo "  git tag $TAG_NAME"
+            exit 1
+        fi
+
+        echo "Version check passed for tag $TAG_NAME"
+    fi
+done
+
+exit 0

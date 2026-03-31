@@ -51,6 +51,7 @@ mod primitives;
 mod rpc;
 pub mod spec;
 mod testing;
+pub mod version;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Gnosis")]

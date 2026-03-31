@@ -9290,6 +9290,8 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "tracing",
+ "vergen",
+ "vergen-git2",
  "walkdir",
  "zstd",
 ]
