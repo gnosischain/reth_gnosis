@@ -16,6 +16,7 @@
         "shanghaiTime": 1690889660,
         "cancunTime": 1710181820,
         "pragueTime": 1746021820,
+        "osakaTime": 1776168380,
         "balancerHardforkTime": 1766419900,
         "minBlobGasPrice": 1000000000,
         "maxBlobGasPerBlock": 262144,
@@ -69,7 +70,7 @@
         "depositContractAddress": "0x0B98057eA310F4d31F2a452B414647007d1645d9"
     },
     "baseFeePerGas": "0x3b9aca00",
-    "difficulty": "0x01",
+    "difficulty": "0x20000",
     "gasLimit": "0x989680",
     "seal": {
         "authorityRound": {

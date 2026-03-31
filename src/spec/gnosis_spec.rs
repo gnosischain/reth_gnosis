@@ -85,18 +85,6 @@ hardfork!(
     }
 );
 
-fn genesis_hash(chain_id: u64, chainspec_genesis_hash: B256) -> B256 {
-    match Chain::from_chain_id(chain_id) {
-        Some(Chain::Gnosis) => {
-            b256!("4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756")
-        }
-        Some(Chain::Chiado) => {
-            b256!("ada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a")
-        }
-        None => chainspec_genesis_hash,
-    }
-}
-
 /// Chain spec builder for gnosis chain.
 #[derive(Debug, Default, From)]
 pub struct GnosisChainSpecBuilder {
@@ -140,8 +128,7 @@ impl EthChainSpec for GnosisChainSpec {
     }
 
     fn genesis_hash(&self) -> B256 {
-        // self.inner.genesis_hash()
-        genesis_hash(self.chain_id(), self.genesis_header.hash())
+        self.genesis_header.hash()
     }
 
     fn prune_delete_limit(&self) -> usize {
@@ -542,7 +529,7 @@ impl GnosisChainSpec {
     pub fn log_all_fork_ids(&self) {
         debug!(target: "reth::gnosis", "=== Fork IDs for all hardforks ===");
 
-        let genesis_hash = genesis_hash(self.chain_id(), self.genesis_hash());
+        let genesis_hash = self.genesis_hash();
         let mut forkhash = ForkHash::from(genesis_hash);
         let mut current_applied = 0;
 

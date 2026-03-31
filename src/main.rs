@@ -1,9 +1,8 @@
-use std::env;
-
 use clap::{Args, Parser};
+use reth::api::FullNodeComponents;
 use reth_cli_commands::common::EnvironmentArgs;
 use reth_gnosis::cli::gnosis_cli::Commands;
-use reth_gnosis::consts::{DEFAULT_7702_PATCH_TIME, DEFAULT_EL_PATCH_TIME};
+use reth_gnosis::engine::GnosisEngineValidator;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{
@@ -13,6 +12,10 @@ use reth_gnosis::{
     GnosisNode,
 };
 use tracing::info;
+use reth_rpc::ValidationApi;
+use reth_rpc_api::servers::BlockSubmissionValidationApiServer;
+use reth_rpc_builder::{config::RethRpcServerConfig, RethRpcModule};
+use std::sync::Arc;
 
 // We use jemalloc for performance reasons
 #[cfg(all(feature = "jemalloc", unix))]
@@ -37,18 +40,6 @@ fn main() {
     info!(target: "reth::cli", "Based on reth {}", RETH_UPSTREAM_VERSION);
     info!(target: "reth::cli", "Block extra_data: {}", default_gnosis_extra_data());
 
-    let timestamp = env::var("GNOSIS_EL_PATCH_TIME")
-        .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
-        .parse::<u64>()
-        .unwrap_or_default();
-    println!("Gnosis EL Patch Time is set to: {timestamp}");
-
-    let is_patch2_enabled = env::var("GNOSIS_EL_7702_PATCH_TIME")
-        .unwrap_or(DEFAULT_7702_PATCH_TIME.to_string())
-        .parse::<u64>()
-        .unwrap_or_default();
-    println!("GNOSIS_EL_7702_PATCH_TIME Time is set to: {is_patch2_enabled}");
-
     // Fetch pre-merge state from a URL and load into the DB
     if let Commands::Node(ref node_cmd) = user_cli.command {
         let env = EnvironmentArgs::<GnosisChainSpecParser> {
@@ -57,6 +48,7 @@ fn main() {
             chain: node_cmd.chain.clone(),
             db: node_cmd.db,
             static_files: node_cmd.static_files,
+            storage: node_cmd.storage,
         };
 
         match node_cmd.chain.chain().id() {
@@ -74,6 +66,21 @@ fn run_reth(cli: CliGnosis) {
     if let Err(err) = cli.run(|builder, _| async move {
         let handle = builder
             .node(GnosisNode::new())
+            .extend_rpc_modules(|ctx| {
+                let validation_api = ValidationApi::new(
+                    ctx.provider().clone(),
+                    Arc::new(ctx.node().consensus().clone()),
+                    ctx.node().evm_config().clone(),
+                    ctx.config().rpc.flashbots_config(),
+                    Box::new(ctx.node().task_executor().clone()),
+                    Arc::new(GnosisEngineValidator::new(ctx.config().chain.clone())),
+                );
+                ctx.modules.merge_if_module_configured(
+                    RethRpcModule::Flashbots,
+                    validation_api.into_rpc(),
+                )?;
+                Ok(())
+            })
             .launch_with_debug_capabilities()
             .await?;
 

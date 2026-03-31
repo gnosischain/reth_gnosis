@@ -3,19 +3,14 @@
 // Needed for AddOns, debug capabilities and custom primitives
 
 use crate::{
-    consts::{
-        is_blacklisted_setcode, is_sender_blacklisted, is_to_address_blacklisted, GnosisError,
-        DEFAULT_7702_PATCH_TIME, DEFAULT_EL_PATCH_TIME,
-    },
     payload::GnosisBuiltPayload,
     primitives::block::{GnosisBlock, IntoGnosisBlock, TransactionSigned},
-    spec::gnosis_spec::{GnosisChainSpec, GnosisHardForks},
+    spec::gnosis_spec::GnosisChainSpec,
 };
-use alloy_consensus::Transaction;
 use reth::rpc::types::engine::{ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV5};
 use reth_ethereum_engine_primitives::{
     EthPayloadAttributes, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
-    ExecutionPayloadEnvelopeV4, ExecutionPayloadV1,
+    ExecutionPayloadEnvelopeV4, ExecutionPayloadEnvelopeV6, ExecutionPayloadV1,
 };
 use reth_ethereum_payload_builder::EthereumExecutionPayloadValidator;
 use reth_node_builder::{
@@ -27,7 +22,7 @@ use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives::{NodePrimitives, RecoveredBlock};
 use reth_primitives_traits::SealedBlock;
 use serde::{Deserialize, Serialize};
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
 /// Custom engine types - uses a custom payload attributes RPC type, but uses the default
 /// payload builder attributes type.
@@ -58,6 +53,7 @@ impl EngineTypes for GnosisEngineTypes {
     type ExecutionPayloadEnvelopeV3 = ExecutionPayloadEnvelopeV3;
     type ExecutionPayloadEnvelopeV4 = ExecutionPayloadEnvelopeV4;
     type ExecutionPayloadEnvelopeV5 = ExecutionPayloadEnvelopeV5;
+    type ExecutionPayloadEnvelopeV6 = ExecutionPayloadEnvelopeV6;
 }
 
 /// Custom engine validator
@@ -95,37 +91,6 @@ impl PayloadValidator<GnosisEngineTypes> for GnosisEngineValidator {
         let block = sealed_block
             .try_recover()
             .map_err(|e| NewPayloadError::Other(e.into()))?;
-
-        if !self
-            .chain_spec()
-            .is_balancer_hardfork_active_at_timestamp(block.timestamp)
-            && block.timestamp
-                > env::var("GNOSIS_EL_PATCH_TIME")
-                    .unwrap_or(DEFAULT_EL_PATCH_TIME.to_string())
-                    .parse::<u64>()
-                    .unwrap_or_default()
-        {
-            let is_patch2_enabled: bool = block.timestamp
-                > env::var("GNOSIS_EL_7702_PATCH_TIME")
-                    .unwrap_or(DEFAULT_7702_PATCH_TIME.to_string())
-                    .parse::<u64>()
-                    .unwrap_or_default();
-
-            for (sender, tx) in block.transactions_with_sender() {
-                if is_sender_blacklisted(sender)
-                    || is_to_address_blacklisted(&tx.to().unwrap_or_default())
-                    || (is_patch2_enabled && is_blacklisted_setcode(tx))
-                {
-                    return Err(NewPayloadError::other(GnosisError::custom(format!(
-                            "Unable to proceed (ensure_well_formed_payload) - signer: {}, to: {:?}, block: {}, {}",
-                            &sender,
-                            &tx.to().unwrap_or_default(),
-                            &block.number,
-                            &block.hash()
-                        ))));
-                }
-            }
-        }
 
         Ok(block)
     }
