@@ -3633,7 +3633,7 @@ dependencies = [
 [[package]]
 name = "gnosis-primitives"
 version = "0.1.111"
-source = "git+https://github.com/gnosischain/gnosis-stuff.git?tag=v0.1.111#eba2de20b084291f9c0a53cc248b84c359574bc5"
+source = "git+https://github.com/gnosischain/gnosis-rust-primitives.git?tag=v0.1.111#eba2de20b084291f9c0a53cc248b84c359574bc5"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
