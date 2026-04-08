@@ -3,7 +3,9 @@ use reth::api::FullNodeComponents;
 use reth_cli_commands::common::EnvironmentArgs;
 use reth_gnosis::cli::gnosis_cli::Commands;
 use reth_gnosis::engine::GnosisEngineValidator;
-use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
+use reth_gnosis::initialize::download_init_state::{
+    CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC, R2_BASE,
+};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{
     cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode,
@@ -18,12 +20,16 @@ use std::sync::Arc;
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-/// No Additional arguments
-#[derive(Debug, Clone, Copy, Default, Args)]
-#[non_exhaustive]
-pub struct NoArgs;
+/// Gnosis-specific node arguments
+#[derive(Debug, Clone, Default, Args)]
+#[command(next_help_heading = "Gnosis")]
+pub struct GnosisInitArgs {
+    /// Base URL for downloading pre-merge state and header files.
+    #[arg(long = "gnosis.init-state-url", default_value = R2_BASE)]
+    pub init_state_url: String,
+}
 
-type CliGnosis = GnosisCli<GnosisChainSpecParser, NoArgs>;
+type CliGnosis = GnosisCli<GnosisChainSpecParser, GnosisInitArgs>;
 
 fn main() {
     let user_cli = CliGnosis::parse();
@@ -40,9 +46,10 @@ fn main() {
             storage: node_cmd.storage,
         };
 
+        let base_url = node_cmd.ext.init_state_url.as_str();
         match node_cmd.chain.chain().id() {
-            100 => download_and_import_init_state("gnosis", GNOSIS_DOWNLOAD_SPEC, env),
-            10200 => download_and_import_init_state("chiado", CHIADO_DOWNLOAD_SPEC, env),
+            100 => download_and_import_init_state("gnosis", GNOSIS_DOWNLOAD_SPEC, env, base_url),
+            10200 => download_and_import_init_state("chiado", CHIADO_DOWNLOAD_SPEC, env, base_url),
             _ => {} // For other network do not download state
         }
     }
