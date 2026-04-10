@@ -229,7 +229,7 @@ pub async fn ensure_state(data_dir: &Path, chain: &str, base_url: &str) -> anyho
                 get_compressed_state_size(chain),
             )
             .await
-            .context("failed to download compressed state")?;
+            .with_context(|| format!("failed to download compressed state from {}", get_state_url(chain, base_url)))?;
 
             println!("🔍  verifying download …");
             if !verify_file_hash(&compressed_path, get_compressed_state_hash(chain))? {
@@ -274,11 +274,14 @@ pub async fn ensure_state(data_dir: &Path, chain: &str, base_url: &str) -> anyho
         }
 
         println!("⬇️   downloading header …");
+        let header_url = get_header_url(chain, base_url);
         let bytes = client
-            .get(get_header_url(chain, base_url))
+            .get(&header_url)
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .with_context(|| format!("failed to connect to {}", header_url))?
+            .error_for_status()
+            .with_context(|| format!("server returned error for {}", header_url))?
             .bytes()
             .await?;
         fs::write(&header_path, &bytes).await?;
