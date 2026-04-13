@@ -113,7 +113,7 @@ fn apply_block_rewards_contract_call<SPEC>(
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
     system_caller: &mut SystemCaller<SPEC>,
-) -> Result<AddressMap<u128>, BlockExecutionError>
+) -> Result<(AddressMap<u128>, Vec<alloy_primitives::Log>), BlockExecutionError>
 where
     SPEC: EthExecutorSpec + GnosisHardForks,
 {
@@ -138,15 +138,20 @@ where
         }
     };
 
-    if state.get(&block_rewards_contract).unwrap().info.code_hash == KECCAK_EMPTY {
-        return Ok(HashMap::default());
+    // If the block rewards contract was filtered out of the state diff (read-only access)
+    // or its code hash is empty, return early with no rewards.
+    if state
+        .get(&block_rewards_contract)
+        .is_none_or(|account| account.info.code_hash == KECCAK_EMPTY)
+    {
+        return Ok((HashMap::default(), Vec::new()));
     }
 
-    let output_bytes = match result {
-        ExecutionResult::Success { output, .. } => match output {
+    let (output_bytes, reward_logs) = match result {
+        ExecutionResult::Success { output, logs, .. } => match output {
             Output::Call(output_bytes) |
             // Should never happen, we craft a transaction without constructor code
-            Output::Create(output_bytes, _) => output_bytes,
+            Output::Create(output_bytes, _) => (output_bytes, logs),
         },
         ExecutionResult::Revert { output, .. } => {
             return Err(BlockExecutionError::from(
@@ -183,18 +188,16 @@ where
 
     evm.db_mut().commit(state);
 
-    // TODO: How to get function return call from evm.transact()?
     let mut balance_increments = AddressMap::default();
     for (address, amount) in result
         .receiversNative
         .iter()
         .zip(result.rewardsNative.iter())
     {
-        // TODO: .to panics if the return value is too large
         *balance_increments.entry(*address).or_default() += amount.to::<u128>();
     }
 
-    Ok(balance_increments)
+    Ok((balance_increments, reward_logs))
 }
 
 // TODO: this can be simplified by using the existing apply_post_execution_changes
@@ -219,7 +222,7 @@ pub(crate) fn apply_post_block_system_calls<SPEC>(
     coinbase: Address,
     evm: &mut impl Evm<DB: Database + DatabaseCommit>,
     system_caller: &mut SystemCaller<SPEC>,
-) -> Result<(AddressMap<u128>, Bytes), BlockExecutionError>
+) -> Result<(AddressMap<u128>, Bytes, Vec<alloy_primitives::Log>), BlockExecutionError>
 where
     SPEC: EthExecutorSpec + GnosisHardForks,
 {
@@ -233,10 +236,53 @@ where
             apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm, system_caller)?;
     }
 
-    let balance_increments =
+    let (balance_increments, reward_logs) =
         apply_block_rewards_contract_call(block_rewards_contract, coinbase, evm, system_caller)?;
 
-    Ok((balance_increments, withdrawal_requests))
+    Ok((balance_increments, withdrawal_requests, reward_logs))
+}
+
+/// Rewrite contract bytecodes from an AuRa pre-merge bytecode rewrite map.
+/// Used for chain hardforks like Gnosis block 21,735,000 token contract upgrade.
+pub fn rewrite_aura_bytecodes(
+    evm: &mut impl Evm<DB: Database + DatabaseCommit>,
+    rewrites: &std::collections::BTreeMap<Address, alloy_primitives::Bytes>,
+) {
+    use revm_state::{AccountStatus, Bytecode};
+    let mut state: HashMap<Address, Account> = Default::default();
+    for (addr, code) in rewrites {
+        let original_account_info = evm
+            .db_mut()
+            .basic(*addr)
+            .unwrap_or_default()
+            .unwrap_or_default();
+        let bytecode = Bytecode::new_legacy(code.clone());
+        let new_code_hash = bytecode.hash_slow();
+        if original_account_info.code_hash == new_code_hash {
+            tracing::trace!(">>> Skipping AuRa rewrite for address: {}", addr);
+            continue;
+        }
+        let modified_account_info = AccountInfo {
+            code_hash: new_code_hash,
+            code: Some(bytecode),
+            ..original_account_info
+        };
+        let account = Account {
+            info: modified_account_info,
+            storage: HashMap::default(),
+            status: AccountStatus::Touched,
+            transaction_id: 0,
+            original_info: Box::new(original_account_info.clone()),
+        };
+        tracing::info!(
+            "AuRa Bytecode Rewrite >>> Addr: {}; From: {}; To: {}",
+            addr,
+            original_account_info.code_hash,
+            account.info.code_hash
+        );
+        state.insert(*addr, account);
+    }
+    evm.db_mut().commit(state);
 }
 
 pub fn rewrite_bytecodes(

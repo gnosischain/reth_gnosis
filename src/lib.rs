@@ -1,4 +1,4 @@
-// use consensus::GnosisBeaconConsensus;
+use aura::GnosisConsensus;
 use evm_config::GnosisEvmConfig;
 use gnosis_primitives::header::GnosisHeader;
 use network::GnosisNetworkBuilder;
@@ -7,7 +7,7 @@ use pool::GnosisPoolBuilder;
 use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
 use reth_engine_local::LocalPayloadAttributesBuilder;
-use reth_ethereum_consensus::EthBeaconConsensus;
+// EthBeaconConsensus is now wrapped inside GnosisConsensus
 use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
 use reth_node_builder::{
     components::{
@@ -32,6 +32,7 @@ use crate::{
     rpc::GnosisNetwork,
 };
 
+pub mod aura;
 mod blobs;
 pub mod block;
 mod build;
@@ -208,7 +209,7 @@ where
     type Consensus = Arc<dyn FullConsensus<GnosisNodePrimitives>>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        Ok(Arc::new(EthBeaconConsensus::new(ctx.chain_spec())))
+        Ok(Arc::new(GnosisConsensus::new(ctx.chain_spec())))
     }
 }
 

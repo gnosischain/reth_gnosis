@@ -19,11 +19,11 @@ use reth_cli_commands::{
 };
 use reth_consensus::FullConsensus;
 use reth_db::DatabaseEnv;
-use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_tracing::FileWorkerGuard;
 use tracing::info;
 
 use crate::{
+    aura::GnosisConsensus,
     evm_config::{GnosisEvmConfig, NoopHeaderLookup},
     primitives::GnosisNodePrimitives,
     spec::gnosis_spec::{GnosisChainSpec, GnosisChainSpecParser},
@@ -134,7 +134,7 @@ where
         let components = |spec: Arc<C::ChainSpec>| {
             (
                 GnosisEvmConfig::new(spec.clone(), NoopHeaderLookup),
-                Arc::new(EthBeaconConsensus::new(spec))
+                Arc::new(GnosisConsensus::new(spec))
                     as Arc<dyn FullConsensus<GnosisNodePrimitives>>,
             )
         };

@@ -99,13 +99,15 @@ pub struct BalancerHardforkConfig {
 }
 
 /// Gnosis chain spec type.
-#[derive(Debug, Clone, Default, Deref, Into, Constructor, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deref, Into, PartialEq, Eq)]
 pub struct GnosisChainSpec {
     /// [`ChainSpec`].
     #[deref]
     pub inner: ChainSpec,
     pub genesis_header: SealedHeader<GnosisHeader>,
     pub balancer_hardfork_config: Option<BalancerHardforkConfig>,
+    /// AuRa consensus configuration (parsed from genesis JSON).
+    pub aura_config: Option<crate::aura::config::AuraConfig>,
 }
 
 impl EthChainSpec for GnosisChainSpec {
@@ -373,26 +375,31 @@ impl From<Genesis> for GnosisChainSpec {
         };
 
         // Paris
+        // For Gnosis chains we know the actual merge block heights from chain history.
+        // We set `activation_block_number` so `is_paris_active_at_block` returns the
+        // correct result, but keep `fork_block: None` so the fork ID computation
+        // EXCLUDES this entry — matching other Gnosis clients (Nethermind, Erigon)
+        // which use TTD-based merge without `mergeNetsplitBlock`.
+        // Setting `fork_block: Some(...)` would change the fork hash for ALL pre-merge
+        // blocks and break P2P compatibility with the canonical chain.
+        let known_merge_block = match Chain::from_chain_id(chain_id) {
+            Some(Chain::Gnosis) => Some(25_349_537u64), // Gnosis mainnet merge
+            Some(Chain::Chiado) => Some(680_930u64),    // Chiado merge
+            _ => genesis.config.merge_netsplit_block,
+        };
         let paris_block_and_final_difficulty =
             if let Some(ttd) = genesis.config.terminal_total_difficulty {
                 hardforks.push((
                     EthereumHardfork::Paris.boxed(),
                     ForkCondition::TTD {
-                        // NOTE: this will not work properly if the merge is not activated at
-                        // genesis, and there is no merge netsplit block
-                        activation_block_number: genesis
-                            .config
-                            .merge_netsplit_block
-                            .unwrap_or_default(),
+                        activation_block_number: known_merge_block.unwrap_or_default(),
                         total_difficulty: ttd,
-                        fork_block: genesis.config.merge_netsplit_block,
+                        // Keep None to preserve fork ID compatibility
+                        fork_block: None,
                     },
                 ));
 
-                genesis
-                    .config
-                    .merge_netsplit_block
-                    .map(|block| (block, ttd))
+                known_merge_block.map(|block| (block, ttd))
             } else {
                 None
             };
@@ -401,6 +408,16 @@ impl From<Genesis> for GnosisChainSpec {
             genesis.config.extra_fields.get("balancerHardforkTime"),
             genesis.config.extra_fields.get("balancerHardforkBytecodes"),
         );
+
+        // Parse AuRa config if present
+        let aura_config = genesis.config.extra_fields.get("aura").and_then(|v| {
+            crate::aura::config::AuraConfig::from_json_value(v)
+                .map_err(|e| {
+                    tracing::warn!("Failed to parse AuRa config: {}", e);
+                    e
+                })
+                .ok()
+        });
 
         // Time-based hardforks
         let time_hardfork_opts: [(Box<dyn Hardfork>, Option<u64>); 5] = [
@@ -481,6 +498,7 @@ impl From<Genesis> for GnosisChainSpec {
             },
             genesis_header,
             balancer_hardfork_config,
+            aura_config,
         }
     }
 }

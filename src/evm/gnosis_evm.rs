@@ -89,20 +89,30 @@ where
     ) -> Result<(), Self::Error> {
         post_execution::reward_beneficiary(evm.ctx(), exec_result.gas_mut())?;
 
-        let (block, _, cfg, journal, _, _) = evm.ctx().all_mut();
+        let (block, tx, cfg, journal, _, _) = evm.ctx().all_mut();
         let spec: SpecId = cfg.spec().into();
         if spec.is_enabled_in(SpecId::LONDON) {
-            // mint basefee to collector address
-            let basefee = block.basefee() as u128;
-            let gas_used =
-                (exec_result.gas().spent() - exec_result.gas().refunded() as u64) as u128;
+            // mint basefee to collector address ONLY for non-free transactions.
+            // Service transactions (gasPrice=0) don't pay basefee — Nethermind:
+            // `eip1559Fees = !tx.IsFree() ? BaseFeePerGas * spentGas : 0`
+            // tx.IsFree() means gas_price == 0 AND no priority fee.
+            let gas_price = tx.gas_price();
+            let priority_fee = tx.max_priority_fee_per_gas().unwrap_or(0);
+            let is_free = gas_price == 0 && priority_fee == 0;
 
-            let mut collector_account = journal.load_account_with_code_mut(self.fee_collector)?;
-            let new_balance = collector_account
-                .balance()
-                .saturating_add(U256::from(basefee * gas_used));
-            collector_account.set_balance(new_balance);
-            collector_account.touch();
+            if !is_free {
+                let basefee = block.basefee() as u128;
+                let gas_used =
+                    (exec_result.gas().spent() - exec_result.gas().refunded() as u64) as u128;
+
+                let mut collector_account =
+                    journal.load_account_with_code_mut(self.fee_collector)?;
+                let new_balance = collector_account
+                    .balance()
+                    .saturating_add(U256::from(basefee * gas_used));
+                collector_account.set_balance(new_balance);
+                collector_account.touch();
+            }
         }
         Ok(())
     }
@@ -397,5 +407,76 @@ where
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
         self.0.set_tx(tx);
         GnosisEvmHandler::new(self.1).inspect_run(self)
+    }
+}
+
+/// Custom SSTORE instruction implementing EIP-1283 (net gas metering) for Constantinople.
+/// This is identical to revm's standard SSTORE but forces `is_istanbul = true` to enable
+/// net gas metering even when the spec is CONSTANTINOPLE.
+/// Gnosis Chain activated EIP-1283 at Constantinople (block 1604400), unlike Ethereum mainnet.
+pub use sstore_eip1283_impl::sstore_eip1283;
+
+mod sstore_eip1283_impl {
+    use revm::interpreter::{
+        interpreter_types::{InputsTr, InterpreterTypes, RuntimeFlag, StackTr},
+        Host, InstructionContext, InstructionResult,
+    };
+
+    pub fn sstore_eip1283<WIRE: InterpreterTypes, H: Host + ?Sized>(
+        context: InstructionContext<'_, H, WIRE>,
+    ) {
+        // require non-static
+        if context.interpreter.runtime_flag.is_static() {
+            context
+                .interpreter
+                .halt(InstructionResult::StateChangeDuringStaticCall);
+            return;
+        }
+
+        let Some([index, value]) = context.interpreter.stack.popn::<2>() else {
+            context.interpreter.halt(InstructionResult::StackUnderflow);
+            return;
+        };
+
+        let target = context.interpreter.input.target_address();
+
+        // NOTE: EIP-1283 does NOT have the 2300 gas stipend check.
+        // That was added in EIP-2200 (Istanbul). Omitting it here.
+
+        // Static gas
+        if !context
+            .interpreter
+            .gas
+            .record_cost(context.host.gas_params().sstore_static_gas())
+        {
+            context.interpreter.halt(InstructionResult::OutOfGas);
+            return;
+        }
+
+        let Some(state_load) = context.host.sstore(target, index, value) else {
+            context
+                .interpreter
+                .halt(InstructionResult::FatalExternalError);
+            return;
+        };
+
+        // Dynamic gas — force is_istanbul = true for EIP-1283 net gas metering
+        let dynamic_gas = context.host.gas_params().sstore_dynamic_gas(
+            true, // EIP-1283 active
+            &state_load.data,
+            state_load.is_cold,
+        );
+        if !context.interpreter.gas.record_cost(dynamic_gas) {
+            context.interpreter.halt(InstructionResult::OutOfGas);
+            return;
+        }
+
+        // Refund — force is_istanbul = true
+        context.interpreter.gas.record_refund(
+            context
+                .host
+                .gas_params()
+                .sstore_refund(true, &state_load.data),
+        );
     }
 }

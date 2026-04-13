@@ -135,12 +135,17 @@ where
         contract: Address,
         data: Bytes,
     ) -> Result<ResultAndState, Self::Error> {
+        // Nethermind uses 30M gas for SystemTransaction.
+        // We disable the block gas limit check so we can use this gas limit
+        // without modifying block.gas_limit (which affects GASLIMIT opcode).
+        let tx_gas = TX_GAS_LIMIT;
+
         let tx = TxEnv {
             caller,
             kind: TxKind::Call(contract),
             // Explicitly set nonce to 0 so revm does not do any nonce checks
             nonce: 0,
-            gas_limit: TX_GAS_LIMIT,
+            gas_limit: tx_gas,
             value: U256::ZERO,
             data,
             // Setting the gas price to zero enforces that no value is transferred as part of the
@@ -159,29 +164,29 @@ where
             authorization_list: Default::default(),
         };
 
-        let mut gas_limit = tx.gas_limit;
-        let mut basefee = 0;
         let mut disable_nonce_check = true;
-        let mut tx_gas_limit_cap = Some(TX_GAS_LIMIT);
+        let mut disable_block_gas_limit = true;
+        let mut disable_base_fee = true;
+        let mut tx_gas_limit_cap = Some(tx_gas);
 
-        // ensure the block gas limit is >= the tx
-        core::mem::swap(&mut self.block.gas_limit, &mut gas_limit);
-        // disable the base fee check for this call by setting the base fee to zero
-        core::mem::swap(&mut self.block.basefee, &mut basefee);
-        // disable the nonce check
+        // disable nonce check, block gas limit check, base fee check, and set tx gas limit cap
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
-        // set the tx gas limit cap to our defined constant
+        core::mem::swap(
+            &mut self.cfg.disable_block_gas_limit,
+            &mut disable_block_gas_limit,
+        );
+        core::mem::swap(&mut self.cfg.disable_base_fee, &mut disable_base_fee);
         core::mem::swap(&mut self.cfg.tx_gas_limit_cap, &mut tx_gas_limit_cap);
 
         let mut res = self.transact(tx);
 
-        // swap back to the previous gas limit
-        core::mem::swap(&mut self.block.gas_limit, &mut gas_limit);
-        // swap back to the previous base fee
-        core::mem::swap(&mut self.block.basefee, &mut basefee);
-        // swap back to the previous nonce check flag
+        // swap back
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
-        // swap back to the previous tx gas limit cap
+        core::mem::swap(
+            &mut self.cfg.disable_block_gas_limit,
+            &mut disable_block_gas_limit,
+        );
+        core::mem::swap(&mut self.cfg.disable_base_fee, &mut disable_base_fee);
         core::mem::swap(&mut self.cfg.tx_gas_limit_cap, &mut tx_gas_limit_cap);
 
         // NOTE: We assume that only the contract storage is modified. Revm currently marks the
@@ -191,17 +196,14 @@ where
         // We're doing this state cleanup to make sure that changeset only includes the changed
         // contract storage.
         if let Ok(res) = &mut res {
-            // in gnosis aura, system account needs to be included in the state and not removed (despite EIP-158/161, even if empty)
-            // here we have a generalized check if system account is in state, or needs to be created
-
-            // keeping this generalized, instead of only in block 1
-            // (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting) means the account is not in the state
-
+            // Nethermind: system account (SystemUser) is created if not exists and
+            // persists in state. EIP-158 is disabled so empty accounts are NOT removed.
+            // We ensure the system account is in the state with Created status if it
+            // was loaded as not existing.
             let should_create = res
                 .state
                 .get(&alloy_eips::eip4788::SYSTEM_ADDRESS)
                 .is_none_or(|system_account| {
-                    // true if account not in state (either None, or Touched | LoadedAsNotExisting)
                     system_account.status
                         == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
                 });
@@ -210,19 +212,39 @@ where
                 let account = Account {
                     info: AccountInfo::default(),
                     storage: Default::default(),
-                    // we force the account to be created by changing the status
                     status: AccountStatus::Touched | AccountStatus::Created,
                     original_info: Box::new(AccountInfo::default()),
                     transaction_id: 0,
                 };
                 res.state
                     .insert(alloy_eips::eip4788::SYSTEM_ADDRESS, account);
-            } else {
-                // clear the system address account from state transitions, else EIP-158/161 (impl in revm) removes it from state
-                res.state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
+            } else if let Some(system_account) =
+                res.state.get_mut(&alloy_eips::eip4788::SYSTEM_ADDRESS)
+            {
+                // System account already exists — undo nonce bump from revm's
+                // validate_against_state_and_deduct_caller. Nethermind's
+                // SystemTransactionProcessor doesn't increment nonce.
+                system_account.info = *system_account.original_info.clone();
             }
 
             res.state.remove(&self.block.beneficiary);
+            // Remove fee collector from system call state — GnosisEvmHandler touches it
+            // during reward_beneficiary, but system calls should not collect fees
+            let fee_collector = self.inner.1;
+            res.state.remove(&fee_collector);
+
+            // Filter out unchanged storage slots and unmodified accounts.
+            // revm marks all SLOAD-ed slots and accessed accounts in the state diff
+            // even if values didn't change. For system calls committed directly via
+            // db.commit(), these "read-only" entries would pollute the state trie.
+            for (_addr, account) in res.state.iter_mut() {
+                account
+                    .storage
+                    .retain(|_slot, value| value.present_value != value.original_value);
+            }
+            // Note: Don't remove read-only accounts from the state diff.
+            // The State::commit() handles unchanged accounts correctly by checking
+            // the account status flags internally.
         }
 
         res
@@ -298,18 +320,29 @@ impl EvmFactory for GnosisEvmFactory {
 
     fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
+        let mut evm = Context::mainnet()
+            .with_db(db)
+            .with_cfg(input.cfg_env)
+            .with_block(input.block_env)
+            .build_mainnet_with_inspector(NoOpInspector {})
+            .with_precompiles(PrecompilesMap::from_static(Precompiles::new(
+                PrecompileSpecId::from_spec_id(spec_id),
+            )));
+
+        // Gnosis Constantinople: override SSTORE to apply EIP-1283 net gas metering.
+        // revm's CONSTANTINOPLE spec uses pre-EIP-1283 SSTORE gas, but Gnosis
+        // activates EIP-1283 at Constantinople (block 1604400).
+        if spec_id == SpecId::CONSTANTINOPLE {
+            use revm::bytecode::opcode::SSTORE;
+            use revm::interpreter::Instruction;
+            evm.instruction.insert_instruction(
+                SSTORE,
+                Instruction::new(crate::evm::gnosis_evm::sstore_eip1283, 0),
+            );
+        }
+
         GnosisEvm {
-            inner: super::gnosis_evm::GnosisEvm(
-                Context::mainnet()
-                    .with_db(db)
-                    .with_cfg(input.cfg_env)
-                    .with_block(input.block_env)
-                    .build_mainnet_with_inspector(NoOpInspector {})
-                    .with_precompiles(PrecompilesMap::from_static(Precompiles::new(
-                        PrecompileSpecId::from_spec_id(spec_id),
-                    ))),
-                self.fee_collector_address,
-            ),
+            inner: super::gnosis_evm::GnosisEvm(evm, self.fee_collector_address),
             inspect: false,
         }
     }
@@ -321,18 +354,29 @@ impl EvmFactory for GnosisEvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
+        let mut evm = Context::mainnet()
+            .with_db(db)
+            .with_cfg(input.cfg_env)
+            .with_block(input.block_env)
+            .build_mainnet_with_inspector(inspector)
+            .with_precompiles(PrecompilesMap::from_static(Precompiles::new(
+                PrecompileSpecId::from_spec_id(spec_id),
+            )));
+
+        // Gnosis Constantinople: override SSTORE to apply EIP-1283 net gas metering.
+        // revm's CONSTANTINOPLE spec uses pre-EIP-1283 SSTORE gas, but Gnosis
+        // activates EIP-1283 at Constantinople (block 1604400).
+        if spec_id == SpecId::CONSTANTINOPLE {
+            use revm::bytecode::opcode::SSTORE;
+            use revm::interpreter::Instruction;
+            evm.instruction.insert_instruction(
+                SSTORE,
+                Instruction::new(crate::evm::gnosis_evm::sstore_eip1283, 0),
+            );
+        }
+
         GnosisEvm {
-            inner: super::gnosis_evm::GnosisEvm(
-                Context::mainnet()
-                    .with_db(db)
-                    .with_cfg(input.cfg_env)
-                    .with_block(input.block_env)
-                    .build_mainnet_with_inspector(inspector)
-                    .with_precompiles(PrecompilesMap::from_static(Precompiles::new(
-                        PrecompileSpecId::from_spec_id(spec_id),
-                    ))),
-                self.fee_collector_address,
-            ),
+            inner: super::gnosis_evm::GnosisEvm(evm, self.fee_collector_address),
             inspect: true,
         }
     }

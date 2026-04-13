@@ -1,10 +1,6 @@
 use clap::{Args, Parser};
 use reth::api::FullNodeComponents;
-use reth_cli_commands::common::EnvironmentArgs;
-use reth_gnosis::cli::gnosis_cli::Commands;
 use reth_gnosis::engine::GnosisEngineValidator;
-use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
-use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{
     cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode,
 };
@@ -29,23 +25,8 @@ fn main() {
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
 
-    // Fetch pre-merge state from a URL and load into the DB
-    if let Commands::Node(ref node_cmd) = user_cli.command {
-        let env = EnvironmentArgs::<GnosisChainSpecParser> {
-            datadir: node_cmd.datadir.clone(),
-            config: node_cmd.config.clone(),
-            chain: node_cmd.chain.clone(),
-            db: node_cmd.db,
-            static_files: node_cmd.static_files,
-            storage: node_cmd.storage,
-        };
-
-        match node_cmd.chain.chain().id() {
-            100 => download_and_import_init_state("gnosis", GNOSIS_DOWNLOAD_SPEC, env),
-            10200 => download_and_import_init_state("chiado", CHIADO_DOWNLOAD_SPEC, env),
-            _ => {} // For other network do not download state
-        }
-    }
+    // Note: pre-merge state import has been removed — the node now syncs from genesis
+    // using AuRa consensus. The import logic is preserved in src/initialize/ for reference.
 
     // Actual program run
     run_reth(user_cli);

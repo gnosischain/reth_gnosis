@@ -28,6 +28,8 @@ reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
+reth-consensus-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
+reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-cli-runner = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
@@ -73,7 +75,7 @@ clap = { version = "4", features = ["derive"] }
 derive_more = { version = "2", default-features = false, features = ["full"] }
 
 # revm
-revm = { version = "34.0.0", features = ["std"], default-features = false }
+revm = { version = "34.0.0", features = ["std", "optional_no_base_fee", "optional_block_gas_limit"], default-features = false }
 revm-database = { version = "10.0.0", default-features = false }
 revm-state = { version = "9.0.0", default-features = false }
 revm-primitives = { version = "22.0.0", features = [
