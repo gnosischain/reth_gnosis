@@ -276,33 +276,37 @@ where
                 Ok(revm::context::result::ResultAndState { state, .. }) => {
                     self.evm.db_mut().commit(state);
 
-                    // After finalizeChange, refresh the active validator set by calling
-                    // getValidators(). This is a view function — the transact_system_call
-                    // cleanup reverts nonce/beneficiary/fee_collector changes. The commit
-                    // only adds read-cache entries (no actual state modifications).
-                    let get_validators_data =
-                        alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
-                    if let Ok(revm::context::result::ResultAndState {
-                        result: vr,
-                        state: vs,
-                    }) = self.evm.transact_system_call(
-                        alloy_eips::eip4788::SYSTEM_ADDRESS,
-                        validator_contract,
-                        get_validators_data,
-                    ) {
-                        // Commit the read-only state (just cache entries)
-                        self.evm.db_mut().commit(vs);
-                        if let revm::context::result::ExecutionResult::Success { output, .. } = vr {
-                            if let Ok(validators) = Self::decode_address_array(&output.into_data())
+                    // After finalizeChange (POSDAO only), refresh the active validator
+                    // set via getValidators(). Pre-POSDAO blocks must NOT call this —
+                    // the committed system call state pollutes the state trie.
+                    if is_posdao {
+                        let get_validators_data =
+                            alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
+                        if let Ok(revm::context::result::ResultAndState {
+                            result: vr,
+                            state: vs,
+                        }) = self.evm.transact_system_call(
+                            alloy_eips::eip4788::SYSTEM_ADDRESS,
+                            validator_contract,
+                            get_validators_data,
+                        ) {
+                            self.evm.db_mut().commit(vs);
+                            if let revm::context::result::ExecutionResult::Success {
+                                output, ..
+                            } = vr
                             {
-                                tracing::info!(
-                                    target: "reth::gnosis",
-                                    block = block_num,
-                                    num_validators = validators.len(),
-                                    "Refreshed validators via getValidators() after finalizeChange"
-                                );
-                                if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
-                                    rf.set_validators(validators);
+                                if let Ok(validators) =
+                                    Self::decode_address_array(&output.into_data())
+                                {
+                                    tracing::info!(
+                                        target: "reth::gnosis",
+                                        block = block_num,
+                                        num_validators = validators.len(),
+                                        "Refreshed validators via getValidators() after finalizeChange"
+                                    );
+                                    if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
+                                        rf.set_validators(validators);
+                                    }
                                 }
                             }
                         }

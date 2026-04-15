@@ -13,6 +13,10 @@ use std::collections::{BTreeMap, VecDeque};
 pub struct RollingFinality {
     /// Current validator set (addresses authorized to sign blocks).
     validators: Vec<Address>,
+    /// Whether the validator set has been authoritatively set via `set_validators()`.
+    /// When false, new block signers are auto-discovered and added to the set.
+    /// When true, only known validators are counted (hasSigner check).
+    validators_sealed: bool,
     /// Queue of unfinalized blocks: (block_number, signer_address).
     headers: VecDeque<(u64, Address)>,
     /// Count of blocks signed by each validator in the window.
@@ -29,6 +33,7 @@ impl RollingFinality {
     /// Create a new rolling finality tracker with the given validator set.
     pub fn new(validators: Vec<Address>) -> Self {
         Self {
+            validators_sealed: false,
             validators,
             headers: VecDeque::new(),
             sign_count: BTreeMap::new(),
@@ -50,10 +55,10 @@ impl RollingFinality {
         // for finality purposes. This prevents pending (not-yet-active) validators
         // from inflating the validator count and shifting the finality threshold.
         if !self.validators.contains(&signer) {
-            // If the set is empty (first epoch after start), auto-discover.
-            // Once the first InitiateChange event sets the validator list,
-            // only those validators will be counted.
-            if self.validators.is_empty() {
+            if !self.validators_sealed {
+                // Auto-discover: set hasn't been authoritatively set yet (no
+                // getValidators() call has completed). Add signers as they appear.
+                // This happens during initial sync when execution starts mid-chain.
                 self.validators.push(signer);
             } else {
                 // Unknown signer — push to queue but don't count for finality
@@ -151,9 +156,12 @@ impl RollingFinality {
         None
     }
 
-    /// Update the validator set (e.g., after a successful finalizeChange).
+    /// Update the validator set (e.g., after getValidators() syscall).
+    /// Seals the set — subsequent unknown signers will be rejected instead
+    /// of auto-discovered.
     pub fn set_validators(&mut self, validators: Vec<Address>) {
         self.validators = validators;
+        self.validators_sealed = true;
         // Clear the finality tracker since the validator set changed
         self.headers.clear();
         self.sign_count.clear();
