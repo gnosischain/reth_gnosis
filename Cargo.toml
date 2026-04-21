@@ -117,6 +117,7 @@ anyhow = "1.0"
 indicatif = "0.17"
 zstd = "0.13"
 blake3 = "1.8"
+sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemalloc-ctl = "0.6"
