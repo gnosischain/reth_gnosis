@@ -1,6 +1,6 @@
 use std::{ffi::OsString, fmt, future::Future, sync::Arc};
 
-use crate::cli::import_era;
+use crate::cli::{export_era, import_era};
 use clap::{value_parser, Parser, Subcommand};
 use reth::{
     args::LogArgs,
@@ -12,7 +12,7 @@ use reth::{
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::{
     common::CliComponentsBuilder,
-    config_cmd, db, download, dump_genesis, export_era, import, init_cmd, init_state,
+    config_cmd, db, download, dump_genesis, import, init_cmd, init_state,
     launcher::FnLauncher,
     node::{self, NoArgs},
     p2p, prune, re_execute, stage,
