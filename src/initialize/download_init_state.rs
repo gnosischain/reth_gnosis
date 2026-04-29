@@ -31,20 +31,20 @@ pub const CHIADO_DOWNLOAD_SPEC: DownloadStateSpec = DownloadStateSpec {
 // ────────────────────────────────────────────────────────────
 // R2 hosted state files
 // ────────────────────────────────────────────────────────────
-const R2_BASE: &str = "https://initstate.gnosischain.com";
+pub const R2_BASE: &str = "https://initstate.gnosischain.com";
 
-fn get_state_url(chain: &str) -> String {
+fn get_state_url(chain: &str, base_url: &str) -> String {
     match chain {
-        "gnosis" => format!("{R2_BASE}/gnosis/compressed_state_26478650.jsonl.zst"),
-        "chiado" => format!("{R2_BASE}/chiado/compressed_state_700000.jsonl.zst"),
+        "gnosis" => format!("{base_url}/gnosis/compressed_state_26478650.jsonl.zst"),
+        "chiado" => format!("{base_url}/chiado/compressed_state_700000.jsonl.zst"),
         _ => unreachable!(),
     }
 }
 
-fn get_header_url(chain: &str) -> String {
+fn get_header_url(chain: &str, base_url: &str) -> String {
     match chain {
-        "gnosis" => format!("{R2_BASE}/gnosis/header_26478650.rlp"),
-        "chiado" => format!("{R2_BASE}/chiado/header_700000.rlp"),
+        "gnosis" => format!("{base_url}/gnosis/header_26478650.rlp"),
+        "chiado" => format!("{base_url}/chiado/header_700000.rlp"),
         _ => unreachable!(),
     }
 }
@@ -184,7 +184,7 @@ async fn download_file(
 }
 
 /// Downloads the initial state
-pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
+pub async fn ensure_state(data_dir: &Path, chain: &str, base_url: &str) -> anyhow::Result<()> {
     fs::create_dir_all(data_dir).await?;
 
     // remove any *.part leftovers
@@ -224,12 +224,17 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
             println!("⬇️   downloading compressed state …");
             download_file(
                 &client,
-                &get_state_url(chain),
+                &get_state_url(chain, base_url),
                 &compressed_path,
                 get_compressed_state_size(chain),
             )
             .await
-            .context("failed to download compressed state")?;
+            .with_context(|| {
+                format!(
+                    "failed to download compressed state from {}",
+                    get_state_url(chain, base_url)
+                )
+            })?;
 
             println!("🔍  verifying download …");
             if !verify_file_hash(&compressed_path, get_compressed_state_hash(chain))? {
@@ -274,11 +279,14 @@ pub async fn ensure_state(data_dir: &Path, chain: &str) -> anyhow::Result<()> {
         }
 
         println!("⬇️   downloading header …");
+        let header_url = get_header_url(chain, base_url);
         let bytes = client
-            .get(get_header_url(chain))
+            .get(&header_url)
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .with_context(|| format!("failed to connect to {}", header_url))?
+            .error_for_status()
+            .with_context(|| format!("server returned error for {}", header_url))?
             .bytes()
             .await?;
         fs::write(&header_path, &bytes).await?;
