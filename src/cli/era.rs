@@ -322,10 +322,8 @@ where
         // GNOSIS-SPECIFIC: Write receipts to static files
         let idx = provider.block_body_indices(number);
         if let Ok(Some(idx)) = idx {
-            let mut i = idx.first_tx_num();
-            for receipt in receipts {
+            for (i, receipt) in (idx.first_tx_num()..).zip(receipts) {
                 receipts_writer.append_receipt(i, &receipt.receipt)?;
-                i += 1;
             }
         } else {
             panic!("Failed to get block body indices for block {number}");
