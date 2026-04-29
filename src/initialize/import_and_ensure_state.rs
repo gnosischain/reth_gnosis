@@ -3,23 +3,25 @@ use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
 use alloy_rlp::Decodable;
 use gnosis_primitives::header::GnosisHeader;
+use reth::tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_cli_commands::init_state::without_evm;
 use reth_db::table::{Decompress, Table};
 use reth_db::tables;
+use reth_db::transaction::DbTxMut;
 use reth_db_common::init::init_from_state_dump;
 use reth_db_common::DbTool;
-use reth_primitives::{SealedHeader, StaticFileSegment};
+use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
     StaticFileWriter,
 };
+use reth_static_file_types::StaticFileSegment;
 use revm_primitives::B256;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::str::FromStr;
-use tokio::runtime::Runtime;
 use tracing::info;
 
 const IMPORTED_FLAG: &str = "imported.flag";
@@ -44,53 +46,70 @@ fn import_state(
     state: PathBuf,
     header: PathBuf,
     header_hash: &str,
+    runtime: Runtime,
 ) -> Result<(), eyre::Error> {
     let Environment {
         config,
         provider_factory,
         ..
-    } = env.init::<GnosisNode>(AccessRights::RW)?;
+    } = env.init::<GnosisNode>(AccessRights::RW, runtime)?;
 
     let static_file_provider = provider_factory.static_file_provider();
-    let provider_rw = provider_factory.database_provider_rw()?;
 
     // ensure header, total difficulty and header hash are provided
     let header = read_header_from_file(header)?;
     let header_hash = B256::from_str(header_hash)?;
 
-    let last_block_number = provider_rw.last_block_number()?;
+    {
+        let provider_rw = provider_factory.database_provider_rw()?;
 
-    if last_block_number == 0 {
-        without_evm::setup_without_evm(
-            &provider_rw,
-            // &header,
-            // header_hash,
-            SealedHeader::new(header, header_hash),
-            |number| GnosisHeader {
-                number,
-                ..Default::default()
-            },
-        )?;
+        let last_block_number = provider_rw.last_block_number()?;
 
-        // SAFETY: it's safe to commit static files, since in the event of a crash, they
-        // will be unwound according to database checkpoints.
-        //
-        // Necessary to commit, so the header is accessible to provider_rw and
-        // init_state_dump
-        static_file_provider.commit()?;
-    } else if last_block_number > 0 && last_block_number < header.number {
-        return Err(eyre::eyre!(
-            "Data directory should be empty when calling init-state with --without-evm-history."
-        ));
+        if last_block_number == 0 {
+            without_evm::setup_without_evm(
+                &provider_rw,
+                SealedHeader::new(header.clone(), header_hash),
+                |number| GnosisHeader {
+                    number,
+                    ..Default::default()
+                },
+            )?;
+
+            // SAFETY: it's safe to commit static files, since in the event of a crash, they
+            // will be unwound according to database checkpoints.
+            //
+            // Necessary to commit, so the header is accessible to init_from_state_dump
+            static_file_provider.commit()?;
+        } else if last_block_number > 0 && last_block_number < header.number {
+            return Err(eyre::eyre!(
+                "Data directory should be empty when calling init-state with --without-evm-history."
+            ));
+        }
+
+        // Clear state tables populated by genesis init (chiado/gnosis genesis has pre-allocated
+        // accounts with storage). v2.1.0's `init_from_state_dump` uses `append_dup` for
+        // performance, which requires PlainStorageState/AccountChangeSets/StorageChangeSets to be
+        // empty (or only contain entries below the cursor). Pre-existing genesis entries at
+        // higher addresses break the cursor invariant. We're importing fresh state at the
+        // post-merge block, so the genesis allocations are not needed.
+        provider_rw.tx_ref().clear::<tables::PlainAccountState>()?;
+        provider_rw.tx_ref().clear::<tables::PlainStorageState>()?;
+        provider_rw.tx_ref().clear::<tables::HashedAccounts>()?;
+        provider_rw.tx_ref().clear::<tables::HashedStorages>()?;
+        provider_rw.tx_ref().clear::<tables::AccountChangeSets>()?;
+        provider_rw.tx_ref().clear::<tables::StorageChangeSets>()?;
+        provider_rw.tx_ref().clear::<tables::AccountsHistory>()?;
+        provider_rw.tx_ref().clear::<tables::StoragesHistory>()?;
+        provider_rw.tx_ref().clear::<tables::Bytecodes>()?;
+
+        provider_rw.commit()?;
     }
 
     info!(target: "reth::cli", "Initiating state dump");
 
     let reader = BufReader::new(reth_fs_util::open(state)?);
 
-    let hash = init_from_state_dump(reader, &provider_rw, config.stages.etl)?;
-
-    provider_rw.commit()?;
+    let hash = init_from_state_dump(reader, &provider_factory, config.stages.etl)?;
 
     info!(target: "reth::cli", hash = ?hash, "Genesis block written");
     Ok(())
@@ -121,10 +140,12 @@ pub fn download_and_import_init_state(
 
     let state_path = datadir.join(format!("{chain}-state"));
 
-    let runtime = Runtime::new().expect("Unable to build runtime");
-    let _guard = runtime.enter();
+    let runtime: Runtime = RuntimeBuilder::new(RuntimeConfig::default())
+        .build()
+        .expect("Unable to build runtime");
+    let _guard = runtime.handle().enter();
 
-    if let Err(e) = runtime.block_on(ensure_state(&state_path, chain)) {
+    if let Err(e) = runtime.handle().block_on(ensure_state(&state_path, chain)) {
         eprintln!("state setup failed: {e}");
         std::process::exit(1);
     }
@@ -144,12 +165,13 @@ pub fn download_and_import_init_state(
         state_file,
         header_file.clone(),
         download_spec.header_hash,
+        runtime.clone(),
     )
     .unwrap();
 
     let Environment {
         provider_factory, ..
-    } = env.init::<GnosisNode>(AccessRights::RO).unwrap();
+    } = env.init::<GnosisNode>(AccessRights::RO, runtime).unwrap();
     let tool = DbTool::new(provider_factory).unwrap();
     let (key, mask): (u64, usize) = (
         table_key::<tables::Headers>(download_spec.block_num).unwrap(),

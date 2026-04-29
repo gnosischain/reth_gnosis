@@ -6,12 +6,11 @@ use alloy_primitives::Bytes;
 use gnosis_primitives::header::GnosisHeader;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::BlockExecutionError;
-use reth_ethereum_primitives::Receipt;
+use reth_ethereum_primitives::{Receipt, TransactionSigned};
 use reth_evm::{
     block::BlockExecutorFactory,
     execute::{BlockAssembler, BlockAssemblerInput},
 };
-use reth_primitives::TransactionSigned;
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;
@@ -141,6 +140,8 @@ where
             blob_gas_used: block_blob_gas_used,
             excess_blob_gas,
             requests_hash,
+            block_access_list_hash: None,
+            slot_number: None,
         };
 
         Ok(GnosisBlock {

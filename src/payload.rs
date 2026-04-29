@@ -16,6 +16,7 @@ use reth_basic_payload_builder::{
 };
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_engine_primitives::{
     BuiltPayloadConversionError, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
     ExecutionPayloadEnvelopeV4, ExecutionPayloadEnvelopeV6, ExecutionPayloadV1,
@@ -26,10 +27,11 @@ use reth_evm::{
     execute::{BlockBuilder, BlockBuilderOutcome},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
-use reth_node_builder::{BuiltPayload, PayloadBuilderAttributes, PayloadBuilderError};
-use reth_payload_builder::{BlobSidecars, EthPayloadBuilderAttributes, PayloadId};
-use reth_primitives::SealedBlock;
+use reth_node_api::PayloadAttributes;
+use reth_node_builder::{BuiltPayload, PayloadBuilderError};
+use reth_payload_builder::{BlobSidecars, PayloadId};
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
+use reth_primitives_traits::SealedBlock;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_transaction_pool::{
@@ -87,12 +89,12 @@ where
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec = GnosisChainSpec> + Clone,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TransactionSigned>>,
 {
-    type Attributes = EthPayloadBuilderAttributes;
+    type Attributes = EthPayloadAttributes;
     type BuiltPayload = GnosisBuiltPayload;
 
     fn try_build(
         &self,
-        args: BuildArguments<EthPayloadBuilderAttributes, GnosisBuiltPayload>,
+        args: BuildArguments<EthPayloadAttributes, GnosisBuiltPayload>,
     ) -> Result<BuildOutcome<GnosisBuiltPayload>, PayloadBuilderError> {
         default_ethereum_payload(
             self.evm_config.clone(),
@@ -109,7 +111,14 @@ where
         &self,
         config: PayloadConfig<Self::Attributes, GnosisHeader>,
     ) -> Result<GnosisBuiltPayload, PayloadBuilderError> {
-        let args = BuildArguments::new(Default::default(), config, Default::default(), None);
+        let args = BuildArguments::new(
+            Default::default(),
+            Default::default(),
+            None,
+            config,
+            Default::default(),
+            None,
+        );
 
         default_ethereum_payload(
             self.evm_config.clone(),
@@ -140,7 +149,7 @@ pub fn default_ethereum_payload<EvmConfig, Pool, Client, F>(
     client: Client,
     pool: Pool,
     builder_config: EthereumBuilderConfig,
-    args: BuildArguments<EthPayloadBuilderAttributes, GnosisBuiltPayload>,
+    args: BuildArguments<EthPayloadAttributes, GnosisBuiltPayload>,
     best_txs: F,
 ) -> Result<BuildOutcome<GnosisBuiltPayload>, PayloadBuilderError>
 where
@@ -152,6 +161,8 @@ where
 {
     let BuildArguments {
         mut cached_reads,
+        execution_cache: _,
+        trie_handle: _,
         config,
         cancel,
         best_payload,
@@ -159,6 +170,7 @@ where
     let PayloadConfig {
         parent_header,
         attributes,
+        payload_id,
     } = config;
 
     let state_provider = client.state_by_block_hash(parent_header.hash())?;
@@ -174,19 +186,20 @@ where
             &parent_header,
             NextBlockEnvAttributes {
                 timestamp: attributes.timestamp(),
-                suggested_fee_recipient: attributes.suggested_fee_recipient(),
-                prev_randao: attributes.prev_randao(),
+                suggested_fee_recipient: attributes.suggested_fee_recipient,
+                prev_randao: attributes.prev_randao,
                 gas_limit: builder_config.gas_limit(parent_header.gas_limit),
                 parent_beacon_block_root: attributes.parent_beacon_block_root(),
-                withdrawals: Some(attributes.withdrawals().clone()),
+                withdrawals: attributes.withdrawals.clone().map(Into::into),
                 extra_data: builder_config.extra_data,
+                slot_number: attributes.slot_number(),
             },
         )
         .map_err(PayloadBuilderError::other)?;
 
     let chain_spec = client.chain_spec();
 
-    debug!(target: "payload_builder", id=%attributes.id, parent_header = ?parent_header.hash(), parent_number = parent_header.number, "building new payload");
+    debug!(target: "payload_builder", id=%payload_id, parent_header = ?parent_header.hash(), parent_number = parent_header.number, "building new payload");
     let mut cumulative_gas_used = 0;
     let block_gas_limit: u64 = builder.evm_mut().block().gas_limit();
     let base_fee = builder.evm_mut().block().basefee();
@@ -228,7 +241,11 @@ where
 
     let is_osaka = chain_spec.is_osaka_active_at_timestamp(attributes.timestamp);
 
-    let withdrawals_rlp_length = attributes.withdrawals().length();
+    let withdrawals_rlp_length = attributes
+        .withdrawals
+        .as_ref()
+        .map(|withdrawals| withdrawals.length())
+        .unwrap_or(0);
 
     while let Some(pool_tx) = best_txs.next() {
         // ensure we still have capacity for this transaction
@@ -387,14 +404,14 @@ where
         execution_result,
         block,
         ..
-    } = builder.finish(&state_provider)?;
+    } = builder.finish(&state_provider, None)?;
 
     let requests = chain_spec
         .is_prague_active_at_timestamp(attributes.timestamp)
         .then_some(execution_result.requests);
 
     let sealed_block = Arc::new(block.sealed_block().clone());
-    debug!(target: "payload_builder", id=%attributes.id, sealed_block_header = ?sealed_block.sealed_header(), "sealed built block");
+    debug!(target: "payload_builder", id=%payload_id, sealed_block_header = ?sealed_block.sealed_header(), "sealed built block");
 
     if is_osaka && sealed_block.rlp_length() > MAX_RLP_BLOCK_SIZE {
         return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
@@ -403,7 +420,7 @@ where
         }));
     }
 
-    let payload = GnosisBuiltPayload::new(attributes.id, sealed_block, total_fees, requests)
+    let payload = GnosisBuiltPayload::new(payload_id, sealed_block, total_fees, requests)
         // add blob sidecars from the executed txs
         .with_sidecars(blob_sidecars);
 

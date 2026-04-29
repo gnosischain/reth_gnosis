@@ -8,7 +8,7 @@ use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
 use reth_engine_local::LocalPayloadAttributesBuilder;
 use reth_ethereum_consensus::EthBeaconConsensus;
-use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
@@ -92,7 +92,6 @@ impl GnosisNode {
                 Payload: PayloadTypes<
                     BuiltPayload = GnosisBuiltPayload,
                     PayloadAttributes = EthPayloadAttributes,
-                    PayloadBuilderAttributes = EthPayloadBuilderAttributes,
                 >,
             >,
         >,

@@ -6,7 +6,7 @@ use reth_evm::{eth::EthEvmContext, EvmEnv, EvmFactory};
 use revm::{
     context::{
         result::{EVMError, HaltReason, ResultAndState},
-        BlockEnv, TxEnv,
+        BlockEnv, CfgEnv, TxEnv,
     },
     handler::{instructions::EthInstructions, PrecompileProvider},
     inspector::NoOpInspector,
@@ -112,6 +112,10 @@ where
 
     fn block(&self) -> &BlockEnv {
         &self.block
+    }
+
+    fn cfg_env(&self) -> &CfgEnv<SpecId> {
+        &self.cfg
     }
 
     fn chain_id(&self) -> u64 {

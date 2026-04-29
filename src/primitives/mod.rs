@@ -2,7 +2,8 @@
 // it's made to facilitate the upcoming switch to gnosis_primitives crate
 
 use block::{BlockBody, GnosisBlock, TransactionSigned};
-use reth_primitives::{NodePrimitives, Receipt};
+use reth_ethereum_primitives::Receipt;
+use reth_primitives_traits::NodePrimitives;
 
 pub mod block;
 
