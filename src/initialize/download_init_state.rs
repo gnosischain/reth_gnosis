@@ -229,7 +229,12 @@ pub async fn ensure_state(data_dir: &Path, chain: &str, base_url: &str) -> anyho
                 get_compressed_state_size(chain),
             )
             .await
-            .with_context(|| format!("failed to download compressed state from {}", get_state_url(chain, base_url)))?;
+            .with_context(|| {
+                format!(
+                    "failed to download compressed state from {}",
+                    get_state_url(chain, base_url)
+                )
+            })?;
 
             println!("🔍  verifying download …");
             if !verify_file_hash(&compressed_path, get_compressed_state_hash(chain))? {
