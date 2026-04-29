@@ -1,6 +1,6 @@
 [package]
 name = "reth_gnosis"
-version = "1.0.3"
+version = "1.2.0"
 edition = "2021"
 
 [lib]
