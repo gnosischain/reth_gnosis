@@ -14,7 +14,10 @@ use revm::{
         PrecompileProvider,
     },
     inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
-    interpreter::{interpreter::EthInterpreter, interpreter_action::FrameInit, InterpreterResult},
+    interpreter::{
+        interpreter::EthInterpreter, interpreter_action::FrameInit, InitialAndFloorGas,
+        InterpreterResult,
+    },
     state::EvmState,
     Database, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectEvm, Inspector,
 };
@@ -52,6 +55,7 @@ where
     fn validate_against_state_and_deduct_caller(
         &self,
         evm: &mut Self::Evm,
+        _init_and_floor_gas: &mut InitialAndFloorGas,
     ) -> Result<(), Self::Error> {
         pre_execution::validate_against_state_and_deduct_caller::<EVM::Context, ERROR>(evm.ctx())?;
 
@@ -95,7 +99,7 @@ where
             // mint basefee to collector address
             let basefee = block.basefee() as u128;
             let gas_used =
-                (exec_result.gas().spent() - exec_result.gas().refunded() as u64) as u128;
+                (exec_result.gas().total_gas_spent() - exec_result.gas().refunded() as u64) as u128;
 
             let mut collector_account = journal.load_account_with_code_mut(self.fee_collector)?;
             let new_balance = collector_account
@@ -200,7 +204,7 @@ where
         let precompiles = &mut self.0.precompiles;
         let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
 
-        Ok(res.map_frame(|token| {
+        Ok(res.map_item(|token| {
             if is_first_init {
                 unsafe { self.0.frame_stack.end_init(token) };
             } else {

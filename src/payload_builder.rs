@@ -1,4 +1,4 @@
-use reth_ethereum_engine_primitives::{EthPayloadAttributes, EthPayloadBuilderAttributes};
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
@@ -33,7 +33,6 @@ impl GnosisPayloadBuilder {
             Payload: PayloadTypes<
                 BuiltPayload = GnosisBuiltPayload,
                 PayloadAttributes = EthPayloadAttributes,
-                PayloadBuilderAttributes = EthPayloadBuilderAttributes,
             >,
         >,
         Node: FullNodeTypes<Types = Types>,
@@ -64,7 +63,6 @@ where
         Payload: PayloadTypes<
             BuiltPayload = GnosisBuiltPayload,
             PayloadAttributes = EthPayloadAttributes,
-            PayloadBuilderAttributes = EthPayloadBuilderAttributes,
         >,
     >,
     Node: FullNodeTypes<Types = Types>,
