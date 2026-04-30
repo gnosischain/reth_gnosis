@@ -339,7 +339,7 @@ where
         }
 
         let gas_used = match builder.execute_transaction(tx.clone()) {
-            Ok(gas_used) => gas_used,
+            Ok(gas_output) => gas_output.tx_gas_used(),
             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 error, ..
             })) => {
