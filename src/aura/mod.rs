@@ -135,6 +135,11 @@ fn validate_aura_header(
 ) -> Result<(), ConsensusError> {
     // AuRa step must be present
     if header.aura_step.is_none() {
+        tracing::warn!(
+            target: "reth::gnosis",
+            block = header.number,
+            "Validation FAILED: missing AuRa step"
+        );
         return Err(ConsensusError::Other(
             "missing AuRa step in pre-merge header".into(),
         ));
@@ -142,6 +147,11 @@ fn validate_aura_header(
 
     // AuRa seal must be present
     if header.aura_seal.is_none() {
+        tracing::warn!(
+            target: "reth::gnosis",
+            block = header.number,
+            "Validation FAILED: missing AuRa seal"
+        );
         return Err(ConsensusError::Other(
             "missing AuRa seal in pre-merge header".into(),
         ));
@@ -241,12 +251,27 @@ fn validate_aura_header_against_parent(
             ConsensusError::Other(format!("AuRa seal verification failed: {}", e).into())
         })?;
 
-        // Get expected validators
-        if let Some(validators) = config.validators.try_get_list_validators(block_number) {
+        // Get expected validators. The proposer for block N is determined by
+        // the validator set active at block N-1 (the parent), because the new
+        // set at a multi-transition block only applies to blocks AFTER it.
+        let proposer_lookup_block = block_number.saturating_sub(1);
+        if let Some(validators) = config
+            .validators
+            .try_get_list_validators(proposer_lookup_block)
+        {
             let step = current_step.to::<u64>();
             let expected_proposer = ValidatorSet::expected_proposer(step, validators);
 
             if signer != expected_proposer {
+                tracing::warn!(
+                    target: "reth::gnosis",
+                    block = block_number,
+                    expected = %expected_proposer,
+                    got = %signer,
+                    step = step,
+                    num_validators = validators.len(),
+                    "Validation FAILED: AuRa proposer mismatch"
+                );
                 return Err(ConsensusError::Other(
                     format!(
                         "AuRa proposer mismatch: expected={}, got={} (step={}, block={})",
