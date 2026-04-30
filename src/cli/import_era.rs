@@ -112,9 +112,6 @@ where
 
     era::import(stream, &provider_factory, &mut hash_collector, max_height)?;
 
-    let datadir = env.datadir.clone().resolve_datadir(env.chain.chain());
-    let datadir = datadir.data_dir();
-
     println!("✅ ERA imported successfully.");
 
     Ok(())
