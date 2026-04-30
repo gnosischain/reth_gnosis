@@ -185,9 +185,20 @@ impl Debug for GnosisEvmConfig {
 
 impl GnosisEvmConfig {
     /// Creates a new [`GnosisEvmConfig`] with the given chain spec and header lookup.
+    /// If `datadir` is provided, rolling finality state will be persisted to disk
+    /// and restored on startup, preventing missed finalizeChange() calls across restarts.
     pub fn new(
         chain_spec: Arc<GnosisChainSpec>,
         header_lookup: impl HeaderLookup + 'static,
+    ) -> Self {
+        Self::new_with_datadir(chain_spec, header_lookup, None::<std::path::PathBuf>)
+    }
+
+    /// Creates a new [`GnosisEvmConfig`] with persistence for rolling finality state.
+    pub fn new_with_datadir(
+        chain_spec: Arc<GnosisChainSpec>,
+        header_lookup: impl HeaderLookup + 'static,
+        datadir: Option<impl Into<std::path::PathBuf>>,
     ) -> Self {
         // Parsing fields MANDATORY for GnosisBlockExecutorFactory
         let fee_collector_address = chain_spec
@@ -220,9 +231,14 @@ impl GnosisEvmConfig {
             ),
             chain_spec,
             header_lookup: Arc::new(header_lookup),
-            rolling_finality: Arc::new(Mutex::new(crate::aura::finality::RollingFinality::new(
-                Vec::new(),
-            ))),
+            rolling_finality: Arc::new(Mutex::new({
+                let rf = crate::aura::finality::RollingFinality::new(Vec::new());
+                if let Some(dir) = datadir {
+                    rf.with_datadir(dir)
+                } else {
+                    rf
+                }
+            })),
         }
     }
 

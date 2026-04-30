@@ -1,5 +1,17 @@
 use alloy_primitives::Address;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
+use std::path::{Path, PathBuf};
+
+const FINALITY_STATE_FILE: &str = "aura_finality_state.json";
+
+/// Persisted subset of rolling finality state that must survive restarts.
+/// Only the fields needed to correctly schedule finalizeChange() calls.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct PersistedFinalityState {
+    pending_transitions: BTreeMap<u64, Address>,
+    finalize_change_at: Option<(u64, Address)>,
+}
 
 /// Rolling finality tracker for AuRa consensus.
 ///
@@ -27,6 +39,8 @@ pub struct RollingFinality {
     /// The block number at which finalization was most recently determined,
     /// meaning finalizeChange should be called at finalized_at + 1.
     finalize_change_at: Option<(u64, Address)>,
+    /// Path to the datadir for persisting state across restarts.
+    datadir: Option<PathBuf>,
 }
 
 impl RollingFinality {
@@ -39,7 +53,61 @@ impl RollingFinality {
             sign_count: BTreeMap::new(),
             pending_transitions: BTreeMap::new(),
             finalize_change_at: None,
+            datadir: None,
         }
+    }
+
+    /// Set the datadir for persistence and load any previously saved state.
+    pub fn with_datadir(mut self, datadir: impl Into<PathBuf>) -> Self {
+        let datadir = datadir.into();
+        if let Some(state) = Self::load_state(&datadir) {
+            self.pending_transitions = state.pending_transitions;
+            self.finalize_change_at = state.finalize_change_at;
+            tracing::info!(
+                target: "reth::gnosis",
+                pending = self.pending_transitions.len(),
+                finalize_at = ?self.finalize_change_at,
+                "Restored rolling finality state from disk"
+            );
+        }
+        self.datadir = Some(datadir);
+        self
+    }
+
+    /// Persist the state-change-sensitive fields to disk.
+    fn persist(&self) {
+        if let Some(datadir) = &self.datadir {
+            let state = PersistedFinalityState {
+                pending_transitions: self.pending_transitions.clone(),
+                finalize_change_at: self.finalize_change_at,
+            };
+            let path = datadir.join(FINALITY_STATE_FILE);
+            match serde_json::to_string_pretty(&state) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&path, json) {
+                        tracing::warn!(
+                            target: "reth::gnosis",
+                            %e,
+                            "Failed to persist rolling finality state"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reth::gnosis",
+                        %e,
+                        "Failed to serialize rolling finality state"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Load persisted state from disk.
+    fn load_state(datadir: &Path) -> Option<PersistedFinalityState> {
+        let path = datadir.join(FINALITY_STATE_FILE);
+        let data = std::fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&data).ok()
     }
 
     /// Returns true if any block in the queue is finalized
@@ -104,6 +172,7 @@ impl RollingFinality {
                     "Pending transition finalized, scheduling finalizeChange"
                 );
                 self.finalize_change_at = Some((block_number + 1, contract_addr));
+                self.persist();
             }
         }
 
@@ -131,12 +200,14 @@ impl RollingFinality {
     /// Skips the rolling finality check — calls finalizeChange at target_block directly.
     pub fn set_immediate_finalize(&mut self, target_block: u64, contract_address: Address) {
         self.finalize_change_at = Some((target_block, contract_address));
+        self.persist();
     }
 
     /// Record a pending InitiateChange transition at the given block.
     pub fn add_pending_transition(&mut self, block_number: u64, contract_address: Address) {
         self.pending_transitions
             .insert(block_number, contract_address);
+        self.persist();
     }
 
     /// Check if finalizeChange should be called at the given block number.
@@ -150,6 +221,7 @@ impl RollingFinality {
                 // set via getValidators() after the finalizeChange system call.
                 self.headers.clear();
                 self.sign_count.clear();
+                self.persist();
                 return Some(addr);
             }
         }
