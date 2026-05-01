@@ -3,8 +3,8 @@ use alloy_primitives::{Address, B256, U256};
 use gnosis_primitives::header::GnosisHeader;
 use reth::rpc::types::engine::ExecutionData;
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
-use reth_primitives::TxTy;
 use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
+use reth_primitives_traits::TxTy;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
 use reth_provider::errors::any::AnyError;
 use reth_provider::HeaderProvider;
@@ -201,6 +201,7 @@ impl ConfigureEvm for GnosisEvmConfig {
             gas_limit: header.gas_limit(),
             basefee: header.base_fee_per_gas().unwrap_or_default(),
             blob_excess_gas_and_price,
+            slot_num: header.slot_number().unwrap_or_default(),
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -264,6 +265,7 @@ impl ConfigureEvm for GnosisEvmConfig {
             basefee: basefee.unwrap_or_default(),
             // calculate excess gas based on parent block's blob gas usage
             blob_excess_gas_and_price,
+            slot_num: attributes.slot_number.unwrap_or_default(),
         };
 
         Ok((cfg, block_env).into())
@@ -352,6 +354,11 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
             gas_limit: payload.payload.gas_limit(),
             basefee: payload.payload.saturated_base_fee_per_gas(),
             blob_excess_gas_and_price,
+            slot_num: payload
+                .payload
+                .as_v4()
+                .map(|v4| v4.slot_number)
+                .unwrap_or_default(),
         };
 
         Ok(EvmEnv { cfg_env, block_env })

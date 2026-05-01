@@ -5,21 +5,21 @@ use alloy_eips::eip4895::Withdrawals;
 use alloy_eips::eip7002::WITHDRAWAL_REQUEST_TYPE;
 use alloy_eips::eip7251;
 use alloy_eips::{eip7685::Requests, Encodable2718};
-use alloy_evm::block::ExecutableTx;
+use alloy_evm::block::{ExecutableTx, GasOutput, StateDB};
 use alloy_evm::eth::EthTxResult;
+use alloy_evm::Evm;
 use alloy_evm::{
     block::state_changes::balance_increment_state,
     eth::eip6110::{self, parse_deposits_from_receipts},
     FromTxWithEncoded,
 };
-use alloy_evm::{Database, Evm};
 use alloy_primitives::B256;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_evm::{
     block::{
-        BlockExecutor, BlockExecutorFactory, BlockExecutorFor, StateChangePostBlockSource,
-        StateChangeSource, SystemCaller,
+        BlockExecutor, BlockExecutorFactory, StateChangePostBlockSource, StateChangeSource,
+        SystemCaller,
     },
     eth::{
         receipt_builder::{AlloyReceiptBuilder, ReceiptBuilder, ReceiptBuilderCtx},
@@ -30,7 +30,7 @@ use reth_evm::{
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;
 use revm::{context::result::ResultAndState, DatabaseCommit, Inspector};
-use revm_database::{DatabaseCommitExt, State};
+use revm_database::DatabaseCommitExt;
 use revm_primitives::{Address, Log};
 
 use crate::evm::factory::GnosisEvmFactory;
@@ -108,14 +108,11 @@ where
 
 // REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/evm/src/eth/block.rs#L81
 // ALong with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
-impl<'db, DB, E, R> BlockExecutor for GnosisBlockExecutor<'_, E, R>
+impl<E, R> BlockExecutor for GnosisBlockExecutor<'_, E, R>
 where
-    DB: Database + 'db,
-    E: Evm<
-        DB = &'db mut State<DB>,
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
-    >,
+    E: Evm<DB: StateDB, Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
     R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
+    <R::Transaction as TransactionEnvelope>::TxType: Send + 'static,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
@@ -123,12 +120,6 @@ where
     type Result = EthTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        // Set state clear flag if the block is after the Spurious Dragon hardfork.
-        let state_clear_flag = self
-            .spec
-            .is_spurious_dragon_active_at_block(self.evm.block().number().saturating_to());
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
         // Only apply bytecode rewrites at the hardfork activation block
         // (active in current block but NOT active in parent block)
         let current_timestamp: u64 = self.evm.block().timestamp().to();
@@ -186,7 +177,7 @@ where
         })
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let EthTxResult {
             result: ResultAndState { result, state },
             blob_gas_used,
@@ -196,7 +187,7 @@ where
         self.system_caller
             .on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
 
-        let gas_used = result.gas_used();
+        let gas_used = result.tx_gas_used();
 
         // append gas used
         self.gas_used += gas_used;
@@ -222,7 +213,7 @@ where
         // Commit the state changes.
         self.evm.db_mut().commit(state);
 
-        Ok(gas_used)
+        GasOutput::new(gas_used)
     }
 
     fn finish(
@@ -379,12 +370,17 @@ impl<R, EvmF> BlockExecutorFactory for GnosisBlockExecutorFactory<R, EvmF>
 where
     R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
     EvmF: EvmFactory<Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
+    <R::Transaction as TransactionEnvelope>::TxType: Send + 'static,
     Self: 'static,
 {
     type EvmFactory = EvmF;
     type ExecutionCtx<'a> = GnosisBlockExecutionCtx<'a>;
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
+    type TxExecutionResult =
+        EthTxResult<EvmF::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
+    type Executor<'a, DB: StateDB, I: Inspector<EvmF::Context<DB>>> =
+        GnosisBlockExecutor<'a, EvmF::Evm<DB, I>, &'a R>;
 
     fn evm_factory(&self) -> &Self::EvmFactory {
         &self.evm_factory
@@ -392,12 +388,12 @@ where
 
     fn create_executor<'a, DB, I>(
         &'a self,
-        evm: EvmF::Evm<&'a mut State<DB>, I>,
+        evm: EvmF::Evm<DB, I>,
         ctx: Self::ExecutionCtx<'a>,
-    ) -> impl BlockExecutorFor<'a, Self, DB, I>
+    ) -> Self::Executor<'a, DB, I>
     where
-        DB: Database + 'a,
-        I: Inspector<EvmF::Context<&'a mut State<DB>>> + 'a,
+        DB: StateDB,
+        I: Inspector<EvmF::Context<DB>>,
     {
         GnosisBlockExecutor::new(
             evm,
