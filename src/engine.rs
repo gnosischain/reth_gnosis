@@ -18,9 +18,8 @@ use reth_node_builder::{
     EngineApiMessageVersion, EngineApiValidator, EngineObjectValidationError, EngineTypes,
     NewPayloadError, PayloadOrAttributes, PayloadTypes, PayloadValidator,
 };
-use reth_payload_builder::EthPayloadBuilderAttributes;
-use reth_primitives::{NodePrimitives, RecoveredBlock};
 use reth_primitives_traits::SealedBlock;
+use reth_primitives_traits::{NodePrimitives, RecoveredBlock};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -34,7 +33,6 @@ impl PayloadTypes for GnosisEngineTypes {
     type ExecutionData = ExecutionData;
     type BuiltPayload = GnosisBuiltPayload;
     type PayloadAttributes = EthPayloadAttributes;
-    type PayloadBuilderAttributes = EthPayloadBuilderAttributes;
 
     fn block_to_payload(
         block: SealedBlock<
