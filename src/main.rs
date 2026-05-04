@@ -1,5 +1,6 @@
 use clap::{Args, Parser};
 use reth::api::FullNodeComponents;
+use reth::args::DefaultStorageValues;
 use reth_gnosis::engine::GnosisEngineValidator;
 use reth_gnosis::{
     cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode,
@@ -22,6 +23,11 @@ pub struct NoArgs;
 type CliGnosis = GnosisCli<GnosisChainSpecParser, NoArgs>;
 
 fn main() {
+    // Default to v1 (legacy) storage layout for new databases. Gnosis state import via
+    // `setup_without_evm` does not initialize the v2 AccountChangeSets/StorageChangeSets static
+    // file segments at the non-zero genesis block, which trips the launch consistency check.
+    let _ = DefaultStorageValues::default().with_v2(false).try_init();
+
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
 
@@ -42,7 +48,7 @@ fn run_reth(cli: CliGnosis) {
                     Arc::new(ctx.node().consensus().clone()),
                     ctx.node().evm_config().clone(),
                     ctx.config().rpc.flashbots_config(),
-                    Box::new(ctx.node().task_executor().clone()),
+                    ctx.node().task_executor().clone(),
                     Arc::new(GnosisEngineValidator::new(ctx.config().chain.clone())),
                 );
                 ctx.modules.merge_if_module_configured(

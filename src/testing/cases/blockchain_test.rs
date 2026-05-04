@@ -26,7 +26,9 @@ use reth_provider::{
 };
 use reth_revm::database::StateProviderDatabase;
 use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
-use reth_trie_db::DatabaseStateRoot;
+use reth_trie_db::{
+    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory, LegacyKeyAdapter,
+};
 use std::{
     collections::BTreeMap,
     fs,
@@ -296,13 +298,16 @@ fn run_case(case: &BlockchainTest) -> Result<(), Error> {
             .map_err(|err| Error::block_failed(block_number, err))?;
 
         // Consensus checks after block execution
-        validate_block_post_execution(block, &chain_spec, &output.receipts, &output.requests, None)
+        validate_block_post_execution(block, &chain_spec, &output.result, None)
             .map_err(|err| Error::block_failed(block_number, err))?;
 
         // Compute and check the post state root
         let hashed_state =
             HashedPostState::from_bundle_state::<KeccakKeyHasher>(output.state.state());
-        let (computed_state_root, _) = StateRoot::overlay_root_with_updates(
+        let (computed_state_root, _) = <StateRoot<
+            DatabaseTrieCursorFactory<_, LegacyKeyAdapter>,
+            DatabaseHashedCursorFactory<_>,
+        > as DatabaseStateRoot<_>>::overlay_root_with_updates(
             provider.tx_ref(),
             &hashed_state.clone_into_sorted(),
         )

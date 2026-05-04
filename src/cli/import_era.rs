@@ -9,6 +9,7 @@ use reth::version::version_metadata;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
+use reth_era::common::file_ops::EraFileType;
 use reth_era_downloader::{EraClient, EraStream, EraStreamConfig};
 use reth_etl::Collector;
 use reth_fs_util as fs;
@@ -51,11 +52,11 @@ pub struct ImportArgs {
 
 impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> ImportEraCommand<C> {
     /// Execute `import-era` command
-    pub async fn execute<N>(self) -> eyre::Result<()>
+    pub async fn execute<N>(self, runtime: reth::tasks::Runtime) -> eyre::Result<()>
     where
         N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = GnosisNodePrimitives>,
     {
-        execute_inner::<C, N>(&self.env)
+        execute_inner::<C, N>(&self.env, runtime)
     }
 }
 
@@ -66,7 +67,10 @@ impl<C: ChainSpecParser> ImportEraCommand<C> {
     }
 }
 
-pub fn execute_inner<C, N>(env: &EnvironmentArgs<C>) -> eyre::Result<()>
+pub fn execute_inner<C, N>(
+    env: &EnvironmentArgs<C>,
+    runtime: reth::tasks::Runtime,
+) -> eyre::Result<()>
 where
     C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>,
     N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = GnosisNodePrimitives>,
@@ -78,7 +82,7 @@ where
         provider_factory,
         config,
         ..
-    } = env.init::<N>(AccessRights::RW)?;
+    } = env.init::<N>(AccessRights::RW, runtime)?;
 
     let mut hash_collector = Collector::new(config.stages.etl.file_size, config.stages.etl.dir);
 
@@ -107,7 +111,7 @@ where
     fs::create_dir_all(&folder)?;
 
     let config = EraStreamConfig::default().start_from(next_block);
-    let client = EraClient::new(Client::new(), url, folder);
+    let client = EraClient::new(Client::new(), url, folder).with_era_type(EraFileType::Era1);
     let stream = EraStream::new(client, config);
 
     era::import(stream, &provider_factory, &mut hash_collector, max_height)?;

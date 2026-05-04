@@ -171,15 +171,16 @@ where
         // Install the prometheus recorder to be sure to record all metrics
         let _ = install_prometheus_recorder();
 
+        let rt = runner.runtime();
         match self.command {
             Commands::Node(command) => runner.run_command_until_exit(|ctx| {
                 command.execute(ctx, FnLauncher::new::<C, Ext>(launcher))
             }),
             Commands::Init(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>(rt))
             }
             Commands::InitState(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>(rt))
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
@@ -193,18 +194,18 @@ where
                 runner.run_command_until_exit(|ctx| command.execute::<GnosisNode>(ctx))
             }
             Commands::Import(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _>(components))
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode, _>(components, rt))
             }
             // Commands::Debug(_command) => todo!(),
             Commands::ImportEra(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>(rt))
             }
             Commands::Download(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
             Commands::ExportEra(_export_era_command) => unimplemented!(),
             Commands::ReExecute(command) => {
-                runner.run_until_ctrl_c(command.execute::<GnosisNode>(components))
+                runner.run_until_ctrl_c(command.execute::<GnosisNode>(components, rt))
             }
         }
     }
