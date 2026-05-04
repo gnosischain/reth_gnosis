@@ -142,14 +142,12 @@ where
         // Nethermind uses 30M gas for SystemTransaction.
         // We disable the block gas limit check so we can use this gas limit
         // without modifying block.gas_limit (which affects GASLIMIT opcode).
-        let tx_gas = TX_GAS_LIMIT;
-
         let tx = TxEnv {
             caller,
             kind: TxKind::Call(contract),
             // Explicitly set nonce to 0 so revm does not do any nonce checks
             nonce: 0,
-            gas_limit: tx_gas,
+            gas_limit: TX_GAS_LIMIT,
             value: U256::ZERO,
             data,
             // Setting the gas price to zero enforces that no value is transferred as part of the
@@ -171,7 +169,7 @@ where
         let mut disable_nonce_check = true;
         let mut disable_block_gas_limit = true;
         let mut disable_base_fee = true;
-        let mut tx_gas_limit_cap = Some(tx_gas);
+        let mut tx_gas_limit_cap = Some(TX_GAS_LIMIT);
 
         // disable nonce check, block gas limit check, base fee check, and set tx gas limit cap
         core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);

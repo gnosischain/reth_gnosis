@@ -21,7 +21,6 @@ use tracing::info;
 use crate::{cli::era, initialize::MAINNET_ERA_IMPORT_HEIGHT, primitives::GnosisNodePrimitives};
 
 pub const ERA_IMPORT_URL: &str = "https://gc-era.gnosiscoredevs.io/#era1";
-pub const ERA_IMPORTED_FLAG: &str = "era-imported.flag";
 
 /// Syncs ERA encoded blocks from a local or remote source.
 #[derive(Debug, Parser)]

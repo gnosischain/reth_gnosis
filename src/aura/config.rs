@@ -139,3 +139,195 @@ impl AuraConfig {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_minimal_with_list_validators() {
+        let v = json!({
+            "stepDuration": 5,
+            "validators": {
+                "multi": {
+                    "0": {
+                        "list": [
+                            "0x0000000000000000000000000000000000000001",
+                            "0x0000000000000000000000000000000000000002"
+                        ]
+                    }
+                }
+            }
+        });
+        let cfg = AuraConfig::from_json_value(&v).expect("parse must succeed");
+        assert_eq!(cfg.step_duration, 5);
+        assert!(cfg.posdao_transition.is_none());
+        assert!(cfg.block_reward_contract_transitions.is_empty());
+        assert!(cfg.block_gas_limit_contract_transitions.is_empty());
+        assert!(cfg.rewrite_bytecode.is_empty());
+        let list = cfg.validators.try_get_list_validators(0).unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn parse_safe_contract_validator() {
+        let v = json!({
+            "stepDuration": 5,
+            "validators": {
+                "multi": {
+                    "100": {
+                        "safeContract": "0x00000000000000000000000000000000000000aa"
+                    }
+                }
+            }
+        });
+        let cfg = AuraConfig::from_json_value(&v).unwrap();
+        assert!(cfg.validators.try_get_list_validators(100).is_none());
+        assert!(cfg.validators.contract_address_at(100).is_some());
+    }
+
+    #[test]
+    fn parse_contract_validator() {
+        let v = json!({
+            "stepDuration": 5,
+            "validators": {
+                "multi": {
+                    "200": {
+                        "contract": "0x00000000000000000000000000000000000000bb"
+                    }
+                }
+            }
+        });
+        let cfg = AuraConfig::from_json_value(&v).unwrap();
+        assert!(cfg.validators.contract_address_at(200).is_some());
+    }
+
+    #[test]
+    fn parse_multi_transitions_in_order() {
+        // List at 0, SafeContract at 1300, Contract at 9186425 (POSDAO-style).
+        let v = json!({
+            "stepDuration": 5,
+            "validators": {
+                "multi": {
+                    "0": { "list": ["0x0000000000000000000000000000000000000001"] },
+                    "1300": { "safeContract": "0x00000000000000000000000000000000000000aa" },
+                    "9186425": { "contract": "0x00000000000000000000000000000000000000bb" }
+                }
+            },
+            "posdaoTransition": 9186425
+        });
+        let cfg = AuraConfig::from_json_value(&v).unwrap();
+        assert_eq!(cfg.posdao_transition, Some(9186425));
+        assert!(cfg.validators.try_get_list_validators(1).is_some());
+        assert!(cfg.validators.try_get_list_validators(1299).is_some());
+        assert!(cfg.validators.try_get_list_validators(1300).is_none());
+        assert!(cfg.validators.contract_address_at(1300).is_some());
+        // Different addresses for SafeContract (1300+) and Contract (9186425+).
+        assert_ne!(
+            cfg.validators.contract_address_at(1300),
+            cfg.validators.contract_address_at(9186425)
+        );
+    }
+
+    #[test]
+    fn parse_block_reward_legacy_single_address() {
+        // Old format: blockRewardContractAddress + blockRewardContractTransition.
+        let v = json!({
+            "stepDuration": 5,
+            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
+            "blockRewardContractAddress": "0x000000000000000000000000000000000000beef",
+            "blockRewardContractTransition": 100
+        });
+        let cfg = AuraConfig::from_json_value(&v).unwrap();
+        assert_eq!(cfg.block_reward_contract_transitions.len(), 1);
+        let (block, _addr) = cfg.block_reward_contract_transitions.iter().next().unwrap();
+        assert_eq!(*block, 100);
+    }
+
+    #[test]
+    fn parse_block_reward_legacy_address_no_transition_defaults_zero() {
+        let v = json!({
+            "stepDuration": 5,
+            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
+            "blockRewardContractAddress": "0x000000000000000000000000000000000000beef"
+        });
+        let cfg = AuraConfig::from_json_value(&v).unwrap();
+        assert_eq!(
+            cfg.block_reward_contract_transitions
+                .get(&0)
+                .copied()
+                .is_some(),
+            true
+        );
+    }
+
+    #[test]
+    fn parse_block_reward_modern_transitions_map() {
+        let v = json!({
+            "stepDuration": 5,
+            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
+            "blockRewardContractTransitions": {
+                "1": "0x0000000000000000000000000000000000000010",
+                "100": "0x0000000000000000000000000000000000000020",
+                "9186425": "0x0000000000000000000000000000000000000030"
+            }
+        });
+        let cfg = AuraConfig::from_json_value(&v).unwrap();
+        assert_eq!(cfg.block_reward_contract_transitions.len(), 3);
+        assert!(cfg.block_reward_contract_transitions.contains_key(&1));
+        assert!(cfg.block_reward_contract_transitions.contains_key(&9186425));
+    }
+
+    #[test]
+    fn parse_block_gas_limit_contract_transitions() {
+        let v = json!({
+            "stepDuration": 5,
+            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
+            "blockGasLimitContractTransitions": {
+                "1300": "0x0000000000000000000000000000000000000040"
+            }
+        });
+        let cfg = AuraConfig::from_json_value(&v).unwrap();
+        assert_eq!(cfg.block_gas_limit_contract_transitions.len(), 1);
+    }
+
+    #[test]
+    fn parse_rewrite_bytecode() {
+        // Real Gnosis: token contract upgrade at block 21,735,000.
+        let v = json!({
+            "stepDuration": 5,
+            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
+            "rewriteBytecode": {
+                "21735000": {
+                    "0x6f1cef828f1bd5b6acff5d76d4a86d50f9a86998": "0xdeadbeef"
+                }
+            }
+        });
+        let cfg = AuraConfig::from_json_value(&v).unwrap();
+        assert_eq!(cfg.rewrite_bytecode.len(), 1);
+        let inner = cfg.rewrite_bytecode.get(&21735000).unwrap();
+        assert_eq!(inner.len(), 1);
+        let (_, code) = inner.iter().next().unwrap();
+        assert_eq!(code.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn parse_string_num_rejects_non_numeric() {
+        // Block-number keys must be numeric strings; otherwise parsing must fail.
+        let v = json!({
+            "stepDuration": 5,
+            "validators": { "multi": { "abc": { "list": ["0x0000000000000000000000000000000000000001"] } } }
+        });
+        assert!(AuraConfig::from_json_value(&v).is_err());
+    }
+
+    #[test]
+    fn parse_unknown_validator_kind_fails() {
+        let v = json!({
+            "stepDuration": 5,
+            "validators": { "multi": { "0": { "weirdKind": "0xff" } } }
+        });
+        assert!(AuraConfig::from_json_value(&v).is_err());
+    }
+}

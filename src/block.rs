@@ -124,29 +124,169 @@ where
             block_rewards_address,
         }
     }
+}
 
-    /// Decode an ABI-encoded address array from getValidators() return data.
-    /// Format: offset(32) + length(32) + addresses(32 each, zero-padded).
-    fn decode_address_array(data: &[u8]) -> Result<Vec<Address>, ()> {
-        if data.len() < 64 {
+/// AuRa system-call helpers. Live in their own impl block because they need
+/// the `E: Evm<DB: StateDB>` bound that the constructor / decoder above don't.
+impl<'a, E, R> GnosisBlockExecutor<'a, E, R>
+where
+    E: Evm<DB: StateDB>,
+    R: ReceiptBuilder,
+{
+    /// Run a system call from `SYSTEM_ADDRESS` to `contract`, preserve
+    /// `SYSTEM_ADDRESS` in the resulting state diff (Nethermind: EIP-158
+    /// disabled for AuRa system calls), and commit the diff.
+    fn aura_system_call_and_commit(
+        &mut self,
+        contract: Address,
+        data: alloy_primitives::Bytes,
+    ) -> Result<revm::context::result::ExecutionResult<E::HaltReason>, E::Error> {
+        let revm::context::result::ResultAndState { result, mut state } = self
+            .evm
+            .transact_system_call(alloy_eips::eip4788::SYSTEM_ADDRESS, contract, data)?;
+        crate::gnosis::preserve_system_address_for_aura(&mut state);
+        self.evm.db_mut().commit(state);
+        Ok(result)
+    }
+
+    /// Call `getValidators()` on the validator contract, commit the result, decode
+    /// the returned address list, and seed the rolling-finality tracker. Failures
+    /// at any step are silently ignored — caller's invariant is that this only
+    /// runs in pre-merge POSDAO mode and a transient call failure should not
+    /// abort block execution.
+    fn refresh_validators_via_get_validators(
+        &mut self,
+        validator_contract: Address,
+        block_num: u64,
+        log_label: &'static str,
+    ) {
+        // getValidators() selector = 0xb7ab4db5
+        let get_validators_data = alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
+        let Ok(result) = self.aura_system_call_and_commit(validator_contract, get_validators_data)
+        else {
+            return;
+        };
+        let revm::context::result::ExecutionResult::Success { output, .. } = result else {
+            return;
+        };
+        let Ok(validators) = decode_address_array(&output.into_data()) else {
+            return;
+        };
+        tracing::info!(
+            target: "reth::gnosis",
+            block = block_num,
+            num_validators = validators.len(),
+            "{}", log_label,
+        );
+        if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
+            rf.set_validators(validators);
+        }
+    }
+}
+
+/// ABI-decode an `address[]` from `getValidators()` return data.
+/// Layout: `offset_to_array (32B BE u256) || length (32B BE u256) || addr[length]` where
+/// each address occupies 32 bytes (zero-padded high 12 bytes, address in low 20).
+/// Note: only the low 8 bytes of each 32-byte word are read; offsets/lengths
+/// above 2^64 will silently truncate (acceptable for realistic getValidators data).
+fn decode_address_array(data: &[u8]) -> Result<Vec<Address>, ()> {
+    if data.len() < 64 {
+        return Err(());
+    }
+    let offset = u64::from_be_bytes(data[24..32].try_into().map_err(|_| ())?) as usize;
+    if offset + 32 > data.len() {
+        return Err(());
+    }
+    let length =
+        u64::from_be_bytes(data[offset + 24..offset + 32].try_into().map_err(|_| ())?) as usize;
+    let mut addresses = Vec::with_capacity(length);
+    for i in 0..length {
+        let start = offset + 32 + i * 32;
+        if start + 32 > data.len() {
             return Err(());
         }
-        let offset = u64::from_be_bytes(data[24..32].try_into().map_err(|_| ())?) as usize;
-        if offset + 32 > data.len() {
-            return Err(());
+        let addr = Address::from_slice(&data[start + 12..start + 32]);
+        addresses.push(addr);
+    }
+    Ok(addresses)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_address_array;
+    use alloy_primitives::Address;
+
+    /// Build an ABI-encoded `address[]` payload for the given addresses.
+    fn encode(addresses: &[Address]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(64 + addresses.len() * 32);
+        // offset = 32 (the array starts right after the offset word)
+        let mut offset = [0u8; 32];
+        offset[31] = 32;
+        out.extend_from_slice(&offset);
+        // length
+        let mut len_word = [0u8; 32];
+        let len_be = (addresses.len() as u64).to_be_bytes();
+        len_word[24..32].copy_from_slice(&len_be);
+        out.extend_from_slice(&len_word);
+        // each address — left-padded to 32 bytes
+        for a in addresses {
+            let mut word = [0u8; 32];
+            word[12..32].copy_from_slice(a.as_slice());
+            out.extend_from_slice(&word);
         }
-        let length =
-            u64::from_be_bytes(data[offset + 24..offset + 32].try_into().map_err(|_| ())?) as usize;
-        let mut addresses = Vec::with_capacity(length);
-        for i in 0..length {
-            let start = offset + 32 + i * 32;
-            if start + 32 > data.len() {
-                return Err(());
-            }
-            let addr = Address::from_slice(&data[start + 12..start + 32]);
-            addresses.push(addr);
-        }
-        Ok(addresses)
+        out
+    }
+
+    fn addr(b: u8) -> Address {
+        Address::from([b; 20])
+    }
+
+    #[test]
+    fn decode_empty_array() {
+        let data = encode(&[]);
+        let got = decode_address_array(&data).expect("decode empty must succeed");
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn decode_single_address() {
+        let v = vec![addr(0xab)];
+        let data = encode(&v);
+        let got = decode_address_array(&data).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn decode_three_addresses() {
+        let v = vec![addr(0x01), addr(0x02), addr(0x03)];
+        let data = encode(&v);
+        let got = decode_address_array(&data).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn rejects_short_input() {
+        // Less than 64 bytes can't even contain offset + length.
+        assert!(decode_address_array(&[]).is_err());
+        assert!(decode_address_array(&[0u8; 63]).is_err());
+    }
+
+    #[test]
+    fn rejects_truncated_payload() {
+        // Claim length=2 but only one address worth of data.
+        let mut data = encode(&[addr(0x01), addr(0x02)]);
+        data.truncate(data.len() - 16);
+        assert!(decode_address_array(&data).is_err());
+    }
+
+    #[test]
+    fn rejects_offset_past_end() {
+        // Offset=1024 but data is only 64 bytes.
+        let mut data = vec![0u8; 64];
+        let mut bad_offset = [0u8; 32];
+        bad_offset[30] = 0x04; // 1024
+        data[..32].copy_from_slice(&bad_offset);
+        assert!(decode_address_array(&data).is_err());
     }
 }
 
@@ -185,34 +325,11 @@ where
                     .map(|rf| rf.validator_count() == 0)
                     .unwrap_or(false);
                 if needs_init {
-                    let get_validators_data =
-                        alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
-                    if let Ok(revm::context::result::ResultAndState { result, mut state }) =
-                        self.evm.transact_system_call(
-                            alloy_eips::eip4788::SYSTEM_ADDRESS,
-                            validator_contract,
-                            get_validators_data,
-                        )
-                    {
-                        crate::gnosis::preserve_system_address_for_aura(&mut state);
-                        self.evm.db_mut().commit(state);
-                        if let revm::context::result::ExecutionResult::Success { output, .. } =
-                            result
-                        {
-                            if let Ok(validators) = Self::decode_address_array(&output.into_data())
-                            {
-                                tracing::info!(
-                                    target: "reth::gnosis",
-                                    block = block_num,
-                                    num_validators = validators.len(),
-                                    "Initialized rolling finality via getValidators()"
-                                );
-                                if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
-                                    rf.set_validators(validators);
-                                }
-                            }
-                        }
-                    }
+                    self.refresh_validators_via_get_validators(
+                        validator_contract,
+                        block_num,
+                        "Initialized rolling finality via getValidators()",
+                    );
                 }
             }
         }
@@ -248,71 +365,33 @@ where
         // AuRa: call finalizeChange() on validator contract at epoch boundaries.
         // This must happen before any other execution in the block. Post-merge
         // PoS replaces AuRa, so this call must be skipped to match Nethermind.
-        if is_pre_merge && self.ctx.finalize_change_address.is_some() {
-            let validator_contract = self.ctx.finalize_change_address.unwrap();
-            let block_num: u64 = self.evm.block().number().to();
-            tracing::info!(
-                target: "reth::gnosis",
-                block = block_num,
-                validator = %validator_contract,
-                "Calling finalizeChange() on validator contract"
-            );
-
-            // finalizeChange() selector = 0x75286211
-            let finalize_data = alloy_primitives::Bytes::from_static(&[0x75, 0x28, 0x62, 0x11]);
-            let result = self.evm.transact_system_call(
-                alloy_eips::eip4788::SYSTEM_ADDRESS,
-                validator_contract,
-                finalize_data,
-            );
-            match result {
-                Ok(revm::context::result::ResultAndState { state, .. }) => {
-                    let mut state = state;
-                    crate::gnosis::preserve_system_address_for_aura(&mut state);
-                    self.evm.db_mut().commit(state);
-
-                    // After finalizeChange (POSDAO only), refresh the active validator
-                    // set via getValidators(). Pre-POSDAO blocks must NOT call this —
-                    // the committed system call state pollutes the state trie.
-                    if is_posdao {
-                        let get_validators_data =
-                            alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
-                        if let Ok(revm::context::result::ResultAndState {
-                            result: vr,
-                            state: mut vs,
-                        }) = self.evm.transact_system_call(
-                            alloy_eips::eip4788::SYSTEM_ADDRESS,
-                            validator_contract,
-                            get_validators_data,
-                        ) {
-                            crate::gnosis::preserve_system_address_for_aura(&mut vs);
-                            self.evm.db_mut().commit(vs);
-                            if let revm::context::result::ExecutionResult::Success {
-                                output, ..
-                            } = vr
-                            {
-                                if let Ok(validators) =
-                                    Self::decode_address_array(&output.into_data())
-                                {
-                                    tracing::info!(
-                                        target: "reth::gnosis",
-                                        block = block_num,
-                                        num_validators = validators.len(),
-                                        "Refreshed validators via getValidators() after finalizeChange"
-                                    );
-                                    if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
-                                        rf.set_validators(validators);
-                                    }
-                                }
-                            }
+        if is_pre_merge {
+            if let Some(validator_contract) = self.ctx.finalize_change_address {
+                tracing::info!(
+                    target: "reth::gnosis",
+                    block = block_num,
+                    validator = %validator_contract,
+                    "Calling finalizeChange() on validator contract"
+                );
+                // finalizeChange() selector = 0x75286211
+                let finalize_data = alloy_primitives::Bytes::from_static(&[0x75, 0x28, 0x62, 0x11]);
+                match self.aura_system_call_and_commit(validator_contract, finalize_data) {
+                    Ok(_) => {
+                        // After finalizeChange (POSDAO only), refresh the active validator
+                        // set via getValidators(). Pre-POSDAO blocks must NOT call this —
+                        // the committed system-call state pollutes the state trie.
+                        if is_posdao {
+                            self.refresh_validators_via_get_validators(
+                                validator_contract,
+                                block_num,
+                                "Refreshed validators via getValidators() after finalizeChange",
+                            );
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!(
+                    Err(e) => tracing::warn!(
                         target: "reth::gnosis",
                         "finalizeChange() call failed: {e}, continuing"
-                    );
+                    ),
                 }
             }
         }
@@ -461,7 +540,6 @@ where
             timestamp.to(),
             withdrawals,
             beneficiary,
-            is_pre_merge,
             &mut self.evm,
             &mut self.system_caller,
         )?;

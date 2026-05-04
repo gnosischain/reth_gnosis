@@ -50,7 +50,7 @@ pub(crate) fn preserve_system_address_for_aura(state: &mut EvmState) {
             storage: Default::default(),
             status: AccountStatus::Created | AccountStatus::Touched,
         });
-    tracing::debug!(
+    tracing::trace!(
         target: "reth::gnosis",
         "preserved SYSTEM_ADDRESS in system-call state (AuRa EIP-158 disable)"
     );
@@ -146,7 +146,6 @@ where
 fn apply_block_rewards_contract_call<SPEC>(
     block_rewards_contract: Address,
     coinbase: Address,
-    is_pre_merge: bool,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
     system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<(AddressMap<u128>, Vec<alloy_primitives::Log>), BlockExecutionError>
@@ -227,7 +226,6 @@ where
     // for these calls regardless of merge state, so the empty SYSTEM_ADDRESS is
     // present in the trie. Without this, state root diverges at the merge block
     // and beyond. The `is_pre_merge` parameter is kept for future divergences.
-    let _ = is_pre_merge;
     let mut state = state;
     preserve_system_address_for_aura(&mut state);
     evm.db_mut().commit(state);
@@ -264,7 +262,6 @@ pub(crate) fn apply_post_block_system_calls<SPEC>(
     block_timestamp: u64,
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
-    is_pre_merge: bool,
     evm: &mut impl Evm<DB: Database + DatabaseCommit>,
     system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<(AddressMap<u128>, Bytes, Vec<alloy_primitives::Log>), BlockExecutionError>
@@ -281,13 +278,8 @@ where
             apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm, system_caller)?;
     }
 
-    let (balance_increments, reward_logs) = apply_block_rewards_contract_call(
-        block_rewards_contract,
-        coinbase,
-        is_pre_merge,
-        evm,
-        system_caller,
-    )?;
+    let (balance_increments, reward_logs) =
+        apply_block_rewards_contract_call(block_rewards_contract, coinbase, evm, system_caller)?;
 
     Ok((balance_increments, withdrawal_requests, reward_logs))
 }

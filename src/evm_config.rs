@@ -255,41 +255,7 @@ impl GnosisEvmConfig {
     /// block itself), not at every subsequent block.
     fn compute_finalize_change_address(&self, block_number: u64) -> Option<Address> {
         let aura_config = self.chain_spec.aura_config.as_ref()?;
-
-        if block_number == 0 {
-            return aura_config.validators.contract_address_at(0);
-        }
-
-        // finalizeChange() is called when transitioning FROM a list-type validator
-        // to a contract-type validator (e.g., block 1300→1301 on Gnosis).
-        // It's NOT called when transitioning between contract types (e.g., POSDAO at 9186425).
-        // For InitiateChange events, the pending_finalize mechanism handles it.
-        let current_contract = aura_config.validators.contract_address_at(block_number)?;
-        let parent_contract = aura_config.validators.contract_address_at(block_number - 1);
-
-        if parent_contract != Some(current_contract) {
-            // Transition block itself — don't call
-            None
-        } else if block_number >= 2
-            && aura_config.validators.contract_address_at(block_number - 2)
-                != Some(current_contract)
-        {
-            // First block AFTER transition. Only call finalizeChange if the PREVIOUS
-            // validator was a list type (not a contract). Contract→contract transitions
-            // don't need finalizeChange at the Multi boundary.
-            let prev_was_list = block_number >= 2
-                && aura_config
-                    .validators
-                    .contract_address_at(block_number - 2)
-                    .is_none();
-            if prev_was_list {
-                Some(current_contract)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+        compute_finalize_change_address_from_validators(&aura_config.validators, block_number)
     }
 
     /// Sets the extra data for the block assembler.
@@ -668,5 +634,220 @@ pub struct NoopHeaderLookup;
 impl HeaderLookup for NoopHeaderLookup {
     fn header_by_hash(&self, _hash: &B256) -> Option<GnosisHeader> {
         None
+    }
+}
+
+/// Pure logic for `GnosisEvmConfig::compute_finalize_change_address`, extracted
+/// for testability. Returns `Some(contract)` if `finalizeChange()` must be invoked
+/// at `block_number` and `None` otherwise.
+fn compute_finalize_change_address_from_validators(
+    validators: &crate::aura::validators::ValidatorSet,
+    block_number: u64,
+) -> Option<Address> {
+    if block_number == 0 {
+        return validators.contract_address_at(0);
+    }
+
+    let current_contract = validators.contract_address_at(block_number)?;
+    let parent_contract = validators.contract_address_at(block_number - 1);
+
+    if parent_contract != Some(current_contract) {
+        // Transition block itself — don't call
+        None
+    } else if block_number >= 2
+        && validators.contract_address_at(block_number - 2) != Some(current_contract)
+    {
+        // First block AFTER transition. Only call finalizeChange if the PREVIOUS
+        // validator was a list type (not a contract). Contract→contract transitions
+        // don't need finalizeChange at the Multi boundary.
+        let prev_was_list =
+            block_number >= 2 && validators.contract_address_at(block_number - 2).is_none();
+        if prev_was_list {
+            Some(current_contract)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_finalize_change_address_from_validators as fc;
+    use crate::aura::validators::{ValidatorSet, ValidatorSetKind};
+    use alloy_primitives::Address;
+    use std::collections::BTreeMap;
+
+    fn addr(b: u8) -> Address {
+        Address::from([b; 20])
+    }
+
+    fn build_validators(entries: &[(u64, ValidatorSetKind)]) -> ValidatorSet {
+        let mut sets = BTreeMap::new();
+        for (block, kind) in entries {
+            sets.insert(*block, kind.clone());
+        }
+        ValidatorSet::new(sets)
+    }
+
+    #[test]
+    fn list_only_chain_returns_none_everywhere() {
+        // Pure list-type validators (no contract) — finalizeChange is never needed.
+        let v = build_validators(&[(0, ValidatorSetKind::List(vec![addr(1)]))]);
+        assert_eq!(fc(&v, 0), None);
+        assert_eq!(fc(&v, 1), None);
+        assert_eq!(fc(&v, 1000), None);
+    }
+
+    #[test]
+    fn genesis_with_contract_validator_returns_contract() {
+        // Genesis (block 0) starts with a contract validator: finalizeChange must be
+        // called at genesis to initialize the contract's view of the validator set.
+        let v = build_validators(&[(
+            0,
+            ValidatorSetKind::SafeContract {
+                address: addr(0xaa),
+            },
+        )]);
+        assert_eq!(fc(&v, 0), Some(addr(0xaa)));
+    }
+
+    #[test]
+    fn list_to_contract_transition_block_returns_none() {
+        // Transition block ITSELF returns None — Nethermind's finalizeChange runs
+        // on the FIRST block after, not at the transition boundary.
+        // Setup: list at 0, contract at 1300.
+        let v = build_validators(&[
+            (0, ValidatorSetKind::List(vec![addr(1)])),
+            (
+                1300,
+                ValidatorSetKind::SafeContract {
+                    address: addr(0xaa),
+                },
+            ),
+        ]);
+        assert_eq!(fc(&v, 1300), None);
+    }
+
+    #[test]
+    fn first_block_after_list_to_contract_transition_returns_contract() {
+        // Block 1301: parent (1300) and current (1301) both point at the same contract,
+        // grandparent (1299) was list. This is the trigger condition.
+        let v = build_validators(&[
+            (0, ValidatorSetKind::List(vec![addr(1)])),
+            (
+                1300,
+                ValidatorSetKind::SafeContract {
+                    address: addr(0xaa),
+                },
+            ),
+        ]);
+        assert_eq!(fc(&v, 1301), Some(addr(0xaa)));
+    }
+
+    #[test]
+    fn far_after_list_to_contract_transition_returns_none() {
+        // Block 1302+ should NOT trigger again — only the first post-transition block does.
+        let v = build_validators(&[
+            (0, ValidatorSetKind::List(vec![addr(1)])),
+            (
+                1300,
+                ValidatorSetKind::SafeContract {
+                    address: addr(0xaa),
+                },
+            ),
+        ]);
+        assert_eq!(fc(&v, 1302), None);
+        assert_eq!(fc(&v, 1500), None);
+        assert_eq!(fc(&v, 9_000_000), None);
+    }
+
+    #[test]
+    fn contract_to_contract_transition_returns_none() {
+        // POSDAO-style: SafeContract at 1300 → Contract at 9186425.
+        // The contract→contract transition must NOT call finalizeChange (rolling-finality
+        // / pending_finalize is responsible). This is the tricky case spelled out in
+        // `compute_finalize_change_address` comments.
+        let v = build_validators(&[
+            (0, ValidatorSetKind::List(vec![addr(1)])),
+            (
+                1300,
+                ValidatorSetKind::SafeContract {
+                    address: addr(0xaa),
+                },
+            ),
+            (
+                9_186_425,
+                ValidatorSetKind::Contract {
+                    address: addr(0xbb),
+                },
+            ),
+        ]);
+        assert_eq!(fc(&v, 9_186_425), None, "transition block itself");
+        assert_eq!(
+            fc(&v, 9_186_426),
+            None,
+            "first block after contract→contract — must NOT trigger"
+        );
+        assert_eq!(fc(&v, 9_186_500), None);
+    }
+
+    #[test]
+    fn contract_to_contract_first_after_grandparent_was_contract_returns_none() {
+        // Without the list at the start: pure contract→contract chain.
+        // Need a starting set; use SafeContract at 0 then Contract at 100.
+        let v = build_validators(&[
+            (
+                0,
+                ValidatorSetKind::SafeContract {
+                    address: addr(0xaa),
+                },
+            ),
+            (
+                100,
+                ValidatorSetKind::Contract {
+                    address: addr(0xbb),
+                },
+            ),
+        ]);
+        // Block 0: SafeContract → returns its contract.
+        assert_eq!(fc(&v, 0), Some(addr(0xaa)));
+        // Block 100: transition itself.
+        assert_eq!(fc(&v, 100), None);
+        // Block 101: post-transition, but grandparent (99) was *also* a contract.
+        // So `prev_was_list` is false → None.
+        assert_eq!(fc(&v, 101), None);
+    }
+
+    #[test]
+    fn block_one_after_genesis_contract_returns_none() {
+        // Genesis 0 = SafeContract; block 1 has parent = same contract, no
+        // grandparent transition → returns None.
+        let v = build_validators(&[(
+            0,
+            ValidatorSetKind::SafeContract {
+                address: addr(0xaa),
+            },
+        )]);
+        assert_eq!(fc(&v, 1), None);
+        assert_eq!(fc(&v, 2), None);
+    }
+
+    #[test]
+    fn block_inside_list_range_returns_none() {
+        // Pure list region — no contract, no finalizeChange anywhere.
+        let v = build_validators(&[
+            (0, ValidatorSetKind::List(vec![addr(1)])),
+            (
+                5_000_000,
+                ValidatorSetKind::SafeContract {
+                    address: addr(0xaa),
+                },
+            ),
+        ]);
+        assert_eq!(fc(&v, 1), None);
+        assert_eq!(fc(&v, 1000), None);
+        assert_eq!(fc(&v, 4_999_999), None);
     }
 }

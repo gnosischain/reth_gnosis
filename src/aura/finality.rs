@@ -179,7 +179,7 @@ impl RollingFinality {
         // Log pending transitions that haven't been finalized yet
         if !self.pending_transitions.is_empty() && block_number % 5 == 0 {
             for (pblock, _) in &self.pending_transitions {
-                tracing::debug!(
+                tracing::trace!(
                     target: "reth::gnosis",
                     pending_block = pblock,
                     current_block = block_number,
@@ -242,5 +242,149 @@ impl RollingFinality {
     /// Get the current validator count.
     pub fn validator_count(&self) -> usize {
         self.validators.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(b: u8) -> Address {
+        Address::from([b; 20])
+    }
+
+    /// Build a sealed tracker (no auto-discover) with the given validators.
+    fn sealed_tracker(validators: Vec<Address>) -> RollingFinality {
+        let mut rf = RollingFinality::new(validators.clone());
+        rf.set_validators(validators);
+        rf
+    }
+
+    #[test]
+    fn push_no_finalize_below_majority() {
+        let mut rf = sealed_tracker(vec![addr(1), addr(2), addr(3), addr(4)]);
+        let f1 = rf.push(1, addr(1));
+        let f2 = rf.push(2, addr(2));
+        assert!(f1.is_empty() && f2.is_empty(), "no finalization at 2/4");
+    }
+
+    #[test]
+    fn push_finalizes_when_majority_unique_signers() {
+        let mut rf = sealed_tracker(vec![addr(1), addr(2), addr(3), addr(4)]);
+        rf.push(1, addr(1));
+        rf.push(2, addr(2));
+        let finalized = rf.push(3, addr(3));
+        assert_eq!(finalized.len(), 1, "block 1 should now finalize");
+        assert_eq!(finalized[0], (1, addr(1)));
+    }
+
+    #[test]
+    fn push_does_not_double_count_same_signer() {
+        let mut rf = sealed_tracker(vec![addr(1), addr(2), addr(3), addr(4)]);
+        let _ = rf.push(1, addr(1));
+        let _ = rf.push(2, addr(1));
+        let f = rf.push(3, addr(1));
+        assert!(
+            f.is_empty(),
+            "single signer cannot finalize 4-validator set"
+        );
+    }
+
+    #[test]
+    fn push_unknown_signer_skipped_in_sealed_set() {
+        let mut rf = sealed_tracker(vec![addr(1), addr(2), addr(3), addr(4)]);
+        rf.push(1, addr(1));
+        rf.push(2, addr(2));
+        let f = rf.push(3, addr(0xff));
+        assert!(f.is_empty(), "unknown signer must not finalize");
+        let f = rf.push(4, addr(3));
+        assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn push_auto_discovers_until_sealed() {
+        let mut rf = RollingFinality::new(Vec::new());
+        rf.push(1, addr(1));
+        rf.push(2, addr(2));
+        assert_eq!(rf.validator_count(), 2, "should auto-discover");
+        rf.set_validators(vec![addr(1), addr(2)]);
+        rf.push(3, addr(0xff));
+        assert_eq!(rf.validator_count(), 2, "must not grow after seal");
+    }
+
+    #[test]
+    fn add_pending_transition_then_finalize_schedules_finalize_change() {
+        let mut rf = sealed_tracker(vec![addr(1), addr(2), addr(3), addr(4)]);
+        let validator_contract = addr(0xaa);
+        rf.push(1, addr(1));
+        rf.add_pending_transition(1, validator_contract);
+        rf.push(2, addr(2));
+        let _f = rf.push(3, addr(3));
+        // After block 3, block 1 is finalized → finalizeChange scheduled at 3+1.
+        assert_eq!(rf.take_finalize_change(4), Some(validator_contract));
+        assert_eq!(rf.take_finalize_change(4), None);
+    }
+
+    #[test]
+    fn take_finalize_change_blocks_before_target() {
+        let mut rf = sealed_tracker(vec![addr(1)]);
+        rf.set_immediate_finalize(100, addr(0xaa));
+        assert_eq!(rf.take_finalize_change(50), None);
+        assert_eq!(rf.take_finalize_change(99), None);
+        assert_eq!(rf.take_finalize_change(100), Some(addr(0xaa)));
+    }
+
+    #[test]
+    fn take_finalize_change_clears_window() {
+        let mut rf = sealed_tracker(vec![addr(1), addr(2), addr(3), addr(4)]);
+        rf.push(1, addr(1));
+        rf.push(2, addr(2));
+        rf.set_immediate_finalize(3, addr(0xaa));
+        let _ = rf.take_finalize_change(3);
+        let f = rf.push(3, addr(1));
+        assert!(f.is_empty(), "window should have been cleared");
+    }
+
+    #[test]
+    fn set_immediate_finalize_overrides_pending() {
+        let mut rf = sealed_tracker(vec![addr(1)]);
+        rf.add_pending_transition(10, addr(0xaa));
+        rf.set_immediate_finalize(5, addr(0xbb));
+        assert_eq!(rf.take_finalize_change(5), Some(addr(0xbb)));
+    }
+
+    #[test]
+    fn validators_sealed_once_set_remains_sealed_after_clear() {
+        let mut rf = RollingFinality::new(Vec::new());
+        rf.push(1, addr(1));
+        rf.set_validators(vec![addr(1), addr(2), addr(3)]);
+        rf.set_immediate_finalize(2, addr(0xaa));
+        let _ = rf.take_finalize_change(2);
+        rf.push(3, addr(0xff));
+        assert_eq!(rf.validator_count(), 3);
+    }
+
+    #[test]
+    fn persist_and_load_round_trip() {
+        // The disk-persisted state must round-trip exactly: pending_transitions
+        // and finalize_change_at are the only fields that affect future
+        // finalizeChange scheduling, and they must survive a restart.
+        let dir = std::env::temp_dir().join(format!(
+            "reth-gnosis-aura-persist-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+
+        {
+            let mut rf = RollingFinality::new(vec![addr(1), addr(2)]).with_datadir(dir.clone());
+            rf.add_pending_transition(42, addr(0xaa));
+            rf.set_immediate_finalize(50, addr(0xbb));
+        }
+
+        let rf2 = RollingFinality::new(vec![addr(1), addr(2)]).with_datadir(dir.clone());
+        assert_eq!(rf2.pending_transitions.get(&42), Some(&addr(0xaa)));
+        assert_eq!(rf2.finalize_change_at, Some((50, addr(0xbb))));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

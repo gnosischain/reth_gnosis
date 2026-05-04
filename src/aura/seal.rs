@@ -45,21 +45,6 @@ pub fn compute_seal_hash(header: &GnosisHeader) -> B256 {
     if let Some(ref base_fee) = header.base_fee_per_gas {
         U256::from(*base_fee).encode(&mut buf);
     }
-    if let Some(ref root) = header.withdrawals_root {
-        root.encode(&mut buf);
-    }
-    if let Some(ref blob_gas_used) = header.blob_gas_used {
-        U256::from(*blob_gas_used).encode(&mut buf);
-    }
-    if let Some(ref excess_blob_gas) = header.excess_blob_gas {
-        U256::from(*excess_blob_gas).encode(&mut buf);
-    }
-    if let Some(ref parent_beacon_block_root) = header.parent_beacon_block_root {
-        parent_beacon_block_root.encode(&mut buf);
-    }
-    if let Some(ref requests_hash) = header.requests_hash {
-        requests_hash.encode(&mut buf);
-    }
 
     keccak256(&buf)
 }
@@ -82,21 +67,6 @@ fn seal_hash_payload_length(header: &GnosisHeader) -> usize {
     // No aura_step, no aura_seal
     if let Some(base_fee) = header.base_fee_per_gas {
         length += U256::from(base_fee).length();
-    }
-    if let Some(root) = header.withdrawals_root {
-        length += root.length();
-    }
-    if let Some(blob_gas_used) = header.blob_gas_used {
-        length += U256::from(blob_gas_used).length();
-    }
-    if let Some(excess_blob_gas) = header.excess_blob_gas {
-        length += U256::from(excess_blob_gas).length();
-    }
-    if let Some(parent_beacon_block_root) = header.parent_beacon_block_root {
-        length += parent_beacon_block_root.length();
-    }
-    if let Some(requests_hash) = header.requests_hash {
-        length += requests_hash.length();
     }
     length
 }
@@ -154,4 +124,138 @@ pub fn calculate_aura_difficulty(parent_step: u64, current_step: u64) -> U256 {
     max_u128
         .wrapping_add(U256::from(parent_step))
         .wrapping_sub(U256::from(current_step))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, FixedBytes};
+
+    fn u128_max() -> U256 {
+        U256::MAX >> 128
+    }
+
+    #[test]
+    fn calculate_aura_difficulty_step_diff_one() {
+        // Standard sequential block: current = parent + 1.
+        // diff = (2^128 - 1) + parent - current = U128_MAX - 1
+        let d = calculate_aura_difficulty(100, 101);
+        assert_eq!(d, u128_max() - U256::from(1));
+    }
+
+    #[test]
+    fn calculate_aura_difficulty_step_diff_large() {
+        // Skipped steps: current = parent + 10.
+        let d = calculate_aura_difficulty(1000, 1010);
+        assert_eq!(d, u128_max() - U256::from(10));
+    }
+
+    #[test]
+    fn calculate_aura_difficulty_equal_steps() {
+        // current == parent: diff = U128_MAX exactly.
+        let d = calculate_aura_difficulty(42, 42);
+        assert_eq!(d, u128_max());
+    }
+
+    #[test]
+    fn calculate_aura_difficulty_chiado_block_100k() {
+        // Real chiado block 100000: aura_step = 332890827.
+        // Block 99999's step would be 332890826 (sequential).
+        // header.difficulty = 0xfffffffffffffffffffffffffffffffe = U128_MAX - 1.
+        let d = calculate_aura_difficulty(332890826, 332890827);
+        let expected = U256::from_be_slice(
+            &hex::decode("00000000000000000000000000000000fffffffffffffffffffffffffffffffe")
+                .unwrap(),
+        );
+        assert_eq!(d, expected);
+    }
+
+    /// Construct a `GnosisHeader` matching chiado block 100000 (verified post-merge
+    /// against `https://gnosis-chiado-rpc.publicnode.com/`). Used as a golden vector
+    /// for `recover_seal_author`: changing the RLP field order or set in
+    /// `compute_seal_hash` will flip the recovered signer.
+    fn chiado_block_100k_header() -> GnosisHeader {
+        GnosisHeader {
+            parent_hash: b256!(
+                "0xcec0385ac2b2aa8557e2ad9318ddb419a70d53eac388aa06d5ec028e2b2bf05d"
+            ),
+            ommers_hash: b256!(
+                "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"
+            ),
+            beneficiary: address!("0x60f1cf46b42df059b98acf67c1dd7771b100e124"),
+            state_root: b256!(
+                "0x60c5a1ea18ad828b702c4c493614e0b9524b084a75af5a901debc1bc6434129a"
+            ),
+            transactions_root: b256!(
+                "0xb84545c21d2a61526520416f217e9dd2f2bbf47c1c9e8b14a26cada11ce3e380"
+            ),
+            receipts_root: b256!(
+                "0xd51661186f3e633f6e1719d9bb2197c9400e13099b133b145ce2f45c97b53023"
+            ),
+            logs_bloom: bloom!(
+                "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            ),
+            difficulty: U256::from_be_bytes(alloy_primitives::B256::from_slice(
+                &hex::decode(
+                    "00000000000000000000000000000000fffffffffffffffffffffffffffffffe",
+                )
+                .unwrap(),
+            ).0),
+            number: 100000,
+            gas_limit: 0xbebc20,
+            gas_used: 0x1302a,
+            timestamp: 0x63358df7,
+            extra_data: bytes!("0x4e65746865726d696e64"),
+            mix_hash: None,
+            nonce: None,
+            aura_step: Some(U256::from(332890827u64)),
+            aura_seal: Some(fixed_bytes!(
+                "0xf6d76ffe58e0ee70301cdf4365d9c1f5ee6de675211e19d8ce23b522ecd940913ac52b0acfece44a38086d783a89fe061e21b1f6ec8860bdbba4bb26a77ace4600"
+            )),
+            base_fee_per_gas: Some(7),
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            parent_beacon_block_root: None,
+            requests_hash: None,
+            block_access_list_hash: None,
+            slot_number: None,
+        }
+    }
+
+    #[test]
+    fn recover_seal_author_chiado_block_100k_golden() {
+        // Golden vector: AuRa seal in chiado block 100000 must recover to the
+        // beneficiary (in AuRa the proposer == miner == seal signer).
+        // If `compute_seal_hash` changes its RLP field order or includes/excludes
+        // the wrong fields, this test catches it permanently.
+        let header = chiado_block_100k_header();
+        let signer = recover_seal_author(&header).expect("recovery must succeed");
+        assert_eq!(signer, header.beneficiary);
+    }
+
+    #[test]
+    fn recover_seal_author_missing_seal() {
+        let mut header = chiado_block_100k_header();
+        header.aura_seal = None;
+        match recover_seal_author(&header) {
+            Err(SealError::MissingSeal) => {}
+            other => panic!("expected MissingSeal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn recover_seal_author_corrupted_seal_recovers_different_address() {
+        // Mutating any byte of the seal flips the recovered address (or fails recovery).
+        // Either outcome must not silently match the original signer.
+        let mut header = chiado_block_100k_header();
+        let mut seal = *header.aura_seal.unwrap();
+        seal[0] ^= 0x01;
+        header.aura_seal = Some(FixedBytes::from(seal));
+        let original_beneficiary = header.beneficiary;
+        match recover_seal_author(&header) {
+            Ok(addr) => assert_ne!(addr, original_beneficiary),
+            Err(_) => {} // recovery failure is also acceptable
+        }
+    }
 }
