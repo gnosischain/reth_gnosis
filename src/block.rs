@@ -167,12 +167,16 @@ where
         // Initialize rolling finality tracker if needed (POSDAO only).
         let block_num = self.evm.block().number().to::<u64>();
         let is_posdao = self.ctx.posdao_transition.is_some_and(|t| block_num >= t);
+        // AuRa validator system calls (init via getValidators, finalizeChange) only
+        // happen pre-merge. Post-merge the chain runs PoS — touching the validator
+        // contract would diverge from Nethermind which stops these calls at merge.
+        let is_pre_merge = !self.spec.is_paris_active_at_block(block_num);
 
         // Initialize validator set via getValidators() if empty.
         // The transact_system_call result IS committed — it's a view function so
         // the only state changes are cache entries (nonce/beneficiary cleaned up by
         // transact_system_call's cleanup logic).
-        if is_posdao {
+        if is_pre_merge && is_posdao {
             if let Some(validator_contract) = self.ctx.validator_contract {
                 let needs_init = self
                     .ctx
@@ -181,16 +185,16 @@ where
                     .map(|rf| rf.validator_count() == 0)
                     .unwrap_or(false);
                 if needs_init {
-                    self.evm.db_mut().set_state_clear_flag(false);
                     let get_validators_data =
                         alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
-                    if let Ok(revm::context::result::ResultAndState { result, state }) =
+                    if let Ok(revm::context::result::ResultAndState { result, mut state }) =
                         self.evm.transact_system_call(
                             alloy_eips::eip4788::SYSTEM_ADDRESS,
                             validator_contract,
                             get_validators_data,
                         )
                     {
+                        crate::gnosis::preserve_system_address_for_aura(&mut state);
                         self.evm.db_mut().commit(state);
                         if let revm::context::result::ExecutionResult::Success { output, .. } =
                             result
@@ -209,18 +213,9 @@ where
                             }
                         }
                     }
-                    let state_clear_flag = self.spec.is_spurious_dragon_active_at_block(block_num);
-                    self.evm.db_mut().set_state_clear_flag(state_clear_flag);
                 }
             }
         }
-
-        // Set state clear flag if the block is after the Spurious Dragon hardfork.
-        let state_clear_flag = self
-            .spec
-            .is_spurious_dragon_active_at_block(self.evm.block().number().saturating_to());
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
 
         // Only apply bytecode rewrites at the hardfork activation block
         // (active in current block but NOT active in parent block)
@@ -251,8 +246,10 @@ where
         }
 
         // AuRa: call finalizeChange() on validator contract at epoch boundaries.
-        // This must happen before any other execution in the block.
-        if let Some(validator_contract) = self.ctx.finalize_change_address {
+        // This must happen before any other execution in the block. Post-merge
+        // PoS replaces AuRa, so this call must be skipped to match Nethermind.
+        if is_pre_merge && self.ctx.finalize_change_address.is_some() {
+            let validator_contract = self.ctx.finalize_change_address.unwrap();
             let block_num: u64 = self.evm.block().number().to();
             tracing::info!(
                 target: "reth::gnosis",
@@ -260,8 +257,6 @@ where
                 validator = %validator_contract,
                 "Calling finalizeChange() on validator contract"
             );
-            // Nethermind: EIP-158 (state clear) is DISABLED for AuRa system calls.
-            self.evm.db_mut().set_state_clear_flag(false);
 
             // finalizeChange() selector = 0x75286211
             let finalize_data = alloy_primitives::Bytes::from_static(&[0x75, 0x28, 0x62, 0x11]);
@@ -272,6 +267,8 @@ where
             );
             match result {
                 Ok(revm::context::result::ResultAndState { state, .. }) => {
+                    let mut state = state;
+                    crate::gnosis::preserve_system_address_for_aura(&mut state);
                     self.evm.db_mut().commit(state);
 
                     // After finalizeChange (POSDAO only), refresh the active validator
@@ -282,12 +279,13 @@ where
                             alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
                         if let Ok(revm::context::result::ResultAndState {
                             result: vr,
-                            state: vs,
+                            state: mut vs,
                         }) = self.evm.transact_system_call(
                             alloy_eips::eip4788::SYSTEM_ADDRESS,
                             validator_contract,
                             get_validators_data,
                         ) {
+                            crate::gnosis::preserve_system_address_for_aura(&mut vs);
                             self.evm.db_mut().commit(vs);
                             if let revm::context::result::ExecutionResult::Success {
                                 output, ..
@@ -317,12 +315,6 @@ where
                     );
                 }
             }
-
-            // Restore state clear flag
-            let state_clear_flag = self
-                .spec
-                .is_spurious_dragon_active_at_block(self.evm.block().number().saturating_to());
-            self.evm.db_mut().set_state_clear_flag(state_clear_flag);
         }
 
         self.system_caller
@@ -452,14 +444,16 @@ where
         };
 
         // Gnosis-specific // Start
-        // Nethermind: EIP-158 (state clear) is DISABLED for AuRa system calls.
-        self.evm.db_mut().set_state_clear_flag(false);
-
         // Use the AuRa-specific reward contract if available, otherwise fall back to default
         let reward_address = self
             .ctx
             .block_rewards_override
             .unwrap_or(self.block_rewards_address);
+        // Pre-merge AuRa blocks need SYSTEM_ADDRESS preserved through system calls
+        // (Nethermind: EIP-158 disabled for AuRa system calls). Post-merge follows
+        // standard EIP-158 semantics.
+        let block_num: u64 = self.evm.block().number().to();
+        let is_pre_merge = !self.spec.is_paris_active_at_block(block_num);
         let (balance_increments, _, reward_logs) = apply_post_block_system_calls(
             &self.spec,
             reward_address,
@@ -467,6 +461,7 @@ where
             timestamp.to(),
             withdrawals,
             beneficiary,
+            is_pre_merge,
             &mut self.evm,
             &mut self.system_caller,
         )?;
@@ -477,55 +472,59 @@ where
         // user transaction receipts.
         // InitiateChange event topic: keccak256("InitiateChange(bytes32,address[])")
         // = 0x55252fa6eee4741b4e24a74a70e9c11fd2c2281df8d6ea13126ff845f7825c89
-        if let Some(validator_contract) = self.ctx.validator_contract {
-            let initiate_change_topic = alloy_primitives::b256!(
-                "55252fa6eee4741b4e24a74a70e9c11fd2c2281df8d6ea13126ff845f7825c89"
-            );
+        // AuRa-only: InitiateChange handling stops at the merge.
+        if is_pre_merge {
+            if let Some(validator_contract) = self.ctx.validator_contract {
+                let initiate_change_topic = alloy_primitives::b256!(
+                    "55252fa6eee4741b4e24a74a70e9c11fd2c2281df8d6ea13126ff845f7825c89"
+                );
 
-            // Check user transaction receipts
-            let has_initiate_change_in_receipts = self.receipts.iter().any(|receipt| {
-                receipt.logs().iter().any(|log| {
+                // Check user transaction receipts
+                let has_initiate_change_in_receipts = self.receipts.iter().any(|receipt| {
+                    receipt.logs().iter().any(|log| {
+                        log.address == validator_contract
+                            && log.topics().first() == Some(&initiate_change_topic)
+                    })
+                });
+
+                // Check reward system call logs (POSDAO: reward() -> validator contract -> InitiateChange)
+                let has_initiate_change_in_reward = reward_logs.iter().any(|log| {
                     log.address == validator_contract
                         && log.topics().first() == Some(&initiate_change_topic)
-                })
-            });
+                });
 
-            // Check reward system call logs (POSDAO: reward() -> validator contract -> InitiateChange)
-            let has_initiate_change_in_reward = reward_logs.iter().any(|log| {
-                log.address == validator_contract
-                    && log.topics().first() == Some(&initiate_change_topic)
-            });
+                if has_initiate_change_in_receipts || has_initiate_change_in_reward {
+                    let block_num: u64 = self.evm.block().number().to();
+                    let is_posdao = self.ctx.posdao_transition.is_some_and(|t| block_num >= t);
 
-            if has_initiate_change_in_receipts || has_initiate_change_in_reward {
-                let block_num: u64 = self.evm.block().number().to();
-                let is_posdao = self.ctx.posdao_transition.is_some_and(|t| block_num >= t);
-
-                if is_posdao {
-                    tracing::info!(
-                        target: "reth::gnosis",
-                        block = block_num,
-                        validator = %validator_contract,
-                        "InitiateChange event detected (POSDAO), adding to rolling finality"
-                    );
-                    if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
-                        rf.add_pending_transition(block_num, validator_contract);
-                    }
-                } else {
-                    tracing::info!(
-                        target: "reth::gnosis",
-                        block = block_num,
-                        validator = %validator_contract,
-                        "InitiateChange event detected (pre-POSDAO), immediate finalize at N+1"
-                    );
-                    if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
-                        rf.set_immediate_finalize(block_num + 1, validator_contract);
+                    if is_posdao {
+                        tracing::info!(
+                            target: "reth::gnosis",
+                            block = block_num,
+                            validator = %validator_contract,
+                            "InitiateChange event detected (POSDAO), adding to rolling finality"
+                        );
+                        if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
+                            rf.add_pending_transition(block_num, validator_contract);
+                        }
+                    } else {
+                        tracing::info!(
+                            target: "reth::gnosis",
+                            block = block_num,
+                            validator = %validator_contract,
+                            "InitiateChange event detected (pre-POSDAO), immediate finalize at N+1"
+                        );
+                        if let Ok(mut rf) = self.ctx.rolling_finality.lock() {
+                            rf.set_immediate_finalize(block_num + 1, validator_contract);
+                        }
                     }
                 }
             }
         }
 
         // Push this block's signer into the rolling finality tracker (POSDAO only).
-        {
+        // AuRa-only: stop tracking signers once PoS takes over.
+        if is_pre_merge {
             let block_num: u64 = self.evm.block().number().to();
             let is_posdao = self.ctx.posdao_transition.is_some_and(|t| block_num >= t);
             if is_posdao {
@@ -536,11 +535,6 @@ where
             }
         }
 
-        // Restore state clear flag for subsequent operations
-        let state_clear_flag = self
-            .spec
-            .is_spurious_dragon_active_at_block(self.evm.block().number().saturating_to());
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
         // Gnosis-specific // End
 
         // increment balances

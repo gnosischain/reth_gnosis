@@ -63,6 +63,14 @@ fn create_execution_ctx(parent_timestamp: u64) -> GnosisBlockExecutionCtx<'stati
         parent_beacon_block_root: None,
         withdrawals: None,
         parent_timestamp,
+        finalize_change_address: None,
+        validator_contract: None,
+        rolling_finality: std::sync::Arc::new(std::sync::Mutex::new(
+            reth_gnosis::aura::finality::RollingFinality::new(Vec::new()),
+        )),
+        posdao_transition: None,
+        block_rewards_override: None,
+        aura_bytecode_rewrites: None,
     }
 }
 

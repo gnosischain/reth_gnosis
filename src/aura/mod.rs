@@ -118,13 +118,7 @@ impl FullConsensus<GnosisNodePrimitives> for GnosisConsensus {
         result: &BlockExecutionResult<<GnosisNodePrimitives as NodePrimitives>::Receipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
     ) -> Result<(), ConsensusError> {
-        validate_block_post_execution(
-            block,
-            &*self.chain_spec,
-            &result.receipts,
-            &result.requests,
-            receipt_root_bloom,
-        )
+        validate_block_post_execution(block, &*self.chain_spec, result, receipt_root_bloom)
     }
 }
 
@@ -140,9 +134,7 @@ fn validate_aura_header(
             block = header.number,
             "Validation FAILED: missing AuRa step"
         );
-        return Err(ConsensusError::Other(
-            "missing AuRa step in pre-merge header".into(),
-        ));
+        return Err(ConsensusError::msg("missing AuRa step in pre-merge header"));
     }
 
     // AuRa seal must be present
@@ -152,9 +144,7 @@ fn validate_aura_header(
             block = header.number,
             "Validation FAILED: missing AuRa seal"
         );
-        return Err(ConsensusError::Other(
-            "missing AuRa seal in pre-merge header".into(),
-        ));
+        return Err(ConsensusError::msg("missing AuRa seal in pre-merge header"));
     }
 
     // Ommers must be empty in AuRa
@@ -209,36 +199,30 @@ fn validate_aura_header_against_parent(
     let current_step = header
         .header()
         .aura_step
-        .ok_or_else(|| ConsensusError::Other("missing AuRa step".into()))?;
+        .ok_or_else(|| ConsensusError::msg("missing AuRa step"))?;
 
     if parent.header().is_pre_merge() {
         let parent_step = parent
             .header()
             .aura_step
-            .ok_or_else(|| ConsensusError::Other("missing parent AuRa step".into()))?;
+            .ok_or_else(|| ConsensusError::msg("missing parent AuRa step"))?;
 
         if current_step <= parent_step {
-            return Err(ConsensusError::Other(
-                format!(
-                    "AuRa step must be monotonically increasing: current={}, parent={}",
-                    current_step, parent_step
-                )
-                .into(),
-            ));
+            return Err(ConsensusError::msg(format!(
+                "AuRa step must be monotonically increasing: current={}, parent={}",
+                current_step, parent_step
+            )));
         }
 
         // Verify AuRa difficulty
         let expected_difficulty =
             calculate_aura_difficulty(parent_step.to::<u64>(), current_step.to::<u64>());
         if header.header().difficulty != expected_difficulty {
-            return Err(ConsensusError::Other(
-                format!(
-                    "AuRa difficulty mismatch: expected={}, got={}",
-                    expected_difficulty,
-                    header.header().difficulty
-                )
-                .into(),
-            ));
+            return Err(ConsensusError::msg(format!(
+                "AuRa difficulty mismatch: expected={}, got={}",
+                expected_difficulty,
+                header.header().difficulty
+            )));
         }
     }
 
@@ -247,9 +231,8 @@ fn validate_aura_header_against_parent(
         let block_number = header.header().number;
 
         // Recover signer from seal
-        let signer = recover_seal_author(header.header()).map_err(|e| {
-            ConsensusError::Other(format!("AuRa seal verification failed: {}", e).into())
-        })?;
+        let signer = recover_seal_author(header.header())
+            .map_err(|e| ConsensusError::msg(format!("AuRa seal verification failed: {}", e)))?;
 
         // Get expected validators. The proposer for block N is determined by
         // the validator set active at block N-1 (the parent), because the new
@@ -272,13 +255,10 @@ fn validate_aura_header_against_parent(
                     num_validators = validators.len(),
                     "Validation FAILED: AuRa proposer mismatch"
                 );
-                return Err(ConsensusError::Other(
-                    format!(
-                        "AuRa proposer mismatch: expected={}, got={} (step={}, block={})",
-                        expected_proposer, signer, step, block_number
-                    )
-                    .into(),
-                ));
+                return Err(ConsensusError::msg(format!(
+                    "AuRa proposer mismatch: expected={}, got={} (step={}, block={})",
+                    expected_proposer, signer, step, block_number
+                )));
             }
         }
         // For contract-based validators, we skip proposer verification in consensus

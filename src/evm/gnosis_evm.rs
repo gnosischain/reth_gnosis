@@ -106,8 +106,8 @@ where
 
             if !is_free {
                 let basefee = block.basefee() as u128;
-                let gas_used =
-                    (exec_result.gas().total_gas_spent() - exec_result.gas().refunded() as u64) as u128;
+                let gas_used = (exec_result.gas().total_gas_spent()
+                    - exec_result.gas().refunded() as u64) as u128;
 
                 let mut collector_account =
                     journal.load_account_with_code_mut(self.fee_collector)?;
@@ -451,7 +451,7 @@ mod sstore_eip1283_impl {
         if !context
             .interpreter
             .gas
-            .record_cost(context.host.gas_params().sstore_static_gas())
+            .record_regular_cost(context.host.gas_params().sstore_static_gas())
         {
             context.interpreter.halt(InstructionResult::OutOfGas);
             return;
@@ -470,7 +470,7 @@ mod sstore_eip1283_impl {
             &state_load.data,
             state_load.is_cold,
         );
-        if !context.interpreter.gas.record_cost(dynamic_gas) {
+        if !context.interpreter.gas.record_regular_cost(dynamic_gas) {
             context.interpreter.halt(InstructionResult::OutOfGas);
             return;
         }

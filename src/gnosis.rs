@@ -21,8 +21,40 @@ use revm::{
     context::result::{ExecutionResult, Output, ResultAndState},
     DatabaseCommit,
 };
-use revm_state::{Account, AccountInfo};
+use revm_state::{Account, AccountInfo, AccountStatus, EvmState};
 use std::fmt::Display;
+
+/// Inject SYSTEM_ADDRESS into a system-call result state as a preserved
+/// empty account, matching Nethermind's behavior of disabling EIP-158 for
+/// AuRa system calls. Without this, the DB's post-EIP-161 commit semantics
+/// would prune the empty SYSTEM_ADDRESS, causing state-root divergence
+/// from Nethermind for pre-merge AuRa blocks.
+///
+/// The `Created` flag routes the account through `newly_created` in the
+/// state cache, which preserves it regardless of emptiness.
+pub(crate) fn preserve_system_address_for_aura(state: &mut EvmState) {
+    let system_addr = alloy_eips::eip4788::SYSTEM_ADDRESS;
+    state
+        .entry(system_addr)
+        .and_modify(|acc| {
+            // If revm already returned the SYSTEM_ADDRESS as touched-but-empty,
+            // the DB's apply_account_state would route it through
+            // `touch_empty_eip161` and remove it. Adding `Created` reroutes it
+            // through `newly_created`, which preserves the empty account.
+            acc.status |= AccountStatus::Created | AccountStatus::Touched;
+        })
+        .or_insert_with(|| Account {
+            info: AccountInfo::default(),
+            original_info: Box::new(AccountInfo::default()),
+            transaction_id: 0,
+            storage: Default::default(),
+            status: AccountStatus::Created | AccountStatus::Touched,
+        });
+    tracing::debug!(
+        target: "reth::gnosis",
+        "preserved SYSTEM_ADDRESS in system-call state (AuRa EIP-158 disable)"
+    );
+}
 
 // Codegen from https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
 sol!(
@@ -107,10 +139,14 @@ where
 
 /// Applies the post-block call to the block rewards POSDAO contract, using the given block,
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
+///
+/// `is_pre_merge`: when true, preserve SYSTEM_ADDRESS in committed state to match
+/// Nethermind's "EIP-158 disabled for AuRa system calls" semantics.
 #[inline]
 fn apply_block_rewards_contract_call<SPEC>(
     block_rewards_contract: Address,
     coinbase: Address,
+    is_pre_merge: bool,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
     system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<(AddressMap<u128>, Vec<alloy_primitives::Log>), BlockExecutionError>
@@ -186,6 +222,14 @@ where
         );
     });
 
+    // Always preserve SYSTEM_ADDRESS in committed state for the block reward
+    // system call: Nethermind's `SystemTransactionProcessor` keeps EIP-158 disabled
+    // for these calls regardless of merge state, so the empty SYSTEM_ADDRESS is
+    // present in the trie. Without this, state root diverges at the merge block
+    // and beyond. The `is_pre_merge` parameter is kept for future divergences.
+    let _ = is_pre_merge;
+    let mut state = state;
+    preserve_system_address_for_aura(&mut state);
     evm.db_mut().commit(state);
 
     let mut balance_increments = AddressMap::default();
@@ -220,6 +264,7 @@ pub(crate) fn apply_post_block_system_calls<SPEC>(
     block_timestamp: u64,
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
+    is_pre_merge: bool,
     evm: &mut impl Evm<DB: Database + DatabaseCommit>,
     system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<(AddressMap<u128>, Bytes, Vec<alloy_primitives::Log>), BlockExecutionError>
@@ -236,8 +281,13 @@ where
             apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm, system_caller)?;
     }
 
-    let (balance_increments, reward_logs) =
-        apply_block_rewards_contract_call(block_rewards_contract, coinbase, evm, system_caller)?;
+    let (balance_increments, reward_logs) = apply_block_rewards_contract_call(
+        block_rewards_contract,
+        coinbase,
+        is_pre_merge,
+        evm,
+        system_caller,
+    )?;
 
     Ok((balance_increments, withdrawal_requests, reward_logs))
 }
@@ -249,7 +299,7 @@ pub fn rewrite_aura_bytecodes(
     rewrites: &std::collections::BTreeMap<Address, alloy_primitives::Bytes>,
 ) {
     use revm_state::{AccountStatus, Bytecode};
-    let mut state: HashMap<Address, Account> = Default::default();
+    let mut state: AddressMap<Account> = Default::default();
     for (addr, code) in rewrites {
         let original_account_info = evm
             .db_mut()
