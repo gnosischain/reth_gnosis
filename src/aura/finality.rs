@@ -177,8 +177,8 @@ impl RollingFinality {
         }
 
         // Log pending transitions that haven't been finalized yet
-        if !self.pending_transitions.is_empty() && block_number % 5 == 0 {
-            for (pblock, _) in &self.pending_transitions {
+        if !self.pending_transitions.is_empty() && block_number.is_multiple_of(5) {
+            for pblock in self.pending_transitions.keys() {
                 tracing::trace!(
                     target: "reth::gnosis",
                     pending_block = pblock,

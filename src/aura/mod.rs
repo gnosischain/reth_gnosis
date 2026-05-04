@@ -160,20 +160,19 @@ fn validate_aura_header(
     // Note: skip base fee standalone validation for now — it's checked against parent
 
     // Withdrawals root must not be present pre-Shanghai
-    if !chain_spec.is_shanghai_active_at_timestamp(header.timestamp) {
-        if header.withdrawals_root.is_some() {
-            return Err(ConsensusError::WithdrawalsRootUnexpected);
-        }
+    if !chain_spec.is_shanghai_active_at_timestamp(header.timestamp)
+        && header.withdrawals_root.is_some()
+    {
+        return Err(ConsensusError::WithdrawalsRootUnexpected);
     }
 
     // Blob fields must not be present pre-Cancun
-    if !chain_spec.is_cancun_active_at_timestamp(header.timestamp) {
-        if header.blob_gas_used.is_some()
+    if !chain_spec.is_cancun_active_at_timestamp(header.timestamp)
+        && (header.blob_gas_used.is_some()
             || header.excess_blob_gas.is_some()
-            || header.parent_beacon_block_root.is_some()
-        {
-            return Err(ConsensusError::BlobGasUsedUnexpected);
-        }
+            || header.parent_beacon_block_root.is_some())
+    {
+        return Err(ConsensusError::BlobGasUsedUnexpected);
     }
 
     Ok(())
