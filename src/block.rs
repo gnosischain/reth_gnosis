@@ -126,25 +126,24 @@ where
     }
 }
 
-/// AuRa system-call helpers. Live in their own impl block because they need
+/// System-call helpers. Live in their own impl block because they need
 /// the `E: Evm<DB: StateDB>` bound that the constructor / decoder above don't.
 impl<'a, E, R> GnosisBlockExecutor<'a, E, R>
 where
     E: Evm<DB: StateDB>,
     R: ReceiptBuilder,
 {
-    /// Run a system call from `SYSTEM_ADDRESS` to `contract`, preserve
-    /// `SYSTEM_ADDRESS` in the resulting state diff (Nethermind: EIP-158
-    /// disabled for AuRa system calls), and commit the diff.
-    fn aura_system_call_and_commit(
+    /// Run a system call from `SYSTEM_ADDRESS` to `contract` and commit the
+    /// resulting state diff. SYSTEM_ADDRESS preservation is handled inside
+    /// `evm/factory.rs::transact_system_call`.
+    fn system_call_and_commit(
         &mut self,
         contract: Address,
         data: alloy_primitives::Bytes,
     ) -> Result<revm::context::result::ExecutionResult<E::HaltReason>, E::Error> {
-        let revm::context::result::ResultAndState { result, mut state } = self
+        let revm::context::result::ResultAndState { result, state } = self
             .evm
             .transact_system_call(alloy_eips::eip4788::SYSTEM_ADDRESS, contract, data)?;
-        crate::gnosis::preserve_system_address_for_aura(&mut state);
         self.evm.db_mut().commit(state);
         Ok(result)
     }
@@ -162,7 +161,7 @@ where
     ) {
         // getValidators() selector = 0xb7ab4db5
         let get_validators_data = alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
-        let Ok(result) = self.aura_system_call_and_commit(validator_contract, get_validators_data)
+        let Ok(result) = self.system_call_and_commit(validator_contract, get_validators_data)
         else {
             return;
         };
@@ -375,7 +374,7 @@ where
                 );
                 // finalizeChange() selector = 0x75286211
                 let finalize_data = alloy_primitives::Bytes::from_static(&[0x75, 0x28, 0x62, 0x11]);
-                match self.aura_system_call_and_commit(validator_contract, finalize_data) {
+                match self.system_call_and_commit(validator_contract, finalize_data) {
                     Ok(_) => {
                         // After finalizeChange (POSDAO only), refresh the active validator
                         // set via getValidators(). Pre-POSDAO blocks must NOT call this —

@@ -198,36 +198,33 @@ where
         // We're doing this state cleanup to make sure that changeset only includes the changed
         // contract storage.
         if let Ok(res) = &mut res {
-            // Nethermind: system account (SystemUser) is created if not exists and
-            // persists in state. EIP-158 is disabled so empty accounts are NOT removed.
-            // We ensure the system account is in the state with Created status if it
-            // was loaded as not existing.
-            let should_create = res
-                .state
-                .get(&alloy_eips::eip4788::SYSTEM_ADDRESS)
-                .is_none_or(|system_account| {
-                    system_account.status
-                        == (AccountStatus::Touched | AccountStatus::LoadedAsNotExisting)
-                });
-
-            if should_create {
-                let account = Account {
+            // SYSTEM_ADDRESS handling — single source of truth for the
+            // "EIP-158 disabled for system calls" rule.
+            //
+            // Mirrors gnosischain/go-ethereum's `core/state/statedb.go::Finalise`,
+            // which exempts SYSTEM_ADDRESS from the empty-account purge applied
+            // to every other account. The mechanism here is equivalent: by
+            // marking SYSTEM_ADDRESS with `Created | Touched` we route it
+            // through `apply_account_state::newly_created` in the state cache
+            // (preserved as an empty account) instead of `touch_empty_eip161`
+            // (pruned).
+            //
+            // Also: undo any nonce bump from revm's
+            // `validate_against_state_and_deduct_caller` so that committed
+            // state never reflects a pseudo-tx from the system address.
+            res.state
+                .entry(alloy_eips::eip4788::SYSTEM_ADDRESS)
+                .and_modify(|acc| {
+                    acc.info = *acc.original_info.clone();
+                    acc.status |= AccountStatus::Created | AccountStatus::Touched;
+                })
+                .or_insert_with(|| Account {
                     info: AccountInfo::default(),
-                    storage: Default::default(),
-                    status: AccountStatus::Touched | AccountStatus::Created,
                     original_info: Box::new(AccountInfo::default()),
                     transaction_id: 0,
-                };
-                res.state
-                    .insert(alloy_eips::eip4788::SYSTEM_ADDRESS, account);
-            } else if let Some(system_account) =
-                res.state.get_mut(&alloy_eips::eip4788::SYSTEM_ADDRESS)
-            {
-                // System account already exists — undo nonce bump from revm's
-                // validate_against_state_and_deduct_caller. Nethermind's
-                // SystemTransactionProcessor doesn't increment nonce.
-                system_account.info = *system_account.original_info.clone();
-            }
+                    storage: Default::default(),
+                    status: AccountStatus::Created | AccountStatus::Touched,
+                });
 
             res.state.remove(&self.block.beneficiary);
             // Remove fee collector from system call state — GnosisEvmHandler touches it

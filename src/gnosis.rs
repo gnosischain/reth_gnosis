@@ -15,46 +15,13 @@ use reth_evm::{
     execute::{BlockExecutionError, InternalBlockExecutionError},
     Evm,
 };
-use revm::context::Block;
 use revm::Database;
 use revm::{
     context::result::{ExecutionResult, Output, ResultAndState},
     DatabaseCommit,
 };
-use revm_state::{Account, AccountInfo, AccountStatus, EvmState};
+use revm_state::{Account, AccountInfo};
 use std::fmt::Display;
-
-/// Inject SYSTEM_ADDRESS into a system-call result state as a preserved
-/// empty account, matching Nethermind's behavior of disabling EIP-158 for
-/// AuRa system calls. Without this, the DB's post-EIP-161 commit semantics
-/// would prune the empty SYSTEM_ADDRESS, causing state-root divergence
-/// from Nethermind for pre-merge AuRa blocks.
-///
-/// The `Created` flag routes the account through `newly_created` in the
-/// state cache, which preserves it regardless of emptiness.
-pub(crate) fn preserve_system_address_for_aura(state: &mut EvmState) {
-    let system_addr = alloy_eips::eip4788::SYSTEM_ADDRESS;
-    state
-        .entry(system_addr)
-        .and_modify(|acc| {
-            // If revm already returned the SYSTEM_ADDRESS as touched-but-empty,
-            // the DB's apply_account_state would route it through
-            // `touch_empty_eip161` and remove it. Adding `Created` reroutes it
-            // through `newly_created`, which preserves the empty account.
-            acc.status |= AccountStatus::Created | AccountStatus::Touched;
-        })
-        .or_insert_with(|| Account {
-            info: AccountInfo::default(),
-            original_info: Box::new(AccountInfo::default()),
-            transaction_id: 0,
-            storage: Default::default(),
-            status: AccountStatus::Created | AccountStatus::Touched,
-        });
-    tracing::trace!(
-        target: "reth::gnosis",
-        "preserved SYSTEM_ADDRESS in system-call state (AuRa EIP-158 disable)"
-    );
-}
 
 // Codegen from https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
 sol!(
@@ -90,7 +57,7 @@ where
     // TODO: Only do the call post-merge
     // TODO: Should this call be made for the genesis block?
 
-    let ResultAndState { result, mut state } = match evm.transact_system_call(
+    let ResultAndState { result, state } = match evm.transact_system_call(
         alloy_eips::eip4788::SYSTEM_ADDRESS,
         withdrawal_contract_address,
         executeSystemWithdrawalsCall {
@@ -113,9 +80,8 @@ where
 
     // TODO: Should check the execution is successful? Is an Ok from transact() enough?
 
-    // Clean-up post system tx context
-    state.remove(&alloy_eips::eip4788::SYSTEM_ADDRESS);
-    state.remove(&evm.block().beneficiary());
+    // SYSTEM_ADDRESS and beneficiary are already pruned from the system-call
+    // diff by `evm/factory.rs::transact_system_call`; no extra cleanup here.
 
     system_caller.invoke_hook_with(|hook| {
         hook.on_state(
@@ -221,13 +187,8 @@ where
         );
     });
 
-    // Always preserve SYSTEM_ADDRESS in committed state for the block reward
-    // system call: Nethermind's `SystemTransactionProcessor` keeps EIP-158 disabled
-    // for these calls regardless of merge state, so the empty SYSTEM_ADDRESS is
-    // present in the trie. Without this, state root diverges at the merge block
-    // and beyond. The `is_pre_merge` parameter is kept for future divergences.
-    let mut state = state;
-    preserve_system_address_for_aura(&mut state);
+    // SYSTEM_ADDRESS preservation for system calls is handled in
+    // `evm/factory.rs::transact_system_call`; no per-call-site logic needed.
     evm.db_mut().commit(state);
 
     let mut balance_increments = AddressMap::default();
