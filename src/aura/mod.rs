@@ -48,15 +48,31 @@ impl GnosisConsensus {
         }
     }
 
-    /// Returns true if the header is a pre-merge AuRa header.
-    fn is_aura_header(header: &GnosisHeader) -> bool {
-        header.is_pre_merge()
+    /// Returns `true` if `header` belongs to the pre-merge AuRa phase, `false`
+    /// if it belongs to the post-merge Beacon phase. The chain spec is the
+    /// authoritative source of phase.
+    ///
+    /// Also rejects headers whose structure (`aura_step` / `aura_seal` presence)
+    /// disagrees with the spec-derived phase. A peer that crafts a header with
+    /// AuRa fields at a post-merge block number would otherwise be routed into
+    /// AuRa validation while execution treats it as PoS — that mismatch is
+    /// caught here.
+    fn is_aura_block(&self, header: &GnosisHeader) -> Result<bool, ConsensusError> {
+        let pre_merge_per_spec = !self.chain_spec.is_paris_active_at_block(header.number);
+        let pre_merge_per_header = header.is_pre_merge();
+        if pre_merge_per_spec != pre_merge_per_header {
+            return Err(ConsensusError::msg(format!(
+                "header phase mismatch at block {}: chain-spec pre_merge={}, header pre_merge={}",
+                header.number, pre_merge_per_spec, pre_merge_per_header
+            )));
+        }
+        Ok(pre_merge_per_spec)
     }
 }
 
 impl HeaderValidator<GnosisHeader> for GnosisConsensus {
     fn validate_header(&self, header: &SealedHeader<GnosisHeader>) -> Result<(), ConsensusError> {
-        if Self::is_aura_header(header.header()) {
+        if self.is_aura_block(header.header())? {
             validate_aura_header(header.header(), &self.chain_spec)
         } else {
             self.inner.validate_header(header)
@@ -68,13 +84,18 @@ impl HeaderValidator<GnosisHeader> for GnosisConsensus {
         header: &SealedHeader<GnosisHeader>,
         parent: &SealedHeader<GnosisHeader>,
     ) -> Result<(), ConsensusError> {
-        if Self::is_aura_header(header.header()) {
-            validate_aura_header_against_parent(
-                header,
-                parent,
-                &self.chain_spec,
-                self.aura_config.as_ref(),
-            )
+        if self.is_aura_block(header.header())? {
+            // We're validating an AuRa block, so aura_config MUST be present in
+            // the chain spec. A chain with pre-merge phase but no `aura` section
+            // in genesis is a misconfiguration; refuse rather than silently
+            // skipping seal + proposer verification.
+            let aura_config = self.aura_config.as_ref().ok_or_else(|| {
+                ConsensusError::msg(
+                    "AuRa config missing for chain with pre-merge phase: \
+                     genesis must contain an `aura` section",
+                )
+            })?;
+            validate_aura_header_against_parent(header, parent, &self.chain_spec, aura_config)
         } else {
             self.inner.validate_header_against_parent(header, parent)
         }
@@ -94,7 +115,7 @@ where
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
-        if Self::is_aura_header(block.header()) {
+        if self.is_aura_block(block.header())? {
             // For pre-merge AuRa blocks, validate ommers are empty and tx root matches.
             // Skip hardfork-specific post-merge checks.
             validate_body_against_header(block.body(), block.header())?;
@@ -123,30 +144,15 @@ impl FullConsensus<GnosisNodePrimitives> for GnosisConsensus {
 }
 
 /// Validate a pre-merge AuRa header in isolation.
+///
+/// Caller invariant (`GnosisConsensus::validate_header` via `is_aura_block`):
+/// `header.aura_step` and `header.aura_seal` are both `Some` — otherwise
+/// `is_aura_block` would have rejected the header for spec/structure
+/// mismatch before reaching this function. No need to re-check here.
 fn validate_aura_header(
     header: &GnosisHeader,
     chain_spec: &GnosisChainSpec,
 ) -> Result<(), ConsensusError> {
-    // AuRa step must be present
-    if header.aura_step.is_none() {
-        tracing::warn!(
-            target: "reth::gnosis",
-            block = header.number,
-            "Validation FAILED: missing AuRa step"
-        );
-        return Err(ConsensusError::msg("missing AuRa step in pre-merge header"));
-    }
-
-    // AuRa seal must be present
-    if header.aura_seal.is_none() {
-        tracing::warn!(
-            target: "reth::gnosis",
-            block = header.number,
-            "Validation FAILED: missing AuRa seal"
-        );
-        return Err(ConsensusError::msg("missing AuRa seal in pre-merge header"));
-    }
-
     // Ommers must be empty in AuRa
     if header.ommers_hash != EMPTY_OMMER_ROOT_HASH {
         return Err(ConsensusError::TheMergeOmmerRootIsNotEmpty);
@@ -183,7 +189,7 @@ fn validate_aura_header_against_parent(
     header: &SealedHeader<GnosisHeader>,
     parent: &SealedHeader<GnosisHeader>,
     chain_spec: &GnosisChainSpec,
-    aura_config: Option<&AuraConfig>,
+    aura_config: &AuraConfig,
 ) -> Result<(), ConsensusError> {
     // Standard parent validations
     validate_against_parent_hash_number(header.header(), parent)?;
@@ -194,74 +200,87 @@ fn validate_aura_header_against_parent(
 
     // Skip gas limit ramp check — AuRa networks may use gas limit contracts
 
-    // AuRa step must be monotonically increasing
+    // AuRa step must be present and fit in u64. A peer-supplied U256 step that
+    // exceeds u64 must NOT panic the node; reject the header instead.
     let current_step = header
         .header()
         .aura_step
         .ok_or_else(|| ConsensusError::msg("missing AuRa step"))?;
+    let current_step: u64 = current_step
+        .try_into()
+        .map_err(|_| ConsensusError::msg(format!("AuRa step exceeds u64: {current_step}")))?;
 
-    if parent.header().is_pre_merge() {
-        let parent_step = parent
-            .header()
-            .aura_step
-            .ok_or_else(|| ConsensusError::msg("missing parent AuRa step"))?;
+    // The caller (`GnosisConsensus::validate_header_against_parent`) only
+    // dispatches here when `is_aura_block(child)` returns `true`, i.e. when
+    // the child is pre-merge per the chain spec. The phase is monotonic by
+    // block number, so a valid pre-merge child has a pre-merge parent —
+    // structurally this means `parent.aura_step` is `Some`. We unwrap with
+    // `ok_or_else` rather than guarding on `parent.is_pre_merge()` so that a
+    // malformed parent (peer-crafted with `aura_step = None`) is rejected
+    // instead of silently skipping step + difficulty checks.
+    let parent_step = parent
+        .header()
+        .aura_step
+        .ok_or_else(|| ConsensusError::msg("missing parent AuRa step"))?;
+    let parent_step: u64 = parent_step
+        .try_into()
+        .map_err(|_| ConsensusError::msg(format!("AuRa parent step exceeds u64: {parent_step}")))?;
 
-        if current_step <= parent_step {
-            return Err(ConsensusError::msg(format!(
-                "AuRa step must be monotonically increasing: current={}, parent={}",
-                current_step, parent_step
-            )));
-        }
-
-        // Verify AuRa difficulty
-        let expected_difficulty =
-            calculate_aura_difficulty(parent_step.to::<u64>(), current_step.to::<u64>());
-        if header.header().difficulty != expected_difficulty {
-            return Err(ConsensusError::msg(format!(
-                "AuRa difficulty mismatch: expected={}, got={}",
-                expected_difficulty,
-                header.header().difficulty
-            )));
-        }
+    if current_step <= parent_step {
+        return Err(ConsensusError::msg(format!(
+            "AuRa step must be monotonically increasing: current={current_step}, parent={parent_step}",
+        )));
     }
 
-    // Verify seal signature if we have AuRa config
-    if let Some(config) = aura_config {
-        let block_number = header.header().number;
+    // Verify AuRa difficulty.
+    let expected_difficulty = calculate_aura_difficulty(parent_step, current_step);
+    if header.header().difficulty != expected_difficulty {
+        return Err(ConsensusError::msg(format!(
+            "AuRa difficulty mismatch: expected={}, got={}",
+            expected_difficulty,
+            header.header().difficulty
+        )));
+    }
 
-        // Recover signer from seal
-        let signer = recover_seal_author(header.header())
-            .map_err(|e| ConsensusError::msg(format!("AuRa seal verification failed: {}", e)))?;
+    // Seal signature + proposer check. Always runs in pre-merge AuRa phase —
+    // the caller guarantees a valid `aura_config` is present.
+    let block_number = header.header().number;
 
-        // Get expected validators. The proposer for block N is determined by
-        // the validator set active at block N-1 (the parent), because the new
-        // set at a multi-transition block only applies to blocks AFTER it.
-        let proposer_lookup_block = block_number.saturating_sub(1);
-        if let Some(validators) = config
-            .validators
-            .try_get_list_validators(proposer_lookup_block)
-        {
-            let step = current_step.to::<u64>();
-            let expected_proposer = ValidatorSet::expected_proposer(step, validators);
+    // Recover signer from seal
+    let signer = recover_seal_author(header.header())
+        .map_err(|e| ConsensusError::msg(format!("AuRa seal verification failed: {}", e)))?;
 
-            if signer != expected_proposer {
-                tracing::warn!(
-                    target: "reth::gnosis",
-                    block = block_number,
-                    expected = %expected_proposer,
-                    got = %signer,
-                    step = step,
-                    num_validators = validators.len(),
-                    "Validation FAILED: AuRa proposer mismatch"
-                );
-                return Err(ConsensusError::msg(format!(
-                    "AuRa proposer mismatch: expected={}, got={} (step={}, block={})",
-                    expected_proposer, signer, step, block_number
-                )));
-            }
+    // Get expected validators. The proposer for block N is determined by
+    // the validator set active at block N-1 (the parent), because the new
+    // set at a multi-transition block only applies to blocks AFTER it.
+    let proposer_lookup_block = block_number.saturating_sub(1);
+    if let Some(validators) = aura_config
+        .validators
+        .try_get_list_validators(proposer_lookup_block)
+    {
+        // current_step is already validated to fit in u64 above.
+        let step = current_step;
+        let expected_proposer =
+            ValidatorSet::expected_proposer(step, validators).ok_or_else(|| {
+                ConsensusError::msg("AuRa validator list is empty for proposer lookup")
+            })?;
+
+        if signer != expected_proposer {
+            return Err(ConsensusError::msg(format!(
+                "AuRa proposer mismatch: expected={}, got={} (step={}, block={})",
+                expected_proposer, signer, step, block_number
+            )));
         }
-        // For contract-based validators, we skip proposer verification in consensus
-        // (it would require EVM state access which isn't available here)
+    } else {
+        // Contract-based validator set: proposer check is deferred to execution
+        // (resolving the active validator list requires EVM state access, which
+        // isn't available at consensus-validation time). Log so a chainspec
+        // misconfig that flips a List into a Contract here is at least visible.
+        tracing::debug!(
+            target: "reth::gnosis",
+            block = block_number,
+            "AuRa proposer check deferred to execution: contract-based validator set"
+        );
     }
 
     Ok(())

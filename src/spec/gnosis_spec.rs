@@ -9,11 +9,11 @@ use crate::{
 };
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
-use derive_more::{Constructor, Deref, From, Into};
+use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, ChainHardforks, ChainSpec,
-    ChainSpecBuilder, DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks,
-    ForkCondition, ForkFilter, ForkFilterKey, ForkHash, ForkId, Hardfork, Hardforks, Head,
+    DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks, ForkCondition, ForkFilter,
+    ForkFilterKey, ForkHash, ForkId, Hardfork, Hardforks, Head,
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_ethereum_forks::hardfork;
@@ -79,18 +79,10 @@ hardfork!(
     /// When building a list of hardforks for a chain, it's still expected to mix with
     /// [`EthereumHardfork`].
     GnosisHardfork {
-        ConstantinopleFix,
         POSDAOActivation,
         BalancerFork,
     }
 );
-
-/// Chain spec builder for gnosis chain.
-#[derive(Debug, Default, From)]
-pub struct GnosisChainSpecBuilder {
-    /// [`ChainSpecBuilder`]
-    _inner: ChainSpecBuilder,
-}
 
 #[derive(Debug, Clone, Default, Into, Constructor, PartialEq, Eq)]
 pub struct BalancerHardforkConfig {
@@ -409,14 +401,12 @@ impl From<Genesis> for GnosisChainSpec {
             genesis.config.extra_fields.get("balancerHardforkBytecodes"),
         );
 
-        // Parse AuRa config if present
-        let aura_config = genesis.config.extra_fields.get("aura").and_then(|v| {
+        // `aura` is optional (devnets / post-merge-since-genesis), but if
+        // present it must parse — silently disabling pre-merge consensus is
+        // a misconfig that must surface at load, not mid-sync.
+        let aura_config = genesis.config.extra_fields.get("aura").map(|v| {
             crate::aura::config::AuraConfig::from_json_value(v)
-                .map_err(|e| {
-                    tracing::warn!("Failed to parse AuRa config: {}", e);
-                    e
-                })
-                .ok()
+                .unwrap_or_else(|e| panic!("malformed `aura` section in genesis: {e}"))
         });
 
         // Time-based hardforks

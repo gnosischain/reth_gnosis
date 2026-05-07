@@ -5,6 +5,11 @@ use std::path::{Path, PathBuf};
 
 const FINALITY_STATE_FILE: &str = "aura_finality_state.json";
 
+/// Cadence (in blocks) for trace-logging unfinalized pending transitions.
+/// Logging on every block would be too noisy during sync; once every N blocks
+/// gives enough visibility to debug stuck transitions without flooding logs.
+const PENDING_TRANSITIONS_LOG_INTERVAL: u64 = 5;
+
 /// Persisted subset of rolling finality state that must survive restarts.
 /// Only the fields needed to correctly schedule finalizeChange() calls.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -21,6 +26,12 @@ struct PersistedFinalityState {
 ///
 /// When a finalized block has a pending InitiateChange event, the
 /// finalizeChange() system call should be triggered at the next block.
+///
+/// **Append-only invariant**: blocks must be pushed in monotonically increasing
+/// order. There is no reorg-rollback path — orphaned blocks linger in `headers`
+/// / `sign_count` and would shift the finality threshold. This is safe for the
+/// AuRa pre-merge replay use case (frozen historical chain, no reorgs) but
+/// would be unsafe under any reorg-capable execution path.
 #[derive(Debug, Clone)]
 pub struct RollingFinality {
     /// Current validator set (addresses authorized to sign blocks).
@@ -129,8 +140,23 @@ impl RollingFinality {
                 // This happens during initial sync when execution starts mid-chain.
                 self.validators.push(signer);
             } else {
-                // Unknown signer — push to queue but don't count for finality
-                self.headers.push_back((block_number, signer));
+                // Sealed set + unknown signer: this is a sign that our local
+                // validator-set view is stale (missed `getValidators()` refresh,
+                // chain reorg, or chainspec misconfig). Drop the entry entirely
+                // — neither incrementing `sign_count` (would inflate finality
+                // threshold) nor pushing to `headers` (would later be popped
+                // as falsely "finalized" when real validators trigger the
+                // threshold, with `sign_count` untouched silently and the
+                // block's pending `InitiateChange` transition consumed
+                // erroneously).
+                tracing::warn!(
+                    target: "reth::gnosis",
+                    block = block_number,
+                    %signer,
+                    validator_count = self.validators.len(),
+                    "AuRa rolling-finality: signer not in sealed validator set, ignoring \
+                     (likely stale set — getValidators() refresh expected)"
+                );
                 return Vec::new();
             }
         }
@@ -176,8 +202,12 @@ impl RollingFinality {
             }
         }
 
-        // Log pending transitions that haven't been finalized yet
-        if !self.pending_transitions.is_empty() && block_number.is_multiple_of(5) {
+        // Log pending transitions that haven't been finalized yet.
+        // `% N == 0` reads more directly than `is_multiple_of(N)` here.
+        #[allow(clippy::manual_is_multiple_of)]
+        if !self.pending_transitions.is_empty()
+            && block_number % PENDING_TRANSITIONS_LOG_INTERVAL == 0
+        {
             for pblock in self.pending_transitions.keys() {
                 tracing::trace!(
                     target: "reth::gnosis",
@@ -299,6 +329,36 @@ mod tests {
         assert!(f.is_empty(), "unknown signer must not finalize");
         let f = rf.push(4, addr(3));
         assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn push_unknown_signer_does_not_get_falsely_finalized_later() {
+        // Regression: previously the unknown signer's (block, addr) was pushed
+        // to `headers` without incrementing `sign_count`. When real validators
+        // later triggered the majority threshold, the unknown entry would be
+        // popped and *returned as finalized* — silently consuming any pending
+        // InitiateChange transition for that block. Now we drop the unknown
+        // signer entirely, so it never appears in any finalized batch.
+        let mut rf = sealed_tracker(vec![addr(1), addr(2), addr(3), addr(4)]);
+
+        // Block 1: unknown signer — must NOT enter the headers queue.
+        let _ = rf.push(1, addr(0xff));
+
+        // Blocks 2-4: three real validators. With validator_count=4,
+        // `sign_count.len()*2 > 4` requires 3 unique known signers; finalization
+        // fires on block 4. The first popped entry must be block 2 (the first
+        // *known* signer's block), NOT block 1 (the unknown signer's block).
+        rf.push(2, addr(1));
+        rf.push(3, addr(2));
+        let finalized = rf.push(4, addr(3));
+
+        assert_eq!(finalized.len(), 1, "exactly one block finalized");
+        assert_eq!(
+            finalized[0],
+            (2, addr(1)),
+            "block 2 (first known signer) finalized; block 1 (unknown) was dropped, \
+             so it must not appear in the finalized batch"
+        );
     }
 
     #[test]

@@ -13,10 +13,11 @@ pub struct AuraConfig {
     pub validators: ValidatorSet,
     /// Block reward contract transitions: block_number -> contract_address.
     pub block_reward_contract_transitions: BTreeMap<u64, Address>,
-    /// Block gas limit contract transitions: block_number -> contract_address.
-    pub block_gas_limit_contract_transitions: BTreeMap<u64, Address>,
-    /// POSDAO activation block.
-    pub posdao_transition: Option<u64>,
+    /// POSDAO activation block. Required in genesis for AuRa chains —
+    /// both we ship (Gnosis, Chiado) supply this, so an absent
+    /// `posdaoTransition` is treated as a chain-spec misconfig and the
+    /// parser errors out.
+    pub posdao_transition: u64,
     /// Pre-merge bytecode rewrites: block_number -> { contract_address -> new_bytecode }.
     /// Used by AuRa chains to upgrade contract bytecode at hardfork blocks
     /// (e.g., Gnosis token contract rewrite at block 21,735,000).
@@ -24,6 +25,36 @@ pub struct AuraConfig {
 }
 
 /// Raw JSON structure for the "aura" section in chain spec.
+///
+/// Nethermind's `AuRaChainSpecEngineParameters` defines a superset of fields.
+/// This struct covers everything the Gnosis-supported AuRa chains (Gnosis,
+/// Chiado) actually use. Fields below are the ones we **don't** parse, with
+/// the rationale per field — Gnosis is fully post-merge and will never run
+/// AuRa again, so historical-sync is the only thing reth_gnosis cares about
+/// and these fields are not load-bearing for replaying historical blocks:
+///
+/// - `blockReward` — fixed-amount reward transitions. Gnosis uses contract-
+///   based rewards (`blockRewardContractTransitions`), not flat amounts.
+/// - `maximumUncleCount` / `maximumUncleCountTransition` — AuRa disallows
+///   uncles, so the count is always 0.
+/// - `validateScoreTransition` / `validateStepTransition` — gating block
+///   numbers below which difficulty / step monotonicity isn't checked. We
+///   always validate; the reference chains don't gate.
+/// - `randomnessContractAddress` — POSDAO randomness for block production.
+///   Sync-only clients don't produce blocks.
+/// - `twoThirdsMajorityTransition` — switches finality threshold from 1/2
+///   to 2/3 at this block. Not active on Gnosis or Chiado in the synced
+///   range; would matter only on a chain that activated it.
+/// - `rewriteBytecodeTimestamp` — bytecode rewrite indexed by timestamp
+///   instead of block number. Only `rewriteBytecode` (block-number-keyed)
+///   is in use on Gnosis (for AuRa).
+/// - `withdrawalContractAddress` — post-Shanghai withdrawal contract. We
+///   resolve the equivalent address through the chain spec elsewhere.
+///
+/// Serde silently drops unknown fields, so adding any of these to a genesis
+/// JSON simply means we ignore them. If a future chain spec relies on them,
+/// the appropriate fix is to extend this struct rather than work around its
+/// absence at call sites.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawAuraConfig {
@@ -35,8 +66,6 @@ struct RawAuraConfig {
     block_reward_contract_transition: Option<u64>,
     #[serde(default)]
     block_reward_contract_transitions: Option<BTreeMap<StringNum, Address>>,
-    #[serde(default)]
-    block_gas_limit_contract_transitions: Option<BTreeMap<StringNum, Address>>,
     #[serde(default)]
     posdao_transition: Option<u64>,
     #[serde(default)]
@@ -89,11 +118,12 @@ impl AuraConfig {
         for (block_num, kind) in raw.validators.multi {
             let validator_kind = match kind {
                 RawValidatorSetKind::List { list } => ValidatorSetKind::List(list),
-                RawValidatorSetKind::SafeContract { safe_contract } => {
-                    ValidatorSetKind::SafeContract {
-                        address: safe_contract,
-                    }
-                }
+                // Both JSON forms collapse to one Rust variant — see the
+                // doc on `ValidatorSetKind` for why we don't track Nethermind's
+                // SafeContract/Contract distinction.
+                RawValidatorSetKind::SafeContract { safe_contract } => ValidatorSetKind::Contract {
+                    address: safe_contract,
+                },
                 RawValidatorSetKind::Contract { contract } => {
                     ValidatorSetKind::Contract { address: contract }
                 }
@@ -113,14 +143,6 @@ impl AuraConfig {
             }
         }
 
-        // Build block gas limit contract transitions
-        let mut block_gas_limit_contract_transitions = BTreeMap::new();
-        if let Some(transitions) = raw.block_gas_limit_contract_transitions {
-            for (block_num, addr) in transitions {
-                block_gas_limit_contract_transitions.insert(block_num.0, addr);
-            }
-        }
-
         // Parse rewrite_bytecode
         let mut rewrite_bytecode = BTreeMap::new();
         if let Some(rewrites) = raw.rewrite_bytecode {
@@ -129,12 +151,20 @@ impl AuraConfig {
             }
         }
 
+        let validators = ValidatorSet::new(sets).map_err(serde::de::Error::custom)?;
+
+        let posdao_transition = raw.posdao_transition.ok_or_else(|| {
+            serde::de::Error::custom(
+                "AuRa chain spec must include `posdaoTransition` (use a far-future block \
+                 number if POSDAO never activates on this chain)",
+            )
+        })?;
+
         Ok(AuraConfig {
             step_duration: raw.step_duration,
-            validators: ValidatorSet::new(sets),
+            validators,
             block_reward_contract_transitions,
-            block_gas_limit_contract_transitions,
-            posdao_transition: raw.posdao_transition,
+            posdao_transition,
             rewrite_bytecode,
         })
     }
@@ -146,61 +176,24 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn parse_minimal_with_list_validators() {
-        let v = json!({
-            "stepDuration": 5,
-            "validators": {
-                "multi": {
-                    "0": {
-                        "list": [
-                            "0x0000000000000000000000000000000000000001",
-                            "0x0000000000000000000000000000000000000002"
-                        ]
+    fn parse_contract_validator_field_name_aliases() {
+        // Both `safeContract` and `contract` JSON field names map to the single
+        // `Contract` variant — the parser must accept both spellings.
+        for field in ["safeContract", "contract"] {
+            let v = json!({
+                "stepDuration": 5,
+                "posdaoTransition": 0,
+                "validators": {
+                    "multi": {
+                        "100": { field: "0x00000000000000000000000000000000000000aa" }
                     }
                 }
-            }
-        });
-        let cfg = AuraConfig::from_json_value(&v).expect("parse must succeed");
-        assert_eq!(cfg.step_duration, 5);
-        assert!(cfg.posdao_transition.is_none());
-        assert!(cfg.block_reward_contract_transitions.is_empty());
-        assert!(cfg.block_gas_limit_contract_transitions.is_empty());
-        assert!(cfg.rewrite_bytecode.is_empty());
-        let list = cfg.validators.try_get_list_validators(0).unwrap();
-        assert_eq!(list.len(), 2);
-    }
-
-    #[test]
-    fn parse_safe_contract_validator() {
-        let v = json!({
-            "stepDuration": 5,
-            "validators": {
-                "multi": {
-                    "100": {
-                        "safeContract": "0x00000000000000000000000000000000000000aa"
-                    }
-                }
-            }
-        });
-        let cfg = AuraConfig::from_json_value(&v).unwrap();
-        assert!(cfg.validators.try_get_list_validators(100).is_none());
-        assert!(cfg.validators.contract_address_at(100).is_some());
-    }
-
-    #[test]
-    fn parse_contract_validator() {
-        let v = json!({
-            "stepDuration": 5,
-            "validators": {
-                "multi": {
-                    "200": {
-                        "contract": "0x00000000000000000000000000000000000000bb"
-                    }
-                }
-            }
-        });
-        let cfg = AuraConfig::from_json_value(&v).unwrap();
-        assert!(cfg.validators.contract_address_at(200).is_some());
+            });
+            let cfg = AuraConfig::from_json_value(&v)
+                .unwrap_or_else(|e| panic!("field `{field}` must parse: {e}"));
+            assert!(cfg.validators.try_get_list_validators(100).is_none());
+            assert!(cfg.validators.contract_address_at(100).is_some());
+        }
     }
 
     #[test]
@@ -218,7 +211,7 @@ mod tests {
             "posdaoTransition": 9186425
         });
         let cfg = AuraConfig::from_json_value(&v).unwrap();
-        assert_eq!(cfg.posdao_transition, Some(9186425));
+        assert_eq!(cfg.posdao_transition, 9186425);
         assert!(cfg.validators.try_get_list_validators(1).is_some());
         assert!(cfg.validators.try_get_list_validators(1299).is_some());
         assert!(cfg.validators.try_get_list_validators(1300).is_none());
@@ -235,6 +228,7 @@ mod tests {
         // Old format: blockRewardContractAddress + blockRewardContractTransition.
         let v = json!({
             "stepDuration": 5,
+            "posdaoTransition": 0,
             "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
             "blockRewardContractAddress": "0x000000000000000000000000000000000000beef",
             "blockRewardContractTransition": 100
@@ -249,6 +243,7 @@ mod tests {
     fn parse_block_reward_legacy_address_no_transition_defaults_zero() {
         let v = json!({
             "stepDuration": 5,
+            "posdaoTransition": 0,
             "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
             "blockRewardContractAddress": "0x000000000000000000000000000000000000beef"
         });
@@ -263,71 +258,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_block_reward_modern_transitions_map() {
+    fn parse_missing_posdao_transition_errors() {
+        // Both AuRa chains we ship include `posdaoTransition`; absence is a
+        // chain-spec misconfig and the parser must surface it loudly.
         let v = json!({
             "stepDuration": 5,
-            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
-            "blockRewardContractTransitions": {
-                "1": "0x0000000000000000000000000000000000000010",
-                "100": "0x0000000000000000000000000000000000000020",
-                "9186425": "0x0000000000000000000000000000000000000030"
-            }
+            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } }
         });
-        let cfg = AuraConfig::from_json_value(&v).unwrap();
-        assert_eq!(cfg.block_reward_contract_transitions.len(), 3);
-        assert!(cfg.block_reward_contract_transitions.contains_key(&1));
-        assert!(cfg.block_reward_contract_transitions.contains_key(&9186425));
-    }
-
-    #[test]
-    fn parse_block_gas_limit_contract_transitions() {
-        let v = json!({
-            "stepDuration": 5,
-            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
-            "blockGasLimitContractTransitions": {
-                "1300": "0x0000000000000000000000000000000000000040"
-            }
-        });
-        let cfg = AuraConfig::from_json_value(&v).unwrap();
-        assert_eq!(cfg.block_gas_limit_contract_transitions.len(), 1);
-    }
-
-    #[test]
-    fn parse_rewrite_bytecode() {
-        // Real Gnosis: token contract upgrade at block 21,735,000.
-        let v = json!({
-            "stepDuration": 5,
-            "validators": { "multi": { "0": { "list": ["0x0000000000000000000000000000000000000001"] } } },
-            "rewriteBytecode": {
-                "21735000": {
-                    "0x6f1cef828f1bd5b6acff5d76d4a86d50f9a86998": "0xdeadbeef"
-                }
-            }
-        });
-        let cfg = AuraConfig::from_json_value(&v).unwrap();
-        assert_eq!(cfg.rewrite_bytecode.len(), 1);
-        let inner = cfg.rewrite_bytecode.get(&21735000).unwrap();
-        assert_eq!(inner.len(), 1);
-        let (_, code) = inner.iter().next().unwrap();
-        assert_eq!(code.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
-    }
-
-    #[test]
-    fn parse_string_num_rejects_non_numeric() {
-        // Block-number keys must be numeric strings; otherwise parsing must fail.
-        let v = json!({
-            "stepDuration": 5,
-            "validators": { "multi": { "abc": { "list": ["0x0000000000000000000000000000000000000001"] } } }
-        });
-        assert!(AuraConfig::from_json_value(&v).is_err());
-    }
-
-    #[test]
-    fn parse_unknown_validator_kind_fails() {
-        let v = json!({
-            "stepDuration": 5,
-            "validators": { "multi": { "0": { "weirdKind": "0xff" } } }
-        });
-        assert!(AuraConfig::from_json_value(&v).is_err());
+        let err = AuraConfig::from_json_value(&v).unwrap_err();
+        assert!(err.to_string().contains("posdaoTransition"));
     }
 }

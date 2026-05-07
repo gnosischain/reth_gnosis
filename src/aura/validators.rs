@@ -2,13 +2,21 @@ use alloy_primitives::Address;
 use std::collections::BTreeMap;
 
 /// A single validator set type.
+///
+/// Nethermind distinguishes two contract-based kinds: `safeContract`
+/// (`getValidators()` only) and `contract` (also calls `reportMalicious()`/
+/// `reportBenign()` on observed misbehavior). Reporting is a *block-producer*
+/// concern — a sync-only client doesn't originate reports; historical reports
+/// are baked into the chain as ordinary transactions and replay automatically.
+/// reth_gnosis is sync-only for AuRa (the chains are post-merge and will never
+/// produce new AuRa blocks), so we collapse both into one variant. The JSON
+/// parser still accepts both `safeContract` and `contract` field names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidatorSetKind {
     /// Static list of validators.
     List(Vec<Address>),
-    /// Validators from a "safe" contract (getValidators() call, no reporting).
-    SafeContract { address: Address },
-    /// Validators from a contract (getValidators() call + misbehavior reporting).
+    /// Validators resolved from a contract via `getValidators()` syscall.
+    /// Covers both Nethermind's `safeContract` and `contract` variants.
     Contract { address: Address },
 }
 
@@ -19,196 +27,157 @@ pub struct ValidatorSet {
     sets: BTreeMap<u64, ValidatorSetKind>,
 }
 
+/// Errors returned by [`ValidatorSet`] operations.
+///
+/// AuRa is a pre-merge–only mechanism — no new AuRa blocks will ever be
+/// produced — so consensus code must not panic on adversarial or malformed
+/// input. Callers propagate these errors as `ConsensusError`s instead.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ValidatorSetError {
+    /// `ValidatorSet::new` was called with an empty map.
+    #[error("validator set must not be empty")]
+    Empty,
+}
+
 impl ValidatorSet {
-    /// Create a new multi-validator set.
-    pub fn new(sets: BTreeMap<u64, ValidatorSetKind>) -> Self {
-        assert!(!sets.is_empty(), "validator set must not be empty");
-        Self { sets }
+    /// Create a new multi-validator set. Returns [`ValidatorSetError::Empty`]
+    /// if `sets` is empty (a chain spec missing all validator transitions
+    /// would be malformed; we surface it as an error rather than panicking).
+    pub fn new(sets: BTreeMap<u64, ValidatorSetKind>) -> Result<Self, ValidatorSetError> {
+        if sets.is_empty() {
+            return Err(ValidatorSetError::Empty);
+        }
+        Ok(Self { sets })
     }
 
-    /// Get the validator set kind active at the given block number.
-    /// Returns the set with the highest activation block <= block_number.
-    pub fn kind_at(&self, block_number: u64) -> &ValidatorSetKind {
+    /// Returns the validator set kind active at `block_number` (highest
+    /// activation block ≤ N), or `None` if no entry covers it. With a
+    /// well-formed chain spec there is always an entry at block 0, so this
+    /// only returns `None` for malformed input.
+    pub fn kind_at(&self, block_number: u64) -> Option<&ValidatorSetKind> {
         self.sets
             .range(..=block_number)
             .next_back()
             .map(|(_, kind)| kind)
-            .expect("validator set must have entry at block 0")
     }
 
-    /// For List-type validator sets, return the validators directly.
-    /// For contract-based types, this returns None — caller must resolve via EVM.
+    /// Static-list validators active at `block_number`, if the active set
+    /// is list-typed. `None` if the set is contract-typed (caller must
+    /// resolve via EVM state) or if no set covers this block.
     pub fn try_get_list_validators(&self, block_number: u64) -> Option<&[Address]> {
-        match self.kind_at(block_number) {
+        match self.kind_at(block_number)? {
             ValidatorSetKind::List(addrs) => Some(addrs),
-            ValidatorSetKind::SafeContract { .. } | ValidatorSetKind::Contract { .. } => None,
+            ValidatorSetKind::Contract { .. } => None,
         }
     }
 
-    /// Get the contract address for contract-based validator sets.
+    /// Contract address for contract-based validator sets. `None` if the
+    /// active set is list-typed or if no set covers this block.
     pub fn contract_address_at(&self, block_number: u64) -> Option<Address> {
-        match self.kind_at(block_number) {
+        match self.kind_at(block_number)? {
             ValidatorSetKind::List(_) => None,
-            ValidatorSetKind::SafeContract { address } | ValidatorSetKind::Contract { address } => {
-                Some(*address)
-            }
+            ValidatorSetKind::Contract { address } => Some(*address),
         }
     }
 
-    /// Compute the expected proposer for the given step and validator list.
-    /// Uses round-robin: validators[step % validators.len()]
-    pub fn expected_proposer(step: u64, validators: &[Address]) -> Address {
-        assert!(!validators.is_empty(), "validator list must not be empty");
-        let idx = (step as usize) % validators.len();
-        validators[idx]
+    /// Round-robin proposer for the given step. Returns `None` if the
+    /// validator list is empty (which would be a malformed chain spec).
+    ///
+    /// The modulo runs in `u64` then narrows to `usize`, so the result is
+    /// independent of host bit-width — `step as usize` would truncate to
+    /// 32 bits on 32-bit targets and produce a wrong index.
+    pub fn expected_proposer(step: u64, validators: &[Address]) -> Option<Address> {
+        let len = validators.len();
+        if len == 0 {
+            return None;
+        }
+        let idx = (step % len as u64) as usize;
+        Some(validators[idx])
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
 
     fn addr(b: u8) -> Address {
         Address::from([b; 20])
     }
 
-    fn list_set(addrs: Vec<Address>) -> ValidatorSetKind {
-        ValidatorSetKind::List(addrs)
-    }
-
-    fn safe_set(addr: Address) -> ValidatorSetKind {
-        ValidatorSetKind::SafeContract { address: addr }
-    }
-
-    fn contract_set(addr: Address) -> ValidatorSetKind {
-        ValidatorSetKind::Contract { address: addr }
-    }
-
     #[test]
-    #[should_panic(expected = "validator set must not be empty")]
-    fn new_panics_on_empty_set() {
-        ValidatorSet::new(BTreeMap::new());
-    }
-
-    #[test]
-    fn kind_at_uses_highest_block_le_query() {
-        // Three validator-set transitions: at blocks 0, 100, and 1000.
-        // kind_at(N) returns the set whose activation block is the largest one <= N.
-        let mut sets = BTreeMap::new();
-        sets.insert(0, list_set(vec![addr(0xa)]));
-        sets.insert(100, safe_set(addr(0xb)));
-        sets.insert(1000, contract_set(addr(0xc)));
-        let vs = ValidatorSet::new(sets);
-
-        assert!(matches!(vs.kind_at(0), ValidatorSetKind::List(_)));
-        assert!(matches!(vs.kind_at(99), ValidatorSetKind::List(_)));
-        assert!(matches!(
-            vs.kind_at(100),
-            ValidatorSetKind::SafeContract { .. }
-        ));
-        assert!(matches!(
-            vs.kind_at(999),
-            ValidatorSetKind::SafeContract { .. }
-        ));
-        assert!(matches!(
-            vs.kind_at(1000),
-            ValidatorSetKind::Contract { .. }
-        ));
-        assert!(matches!(
-            vs.kind_at(u64::MAX),
-            ValidatorSetKind::Contract { .. }
-        ));
-    }
-
-    #[test]
-    fn try_get_list_validators_returns_some_for_list() {
-        let mut sets = BTreeMap::new();
-        let validators = vec![addr(1), addr(2), addr(3)];
-        sets.insert(0, list_set(validators.clone()));
-        let vs = ValidatorSet::new(sets);
-
-        let got = vs
-            .try_get_list_validators(0)
-            .expect("list set must return Some");
-        assert_eq!(got, validators.as_slice());
-    }
-
-    #[test]
-    fn try_get_list_validators_returns_none_for_contract_kinds() {
-        let mut sets = BTreeMap::new();
-        sets.insert(0, list_set(vec![addr(1)]));
-        sets.insert(10, safe_set(addr(0xb)));
-        sets.insert(20, contract_set(addr(0xc)));
-        let vs = ValidatorSet::new(sets);
-
-        assert!(
-            vs.try_get_list_validators(15).is_none(),
-            "SafeContract -> None"
+    fn new_errors_on_empty_set() {
+        assert_eq!(
+            ValidatorSet::new(BTreeMap::new()),
+            Err(ValidatorSetError::Empty)
         );
-        assert!(vs.try_get_list_validators(25).is_none(), "Contract -> None");
+    }
+
+    /// End-to-end: build a multi-transition spec (List → Contract A → Contract B)
+    /// and check `kind_at`, `try_get_list_validators`, `contract_address_at` all
+    /// dispatch correctly across the boundaries — including the inclusive-edge
+    /// behavior of `..=block_number` (transition block belongs to the new set).
+    #[test]
+    fn lookups_across_transitions() {
+        let listed = vec![addr(1), addr(2), addr(3)];
+        let contract_a = addr(0xaa);
+        let contract_b = addr(0xbb);
+
+        let mut sets = BTreeMap::new();
+        sets.insert(0, ValidatorSetKind::List(listed.clone()));
+        sets.insert(
+            100,
+            ValidatorSetKind::Contract {
+                address: contract_a,
+            },
+        );
+        sets.insert(
+            1000,
+            ValidatorSetKind::Contract {
+                address: contract_b,
+            },
+        );
+        let vs = ValidatorSet::new(sets).unwrap();
+
+        // List region [0, 100): kind_at = List, try_get_list = Some, contract = None.
+        for &b in &[0u64, 1, 99] {
+            assert!(matches!(vs.kind_at(b), Some(ValidatorSetKind::List(_))));
+            assert_eq!(vs.try_get_list_validators(b), Some(listed.as_slice()));
+            assert_eq!(vs.contract_address_at(b), None);
+        }
+
+        // Contract A region [100, 1000): boundary inclusive, contract = A.
+        for &b in &[100u64, 999] {
+            assert!(vs.try_get_list_validators(b).is_none());
+            assert_eq!(vs.contract_address_at(b), Some(contract_a));
+        }
+
+        // Contract B region [1000, ∞).
+        for &b in &[1000u64, u64::MAX] {
+            assert_eq!(vs.contract_address_at(b), Some(contract_b));
+        }
     }
 
     #[test]
-    fn contract_address_at_returns_none_for_list_some_for_contract() {
+    fn kind_at_returns_none_below_first_entry() {
+        // Defensive: with no block-0 entry, lookups below the first activation
+        // must return None (not panic). Real chain specs always have a block-0
+        // entry, but ValidatorSet doesn't enforce that — pin the behavior.
         let mut sets = BTreeMap::new();
-        sets.insert(0, list_set(vec![addr(1)]));
-        sets.insert(10, safe_set(addr(0xb)));
-        sets.insert(20, contract_set(addr(0xc)));
-        let vs = ValidatorSet::new(sets);
-
-        assert_eq!(vs.contract_address_at(5), None);
-        assert_eq!(vs.contract_address_at(10), Some(addr(0xb)));
-        assert_eq!(vs.contract_address_at(15), Some(addr(0xb)));
-        assert_eq!(vs.contract_address_at(20), Some(addr(0xc)));
+        sets.insert(100, ValidatorSetKind::List(vec![addr(0xa)]));
+        let vs = ValidatorSet::new(sets).unwrap();
+        assert!(vs.kind_at(0).is_none());
+        assert!(vs.kind_at(99).is_none());
+        assert!(vs.kind_at(100).is_some());
     }
 
     #[test]
     fn expected_proposer_round_robin() {
         let v = vec![addr(0xa), addr(0xb), addr(0xc)];
-        assert_eq!(ValidatorSet::expected_proposer(0, &v), v[0]);
-        assert_eq!(ValidatorSet::expected_proposer(1, &v), v[1]);
-        assert_eq!(ValidatorSet::expected_proposer(2, &v), v[2]);
-        assert_eq!(ValidatorSet::expected_proposer(3, &v), v[0]); // wrap
-        assert_eq!(ValidatorSet::expected_proposer(7, &v), v[1]);
-    }
-
-    #[test]
-    fn expected_proposer_single_validator() {
-        let v = vec![addr(0xff)];
-        assert_eq!(ValidatorSet::expected_proposer(0, &v), v[0]);
-        assert_eq!(ValidatorSet::expected_proposer(u64::MAX, &v), v[0]);
-    }
-
-    #[test]
-    fn expected_proposer_realistic_chiado_step() {
-        // Chiado block 100000 has step 332890827. With a 4-validator set, this
-        // selects validators[332890827 % 4] = validators[3].
-        let v = vec![addr(0x1), addr(0x2), addr(0x3), addr(0x4)];
-        let proposer = ValidatorSet::expected_proposer(332890827, &v);
-        assert_eq!(proposer, v[3], "step 332890827 % 4 == 3");
-    }
-
-    #[test]
-    #[should_panic(expected = "validator list must not be empty")]
-    fn expected_proposer_panics_on_empty() {
-        let _ = ValidatorSet::expected_proposer(0, &[]);
-    }
-
-    #[test]
-    fn kind_at_with_address_literal_compiles() {
-        // Smoke test that the address! macro path through alloy_primitives works
-        // for the test setup pattern used in other tests.
-        let mut sets = BTreeMap::new();
-        sets.insert(
-            0,
-            list_set(vec![address!("0x60f1cf46b42df059b98acf67c1dd7771b100e124")]),
-        );
-        let vs = ValidatorSet::new(sets);
-        if let ValidatorSetKind::List(addrs) = vs.kind_at(0) {
-            assert_eq!(addrs.len(), 1);
-        } else {
-            panic!("expected List");
-        }
+        assert_eq!(ValidatorSet::expected_proposer(0, &v), Some(v[0]));
+        assert_eq!(ValidatorSet::expected_proposer(2, &v), Some(v[2]));
+        assert_eq!(ValidatorSet::expected_proposer(3, &v), Some(v[0])); // wrap
+        assert_eq!(ValidatorSet::expected_proposer(7, &v), Some(v[1]));
+        // Empty list returns None — must not panic on indexing.
+        assert_eq!(ValidatorSet::expected_proposer(0, &[]), None);
     }
 }

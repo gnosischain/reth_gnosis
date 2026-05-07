@@ -25,7 +25,7 @@ use std::{convert::Infallible, sync::Arc};
 use std::sync::Mutex;
 
 use crate::blobs::CANCUN_BLOB_PARAMS;
-use crate::block::{GnosisBlockExecutionCtx, GnosisBlockExecutorFactory};
+use crate::block::{AuraExecutionCtx, GnosisBlockExecutionCtx, GnosisBlockExecutorFactory};
 use crate::build::GnosisBlockAssembler;
 use crate::evm::factory::GnosisEvmFactory;
 use crate::primitives::block::GnosisBlock;
@@ -409,6 +409,8 @@ impl ConfigureEvm for GnosisEvmConfig {
         &self,
         block: &'a SealedBlock<GnosisBlock>,
     ) -> Result<GnosisBlockExecutionCtx<'a>, Self::Error> {
+        let block_number = block.header().number;
+
         // Look up parent header to get its timestamp for hardfork activation checks
         let parent_timestamp = self
             .header_lookup
@@ -416,65 +418,59 @@ impl ConfigureEvm for GnosisEvmConfig {
             .map(|h| h.timestamp)
             .unwrap_or(0);
 
-        // Determine if we need to call finalizeChange() at this block.
-        // This happens at the first block of a new validator epoch (list→contract transition).
-        let mut finalize_change_address =
-            self.compute_finalize_change_address(block.header().number);
-
-        // For POSDAO contract validators: check if a pending InitiateChange
-        // has been finalized by the rolling finality tracker.
-        if finalize_change_address.is_none() {
-            if let Ok(mut rf) = self.rolling_finality.lock() {
-                let block_number = block.header().number;
-                if let Some(addr) = rf.take_finalize_change(block_number) {
-                    tracing::info!(
-                        target: "reth::gnosis",
-                        block = block_number,
-                        validator = %addr,
-                        "Rolling finality: finalizeChange triggered"
-                    );
-                    finalize_change_address = Some(addr);
+        // `aura` is `Some` only when (a) the chain has an AuRa config AND
+        // (b) the block is pre-merge per the chain spec. Chains that are
+        // post-merge from genesis (no `aura_config`, or aura_config but
+        // Paris active at block 0) get `aura: None` for every block.
+        let aura = self.chain_spec.aura_config.as_ref().and_then(|c| {
+            let is_pre_merge = !self.chain_spec.is_paris_active_at_block(block_number);
+            if !is_pre_merge {
+                return None;
+            }
+            let mut finalize_change_address = self.compute_finalize_change_address(block_number);
+            // For POSDAO contract validators: check if a pending
+            // InitiateChange has been finalized by the rolling-finality
+            // tracker.
+            if finalize_change_address.is_none() {
+                if let Ok(mut rf) = self.rolling_finality.lock() {
+                    if let Some(addr) = rf.take_finalize_change(block_number) {
+                        tracing::info!(
+                            target: "reth::gnosis",
+                            block = block_number,
+                            validator = %addr,
+                            "Rolling finality: finalizeChange triggered"
+                        );
+                        finalize_change_address = Some(addr);
+                    }
                 }
             }
-        }
+            Some(AuraExecutionCtx {
+                finalize_change_address,
+                validator_contract: c.validators.contract_address_at(block_number),
+                rolling_finality: self.rolling_finality.clone(),
+                posdao_transition: c.posdao_transition,
+                aura_bytecode_rewrites: c.rewrite_bytecode.get(&block_number).cloned(),
+            })
+        });
 
-        // Get the validator contract address for InitiateChange event detection
-        let validator_contract = self
-            .chain_spec
-            .aura_config
-            .as_ref()
-            .and_then(|c| c.validators.contract_address_at(block.header().number));
-
-        // Get the correct block reward contract for this block from AuRa transitions
+        // `block_rewards_override` is *not* under `aura`: Gnosis post-merge
+        // still uses the POSDAO reward contract, so the override is computed
+        // from `aura_config.block_reward_contract_transitions` for any block
+        // of an AuRa chain — pre- AND post-merge.
         let block_rewards_override = self.chain_spec.aura_config.as_ref().and_then(|c| {
             c.block_reward_contract_transitions
-                .range(..=block.header().number)
+                .range(..=block_number)
                 .next_back()
                 .map(|(_, addr)| *addr)
         });
-
-        // AuRa pre-merge bytecode rewrites at this exact block height
-        let aura_bytecode_rewrites = self
-            .chain_spec
-            .aura_config
-            .as_ref()
-            .and_then(|c| c.rewrite_bytecode.get(&block.header().number).cloned());
 
         Ok(GnosisBlockExecutionCtx {
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
             withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
             parent_timestamp,
-            finalize_change_address,
-            validator_contract,
-            rolling_finality: self.rolling_finality.clone(),
-            posdao_transition: self
-                .chain_spec
-                .aura_config
-                .as_ref()
-                .and_then(|c| c.posdao_transition),
+            aura,
             block_rewards_override,
-            aura_bytecode_rewrites,
         })
     }
 
@@ -484,37 +480,37 @@ impl ConfigureEvm for GnosisEvmConfig {
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<GnosisBlockExecutionCtx<'_>, Self::Error> {
         let next_block = parent.number + 1;
-        let validator_contract = self
-            .chain_spec
-            .aura_config
-            .as_ref()
-            .and_then(|c| c.validators.contract_address_at(next_block));
+        // `context_for_next_block` is called for payload building. It only
+        // applies in pre-merge AuRa contexts — in fact reth only invokes
+        // payload building for chains we can author for. For consistency
+        // with `context_for_block` we still gate on (chain has AuRa config)
+        // AND (next_block is pre-merge per chain spec).
+        let aura = self.chain_spec.aura_config.as_ref().and_then(|c| {
+            let is_pre_merge = !self.chain_spec.is_paris_active_at_block(next_block);
+            if !is_pre_merge {
+                return None;
+            }
+            Some(AuraExecutionCtx {
+                finalize_change_address: self.compute_finalize_change_address(next_block),
+                validator_contract: c.validators.contract_address_at(next_block),
+                rolling_finality: self.rolling_finality.clone(),
+                posdao_transition: c.posdao_transition,
+                aura_bytecode_rewrites: c.rewrite_bytecode.get(&next_block).cloned(),
+            })
+        });
         let block_rewards_override = self.chain_spec.aura_config.as_ref().and_then(|c| {
             c.block_reward_contract_transitions
                 .range(..=next_block)
                 .next_back()
                 .map(|(_, addr)| *addr)
         });
-        let aura_bytecode_rewrites = self
-            .chain_spec
-            .aura_config
-            .as_ref()
-            .and_then(|c| c.rewrite_bytecode.get(&next_block).cloned());
         Ok(GnosisBlockExecutionCtx {
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             withdrawals: attributes.withdrawals.map(Cow::Owned),
             parent_timestamp: parent.timestamp,
-            finalize_change_address: self.compute_finalize_change_address(next_block),
-            validator_contract,
-            rolling_finality: self.rolling_finality.clone(),
-            posdao_transition: self
-                .chain_spec
-                .aura_config
-                .as_ref()
-                .and_then(|c| c.posdao_transition),
+            aura,
             block_rewards_override,
-            aura_bytecode_rewrites,
         })
     }
     // modifications to EIP-1559 gas accounting handler has been moved to Handler in gnosis_evm.rs
@@ -599,13 +595,9 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
                 .withdrawals()
                 .map(|w| Cow::Owned(w.clone().into())),
             parent_timestamp,
-            // Payloads are post-merge — no finalizeChange needed
-            finalize_change_address: None,
-            validator_contract: None,
-            rolling_finality: self.rolling_finality.clone(),
-            posdao_transition: None,
+            // Engine-API payloads are always post-merge — no AuRa execution mode.
+            aura: None,
             block_rewards_override: None,
-            aura_bytecode_rewrites: None,
         })
     }
 
@@ -688,16 +680,29 @@ mod tests {
         for (block, kind) in entries {
             sets.insert(*block, kind.clone());
         }
-        ValidatorSet::new(sets)
+        ValidatorSet::new(sets).expect("test fixture must have non-empty set")
     }
 
     #[test]
-    fn list_only_chain_returns_none_everywhere() {
-        // Pure list-type validators (no contract) — finalizeChange is never needed.
-        let v = build_validators(&[(0, ValidatorSetKind::List(vec![addr(1)]))]);
-        assert_eq!(fc(&v, 0), None);
-        assert_eq!(fc(&v, 1), None);
-        assert_eq!(fc(&v, 1000), None);
+    fn list_region_returns_none() {
+        // Pure list-type validators (whether the chain is list-only forever, or
+        // list-then-contract well in the future) — finalizeChange must never
+        // fire while we're inside the list region.
+        let list_only = build_validators(&[(0, ValidatorSetKind::List(vec![addr(1)]))]);
+        assert_eq!(fc(&list_only, 0), None);
+        assert_eq!(fc(&list_only, 1000), None);
+
+        let list_then_contract = build_validators(&[
+            (0, ValidatorSetKind::List(vec![addr(1)])),
+            (
+                5_000_000,
+                ValidatorSetKind::Contract {
+                    address: addr(0xaa),
+                },
+            ),
+        ]);
+        assert_eq!(fc(&list_then_contract, 1), None);
+        assert_eq!(fc(&list_then_contract, 4_999_999), None);
     }
 
     #[test]
@@ -706,7 +711,7 @@ mod tests {
         // called at genesis to initialize the contract's view of the validator set.
         let v = build_validators(&[(
             0,
-            ValidatorSetKind::SafeContract {
+            ValidatorSetKind::Contract {
                 address: addr(0xaa),
             },
         )]);
@@ -722,7 +727,7 @@ mod tests {
             (0, ValidatorSetKind::List(vec![addr(1)])),
             (
                 1300,
-                ValidatorSetKind::SafeContract {
+                ValidatorSetKind::Contract {
                     address: addr(0xaa),
                 },
             ),
@@ -738,7 +743,7 @@ mod tests {
             (0, ValidatorSetKind::List(vec![addr(1)])),
             (
                 1300,
-                ValidatorSetKind::SafeContract {
+                ValidatorSetKind::Contract {
                     address: addr(0xaa),
                 },
             ),
@@ -753,7 +758,7 @@ mod tests {
             (0, ValidatorSetKind::List(vec![addr(1)])),
             (
                 1300,
-                ValidatorSetKind::SafeContract {
+                ValidatorSetKind::Contract {
                     address: addr(0xaa),
                 },
             ),
@@ -773,7 +778,7 @@ mod tests {
             (0, ValidatorSetKind::List(vec![addr(1)])),
             (
                 1300,
-                ValidatorSetKind::SafeContract {
+                ValidatorSetKind::Contract {
                     address: addr(0xaa),
                 },
             ),
@@ -800,7 +805,7 @@ mod tests {
         let v = build_validators(&[
             (
                 0,
-                ValidatorSetKind::SafeContract {
+                ValidatorSetKind::Contract {
                     address: addr(0xaa),
                 },
             ),
@@ -826,28 +831,11 @@ mod tests {
         // grandparent transition → returns None.
         let v = build_validators(&[(
             0,
-            ValidatorSetKind::SafeContract {
+            ValidatorSetKind::Contract {
                 address: addr(0xaa),
             },
         )]);
         assert_eq!(fc(&v, 1), None);
         assert_eq!(fc(&v, 2), None);
-    }
-
-    #[test]
-    fn block_inside_list_range_returns_none() {
-        // Pure list region — no contract, no finalizeChange anywhere.
-        let v = build_validators(&[
-            (0, ValidatorSetKind::List(vec![addr(1)])),
-            (
-                5_000_000,
-                ValidatorSetKind::SafeContract {
-                    address: addr(0xaa),
-                },
-            ),
-        ]);
-        assert_eq!(fc(&v, 1), None);
-        assert_eq!(fc(&v, 1000), None);
-        assert_eq!(fc(&v, 4_999_999), None);
     }
 }

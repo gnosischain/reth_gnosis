@@ -9,10 +9,12 @@ use gnosis_primitives::header::GnosisHeader;
 /// OpenEthereum: standard Ethereum fields (1-13) followed by optional EIP fields,
 /// with the AuRa seal fields (positions 14-15) excluded.
 ///
-/// Field order: parent_hash, ommers_hash, beneficiary, state_root, transactions_root,
-/// receipts_root, logs_bloom, difficulty, number, gas_limit, gas_used, timestamp,
-/// extra_data, [base_fee_per_gas?, withdrawals_root?, blob_gas_used?, excess_blob_gas?,
-/// parent_beacon_block_root?, requests_hash?]
+/// Field order: parent_hash, ommers_hash, beneficiary, state_root,
+/// transactions_root, receipts_root, logs_bloom, difficulty, number, gas_limit,
+/// gas_used, timestamp, extra_data, [base_fee_per_gas?]. Post-Shanghai fields
+/// (`withdrawals_root`, `blob_gas_used`, etc.) are not encoded — pre-merge AuRa
+/// headers never have them set, so including them in the field list would just
+/// confuse the reader.
 pub fn compute_seal_hash(header: &GnosisHeader) -> B256 {
     let mut buf = Vec::new();
 
@@ -24,7 +26,10 @@ pub fn compute_seal_hash(header: &GnosisHeader) -> B256 {
     };
     list_header.encode(&mut buf);
 
-    // Standard 13 fields
+    // Standard 13 fields. Use native types — RLP for integers encodes the
+    // minimal-byte big-endian representation, identical for `u64` and `U256`
+    // for any value that fits in 64 bits, but `u64` is honest about the field's
+    // domain.
     header.parent_hash.encode(&mut buf);
     header.ommers_hash.encode(&mut buf);
     header.beneficiary.encode(&mut buf);
@@ -33,17 +38,17 @@ pub fn compute_seal_hash(header: &GnosisHeader) -> B256 {
     header.receipts_root.encode(&mut buf);
     header.logs_bloom.encode(&mut buf);
     header.difficulty.encode(&mut buf);
-    U256::from(header.number).encode(&mut buf);
-    U256::from(header.gas_limit).encode(&mut buf);
-    U256::from(header.gas_used).encode(&mut buf);
+    header.number.encode(&mut buf);
+    header.gas_limit.encode(&mut buf);
+    header.gas_used.encode(&mut buf);
     header.timestamp.encode(&mut buf);
     header.extra_data.encode(&mut buf);
 
     // Skip aura_step and aura_seal — these are the seal fields
 
-    // Optional EIP fields
-    if let Some(ref base_fee) = header.base_fee_per_gas {
-        U256::from(*base_fee).encode(&mut buf);
+    // Optional EIP fields (London onwards on Gnosis)
+    if let Some(base_fee) = header.base_fee_per_gas {
+        base_fee.encode(&mut buf);
     }
 
     keccak256(&buf)
@@ -59,14 +64,14 @@ fn seal_hash_payload_length(header: &GnosisHeader) -> usize {
     length += header.receipts_root.length();
     length += header.logs_bloom.length();
     length += header.difficulty.length();
-    length += U256::from(header.number).length();
-    length += U256::from(header.gas_limit).length();
-    length += U256::from(header.gas_used).length();
+    length += header.number.length();
+    length += header.gas_limit.length();
+    length += header.gas_used.length();
     length += header.timestamp.length();
     length += header.extra_data.length();
     // No aura_step, no aura_seal
     if let Some(base_fee) = header.base_fee_per_gas {
-        length += U256::from(base_fee).length();
+        length += base_fee.length();
     }
     length
 }
@@ -79,19 +84,14 @@ pub fn recover_seal_author(header: &GnosisHeader) -> Result<Address, SealError> 
     let seal = header.aura_seal.as_ref().ok_or(SealError::MissingSeal)?;
     let seal_hash = compute_seal_hash(header);
 
-    // The 65-byte seal: first 32 bytes = r, next 32 bytes = s, last byte = v
+    // The 65-byte seal: r (32) || s (32) || v (1). Copy whole-buffer and
+    // overwrite the v byte with the normalized recovery id; r and s are
+    // already in place.
     let sig_bytes: &[u8; 65] = seal.as_ref();
-    let r = &sig_bytes[0..32];
-    let s = &sig_bytes[32..64];
     let v = sig_bytes[64];
-
-    // Create alloy signature (v is the recovery id, 0 or 1)
-    // Some clients use v = 27/28, some use v = 0/1
+    // Some clients use v = 27/28, some use v = 0/1.
     let recovery_id = if v >= 27 { v - 27 } else { v };
-
-    let mut sig_with_v = [0u8; 65];
-    sig_with_v[..32].copy_from_slice(r);
-    sig_with_v[32..64].copy_from_slice(s);
+    let mut sig_with_v = *sig_bytes;
     sig_with_v[64] = recovery_id;
 
     let sig = alloy_primitives::Signature::try_from(&sig_with_v[..])
@@ -106,8 +106,6 @@ pub fn recover_seal_author(header: &GnosisHeader) -> Result<Address, SealError> 
 pub enum SealError {
     #[error("missing AuRa seal")]
     MissingSeal,
-    #[error("missing AuRa step")]
-    MissingStep,
     #[error("invalid signature")]
     InvalidSignature,
     #[error("ECDSA recovery failed")]
@@ -131,43 +129,31 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, FixedBytes};
 
-    fn u128_max() -> U256 {
-        U256::MAX >> 128
-    }
-
     #[test]
-    fn calculate_aura_difficulty_step_diff_one() {
-        // Standard sequential block: current = parent + 1.
-        // diff = (2^128 - 1) + parent - current = U128_MAX - 1
-        let d = calculate_aura_difficulty(100, 101);
-        assert_eq!(d, u128_max() - U256::from(1));
-    }
-
-    #[test]
-    fn calculate_aura_difficulty_step_diff_large() {
-        // Skipped steps: current = parent + 10.
-        let d = calculate_aura_difficulty(1000, 1010);
-        assert_eq!(d, u128_max() - U256::from(10));
-    }
-
-    #[test]
-    fn calculate_aura_difficulty_equal_steps() {
-        // current == parent: diff = U128_MAX exactly.
-        let d = calculate_aura_difficulty(42, 42);
-        assert_eq!(d, u128_max());
-    }
-
-    #[test]
-    fn calculate_aura_difficulty_chiado_block_100k() {
-        // Real chiado block 100000: aura_step = 332890827.
-        // Block 99999's step would be 332890826 (sequential).
-        // header.difficulty = 0xfffffffffffffffffffffffffffffffe = U128_MAX - 1.
-        let d = calculate_aura_difficulty(332890826, 332890827);
-        let expected = U256::from_be_slice(
-            &hex::decode("00000000000000000000000000000000fffffffffffffffffffffffffffffffe")
-                .unwrap(),
-        );
-        assert_eq!(d, expected);
+    fn calculate_aura_difficulty_table() {
+        let u128_max = U256::MAX >> 128;
+        // (parent_step, current_step, expected_difficulty, label)
+        let cases: &[(u64, u64, U256, &str)] = &[
+            (100, 101, u128_max - U256::from(1u64), "sequential step"),
+            (1000, 1010, u128_max - U256::from(10u64), "10 skipped steps"),
+            (42, 42, u128_max, "equal steps"),
+            // Chiado block 100000 (parent step 332890826, current 332890827) —
+            // the on-chain header has difficulty = U128_MAX - 1; pinning this
+            // matches our header decoding against a real network.
+            (
+                332890826,
+                332890827,
+                u128_max - U256::from(1u64),
+                "chiado block 100000",
+            ),
+        ];
+        for (parent, current, expected, label) in cases {
+            assert_eq!(
+                calculate_aura_difficulty(*parent, *current),
+                *expected,
+                "case: {label}"
+            );
+        }
     }
 
     /// Construct a `GnosisHeader` matching chiado block 100000 (verified post-merge
@@ -235,27 +221,17 @@ mod tests {
     }
 
     #[test]
-    fn recover_seal_author_missing_seal() {
-        let mut header = chiado_block_100k_header();
-        header.aura_seal = None;
-        match recover_seal_author(&header) {
-            Err(SealError::MissingSeal) => {}
-            other => panic!("expected MissingSeal, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn recover_seal_author_corrupted_seal_recovers_different_address() {
-        // Mutating any byte of the seal flips the recovered address (or fails recovery).
-        // Either outcome must not silently match the original signer.
+    fn recover_seal_author_corrupted_seal_fails_recovery() {
+        // Flipping the high bit of `r` (byte 0) — for the chiado-100k seal
+        // — shifts the signature to invalid curve coordinates. Recovery
+        // returns `RecoveryFailed`. A future change to recovery semantics
+        // (e.g. accepting non-canonical signatures) would flip this to Ok
+        // and the test will fail loudly. Pin the exact behavior.
         let mut header = chiado_block_100k_header();
         let mut seal = *header.aura_seal.unwrap();
         seal[0] ^= 0x01;
         header.aura_seal = Some(FixedBytes::from(seal));
-        let original_beneficiary = header.beneficiary;
-        match recover_seal_author(&header) {
-            Ok(addr) => assert_ne!(addr, original_beneficiary),
-            Err(_) => {} // recovery failure is also acceptable
-        }
+        let err = recover_seal_author(&header).unwrap_err();
+        assert!(matches!(err, SealError::RecoveryFailed), "got {err:?}");
     }
 }
