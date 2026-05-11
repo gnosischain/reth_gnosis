@@ -1,22 +1,10 @@
 use alloy_primitives::Address;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
-use std::path::{Path, PathBuf};
-
-const FINALITY_STATE_FILE: &str = "aura_finality_state.json";
 
 /// Cadence (in blocks) for trace-logging unfinalized pending transitions.
 /// Logging on every block would be too noisy during sync; once every N blocks
 /// gives enough visibility to debug stuck transitions without flooding logs.
 const PENDING_TRANSITIONS_LOG_INTERVAL: u64 = 5;
-
-/// Persisted subset of rolling finality state that must survive restarts.
-/// Only the fields needed to correctly schedule finalizeChange() calls.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct PersistedFinalityState {
-    pending_transitions: BTreeMap<u64, Address>,
-    finalize_change_at: Option<(u64, Address)>,
-}
 
 /// Rolling finality tracker for AuRa consensus.
 ///
@@ -32,6 +20,9 @@ struct PersistedFinalityState {
 /// / `sign_count` and would shift the finality threshold. This is safe for the
 /// AuRa pre-merge replay use case (frozen historical chain, no reorgs) but
 /// would be unsafe under any reorg-capable execution path.
+///
+/// **No persistence**: state lives entirely in memory and is rebuilt from
+/// scratch on every node restart by re-running execution.
 #[derive(Debug, Clone)]
 pub struct RollingFinality {
     /// Current validator set (addresses authorized to sign blocks).
@@ -50,8 +41,6 @@ pub struct RollingFinality {
     /// The block number at which finalization was most recently determined,
     /// meaning finalizeChange should be called at finalized_at + 1.
     finalize_change_at: Option<(u64, Address)>,
-    /// Path to the datadir for persisting state across restarts.
-    datadir: Option<PathBuf>,
 }
 
 impl RollingFinality {
@@ -64,61 +53,7 @@ impl RollingFinality {
             sign_count: BTreeMap::new(),
             pending_transitions: BTreeMap::new(),
             finalize_change_at: None,
-            datadir: None,
         }
-    }
-
-    /// Set the datadir for persistence and load any previously saved state.
-    pub fn with_datadir(mut self, datadir: impl Into<PathBuf>) -> Self {
-        let datadir = datadir.into();
-        if let Some(state) = Self::load_state(&datadir) {
-            self.pending_transitions = state.pending_transitions;
-            self.finalize_change_at = state.finalize_change_at;
-            tracing::info!(
-                target: "reth::gnosis",
-                pending = self.pending_transitions.len(),
-                finalize_at = ?self.finalize_change_at,
-                "Restored rolling finality state from disk"
-            );
-        }
-        self.datadir = Some(datadir);
-        self
-    }
-
-    /// Persist the state-change-sensitive fields to disk.
-    fn persist(&self) {
-        if let Some(datadir) = &self.datadir {
-            let state = PersistedFinalityState {
-                pending_transitions: self.pending_transitions.clone(),
-                finalize_change_at: self.finalize_change_at,
-            };
-            let path = datadir.join(FINALITY_STATE_FILE);
-            match serde_json::to_string_pretty(&state) {
-                Ok(json) => {
-                    if let Err(e) = std::fs::write(&path, json) {
-                        tracing::warn!(
-                            target: "reth::gnosis",
-                            %e,
-                            "Failed to persist rolling finality state"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reth::gnosis",
-                        %e,
-                        "Failed to serialize rolling finality state"
-                    );
-                }
-            }
-        }
-    }
-
-    /// Load persisted state from disk.
-    fn load_state(datadir: &Path) -> Option<PersistedFinalityState> {
-        let path = datadir.join(FINALITY_STATE_FILE);
-        let data = std::fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&data).ok()
     }
 
     /// Returns true if any block in the queue is finalized
@@ -198,7 +133,6 @@ impl RollingFinality {
                     "Pending transition finalized, scheduling finalizeChange"
                 );
                 self.finalize_change_at = Some((block_number + 1, contract_addr));
-                self.persist();
             }
         }
 
@@ -230,14 +164,12 @@ impl RollingFinality {
     /// Skips the rolling finality check — calls finalizeChange at target_block directly.
     pub fn set_immediate_finalize(&mut self, target_block: u64, contract_address: Address) {
         self.finalize_change_at = Some((target_block, contract_address));
-        self.persist();
     }
 
     /// Record a pending InitiateChange transition at the given block.
     pub fn add_pending_transition(&mut self, block_number: u64, contract_address: Address) {
         self.pending_transitions
             .insert(block_number, contract_address);
-        self.persist();
     }
 
     /// Check if finalizeChange should be called at the given block number.
@@ -251,7 +183,6 @@ impl RollingFinality {
                 // set via getValidators() after the finalizeChange system call.
                 self.headers.clear();
                 self.sign_count.clear();
-                self.persist();
                 return Some(addr);
             }
         }
@@ -422,29 +353,5 @@ mod tests {
         let _ = rf.take_finalize_change(2);
         rf.push(3, addr(0xff));
         assert_eq!(rf.validator_count(), 3);
-    }
-
-    #[test]
-    fn persist_and_load_round_trip() {
-        // The disk-persisted state must round-trip exactly: pending_transitions
-        // and finalize_change_at are the only fields that affect future
-        // finalizeChange scheduling, and they must survive a restart.
-        let dir = std::env::temp_dir().join(format!(
-            "reth-gnosis-aura-persist-test-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::create_dir_all(&dir);
-
-        {
-            let mut rf = RollingFinality::new(vec![addr(1), addr(2)]).with_datadir(dir.clone());
-            rf.add_pending_transition(42, addr(0xaa));
-            rf.set_immediate_finalize(50, addr(0xbb));
-        }
-
-        let rf2 = RollingFinality::new(vec![addr(1), addr(2)]).with_datadir(dir.clone());
-        assert_eq!(rf2.pending_transitions.get(&42), Some(&addr(0xaa)));
-        assert_eq!(rf2.finalize_change_at, Some((50, addr(0xbb))));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

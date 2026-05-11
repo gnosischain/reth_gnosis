@@ -187,14 +187,7 @@ where
     type EVM = GnosisEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let datadir = ctx.config().datadir().data_dir().to_path_buf();
-        let evm_config = GnosisEvmConfig::new_with_datadir(
-            ctx.chain_spec(),
-            ctx.provider().clone(),
-            Some(datadir),
-        );
-
-        Ok(evm_config)
+        Ok(GnosisEvmConfig::new(ctx.chain_spec(), ctx.provider().clone()))
     }
 }
 
