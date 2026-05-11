@@ -187,7 +187,10 @@ where
     type EVM = GnosisEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        Ok(GnosisEvmConfig::new(ctx.chain_spec(), ctx.provider().clone()))
+        Ok(GnosisEvmConfig::new(
+            ctx.chain_spec(),
+            ctx.provider().clone(),
+        ))
     }
 }
 

@@ -3,7 +3,7 @@ pub mod import_and_ensure_state;
 
 // This is the first post-merge block on Gnosis Chain
 // Currently ERA1 files are used only for pre-merge
-pub const MAINNET_ERA_IMPORT_HEIGHT: u64 = 12_000_000; // Gnosis Chain
+pub const MAINNET_ERA_IMPORT_HEIGHT: u64 = 25_349_537; // Gnosis Chain
                                                        // pub const MAINNET_ERA_IMPORT_HEIGHT: u64 = 25_349_537; // Gnosis Chain
 
 // REFERENCE MERGE BLOCKS:

@@ -220,9 +220,9 @@ impl GnosisEvmConfig {
             ),
             chain_spec,
             header_lookup: Arc::new(header_lookup),
-            rolling_finality: Arc::new(Mutex::new(
-                crate::aura::finality::RollingFinality::new(Vec::new()),
-            )),
+            rolling_finality: Arc::new(Mutex::new(crate::aura::finality::RollingFinality::new(
+                Vec::new(),
+            ))),
         }
     }
 
