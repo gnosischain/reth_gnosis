@@ -56,6 +56,22 @@ impl RollingFinality {
         }
     }
 
+    /// Construct from recovered persistable state. `validators` is empty so
+    /// the next live block triggers a `getValidators()` refresh.
+    pub fn from_recovered(
+        pending_transitions: BTreeMap<u64, Address>,
+        finalize_change_at: Option<(u64, Address)>,
+    ) -> Self {
+        Self {
+            validators: Vec::new(),
+            validators_sealed: false,
+            headers: VecDeque::new(),
+            sign_count: BTreeMap::new(),
+            pending_transitions,
+            finalize_change_at,
+        }
+    }
+
     /// Returns true if any block in the queue is finalized
     /// (more than half of validators have signed).
     fn is_finalized(&self) -> bool {
@@ -203,6 +219,14 @@ impl RollingFinality {
     /// Get the current validator count.
     pub fn validator_count(&self) -> usize {
         self.validators.len()
+    }
+
+    pub fn pending_transitions(&self) -> &BTreeMap<u64, Address> {
+        &self.pending_transitions
+    }
+
+    pub fn finalize_change_at(&self) -> Option<(u64, Address)> {
+        self.finalize_change_at
     }
 }
 

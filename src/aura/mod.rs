@@ -1,5 +1,6 @@
 pub mod config;
 pub mod finality;
+pub mod recovery;
 pub mod seal;
 pub mod validators;
 
