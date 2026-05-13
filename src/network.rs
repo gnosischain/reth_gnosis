@@ -48,11 +48,22 @@ where
         // using actual genesis hash for mainnet and chiado
         let genesis_hash = spec.genesis_hash();
 
+        // lookup_head() returns total_difficulty=0 for all blocks. On pre-merge
+        // AuRa chains this causes peers to reject us (TD=0 at block N>0 is invalid).
+        // Use the chain spec's terminal total difficulty as a reasonable value —
+        // it tells peers we've completed the pre-merge chain.
+        let total_difficulty = if head.total_difficulty.is_zero() && head.number > 0 {
+            spec.final_paris_total_difficulty()
+                .unwrap_or(head.total_difficulty)
+        } else {
+            head.total_difficulty
+        };
+
         let status = UnifiedStatus::builder()
             .chain(spec.chain())
             .genesis(genesis_hash)
             .blockhash(head.hash)
-            .total_difficulty(Some(head.total_difficulty))
+            .total_difficulty(Some(total_difficulty))
             .forkid(network_config.fork_filter.current())
             .build();
         network_config.status = status;

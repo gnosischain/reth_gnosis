@@ -1,4 +1,4 @@
-// use consensus::GnosisBeaconConsensus;
+use aura::GnosisConsensus;
 use evm_config::GnosisEvmConfig;
 use gnosis_primitives::header::GnosisHeader;
 use network::GnosisNetworkBuilder;
@@ -7,7 +7,6 @@ use pool::GnosisPoolBuilder;
 use reth::api::{AddOnsContext, FullNodeComponents};
 use reth_consensus::FullConsensus;
 use reth_engine_local::LocalPayloadAttributesBuilder;
-use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_node_builder::{
     components::{
@@ -32,6 +31,7 @@ use crate::{
     rpc::GnosisNetwork,
 };
 
+pub mod aura;
 mod blobs;
 pub mod block;
 mod build;
@@ -181,13 +181,54 @@ impl<Node> ExecutorBuilder<Node> for GnosisExecutorBuilder
 where
     Node: FullNodeTypes<
         Types: NodeTypes<ChainSpec = GnosisChainSpec, Primitives = GnosisNodePrimitives>,
-        Provider: HeaderProvider<Header = GnosisHeader> + std::fmt::Debug + Clone + Unpin + 'static,
+        Provider: HeaderProvider<Header = GnosisHeader>
+                      + reth_storage_api::ReceiptProvider<Receipt = reth_ethereum_primitives::Receipt>
+                      + reth_storage_api::BlockNumReader
+                      + std::fmt::Debug
+                      + Clone
+                      + Unpin
+                      + 'static,
     >,
 {
     type EVM = GnosisEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = GnosisEvmConfig::new(ctx.chain_spec(), ctx.provider().clone());
+        let provider = ctx.provider().clone();
+        let chain_spec = ctx.chain_spec();
+        let evm_config = GnosisEvmConfig::new(chain_spec.clone(), provider.clone());
+
+        // Pre-merge AuRa head only — post-merge nodes never enter the AuRa path.
+        if let Some(aura_config) = chain_spec.aura_config.as_ref() {
+            use reth_chainspec::EthereumHardforks;
+            use reth_storage_api::BlockNumReader;
+            let head = provider.best_block_number()?;
+            if !chain_spec.is_paris_active_at_block(head) {
+                let scanner = crate::aura::recovery::ProviderChainScanner::new(provider);
+                let validator_contract = aura_config.validators.contract_address_at(head);
+                let recovered = crate::aura::recovery::reconstruct_finality_state(
+                    &scanner,
+                    head,
+                    validator_contract,
+                    aura_config.posdao_transition,
+                );
+                if !recovered.pending_transitions().is_empty()
+                    || recovered.finalize_change_at().is_some()
+                {
+                    tracing::info!(
+                        target: "reth::gnosis",
+                        head,
+                        pending = recovered.pending_transitions().len(),
+                        finalize_at = ?recovered.finalize_change_at(),
+                        "AuRa recovery: restored rolling-finality state"
+                    );
+                    let mut rf = evm_config
+                        .rolling_finality
+                        .lock()
+                        .map_err(|_| eyre::eyre!("AuRa rolling-finality mutex poisoned"))?;
+                    *rf = recovered;
+                }
+            }
+        }
 
         Ok(evm_config)
     }
@@ -207,7 +248,7 @@ where
     type Consensus = Arc<dyn FullConsensus<GnosisNodePrimitives>>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        Ok(Arc::new(EthBeaconConsensus::new(ctx.chain_spec())))
+        Ok(Arc::new(GnosisConsensus::new(ctx.chain_spec())))
     }
 }
 

@@ -19,37 +19,60 @@ use std::sync::Arc;
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-/// No Additional arguments
+/// Gnosis-specific extension args attached to the `node` command.
+///
+/// Surfaced as a `Gnosis` group in `reth node --help`.
 #[derive(Debug, Clone, Copy, Default, Args)]
-#[non_exhaustive]
-pub struct NoArgs;
+#[command(next_help_heading = "Gnosis")]
+pub struct GnosisExt {
+    /// Download and import a canonical post-merge state snapshot before sync starts.
+    ///
+    /// By default the node syncs from genesis using AuRa consensus (and reth's
+    /// modern v2 storage layout). Pass this flag to instead fetch a canonical
+    /// post-merge state snapshot for the Gnosis (chain 100) or Chiado (chain
+    /// 10200) network and import it before sync starts; this also forces the
+    /// legacy v1 storage layout, which is required by the import path.
+    ///
+    /// The import is idempotent — once successful, `imported.flag` is written
+    /// to the datadir and subsequent launches skip the download regardless of
+    /// this flag.
+    #[arg(long = "gnosis.import-post-merge-state", default_value_t = false)]
+    pub import_post_merge_state: bool,
+}
 
-type CliGnosis = GnosisCli<GnosisChainSpecParser, NoArgs>;
+type CliGnosis = GnosisCli<GnosisChainSpecParser, GnosisExt>;
 
 fn main() {
-    // Default to v1 (legacy) storage layout for new databases. Gnosis state import via
-    // `setup_without_evm` does not initialize the v2 AccountChangeSets/StorageChangeSets static
-    // file segments at the non-zero genesis block, which trips the launch consistency check.
-    let _ = DefaultStorageValues::default().with_v2(false).try_init();
-
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
 
-    // Fetch pre-merge state from a URL and load into the DB
+    // Optional post-merge state import for `reth node` on Gnosis / Chiado.
+    // Disabled by default; enable with `--gnosis.import-post-merge-state`.
+    // The default path is genesis sync via AuRa consensus on reth's v2 layout.
+    // The import is idempotent — `imported.flag` in the datadir prevents re-import.
     if let Commands::Node(ref node_cmd) = user_cli.command {
-        let env = EnvironmentArgs::<GnosisChainSpecParser> {
-            datadir: node_cmd.datadir.clone(),
-            config: node_cmd.config.clone(),
-            chain: node_cmd.chain.clone(),
-            db: node_cmd.db,
-            static_files: node_cmd.static_files,
-            storage: node_cmd.storage,
-        };
+        if node_cmd.ext.import_post_merge_state {
+            // Force v1 (legacy) storage layout for new databases. The import path
+            // calls `setup_without_evm`, which does not populate the v2
+            // AccountChangeSets / StorageChangeSets static-file segments at the
+            // non-zero genesis block, tripping reth's launch consistency check.
+            // Genesis-sync (AuRa) skips this branch and uses reth's default v2.
+            let _ = DefaultStorageValues::default().with_v2(false).try_init();
 
-        match node_cmd.chain.chain().id() {
-            100 => download_and_import_init_state("gnosis", GNOSIS_DOWNLOAD_SPEC, env),
-            10200 => download_and_import_init_state("chiado", CHIADO_DOWNLOAD_SPEC, env),
-            _ => {} // For other network do not download state
+            let env = EnvironmentArgs::<GnosisChainSpecParser> {
+                datadir: node_cmd.datadir.clone(),
+                config: node_cmd.config.clone(),
+                chain: node_cmd.chain.clone(),
+                db: node_cmd.db,
+                static_files: node_cmd.static_files,
+                storage: node_cmd.storage,
+            };
+
+            match node_cmd.chain.chain().id() {
+                100 => download_and_import_init_state("gnosis", GNOSIS_DOWNLOAD_SPEC, env),
+                10200 => download_and_import_init_state("chiado", CHIADO_DOWNLOAD_SPEC, env),
+                _ => {} // For other networks do not download state.
+            }
         }
     }
 

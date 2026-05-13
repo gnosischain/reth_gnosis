@@ -58,11 +58,15 @@ fn create_block_env(timestamp: u64) -> EvmEnv {
 
 /// Creates a GnosisBlockExecutionCtx with the given parent timestamp.
 fn create_execution_ctx(parent_timestamp: u64) -> GnosisBlockExecutionCtx<'static> {
+    // Balancer bytecode rewrite is chain-level (timestamp-based), not AuRa-specific.
+    // No `aura` ctx needed for this test — it exercises only the post-merge path.
     GnosisBlockExecutionCtx {
         parent_hash: B256::ZERO,
         parent_beacon_block_root: None,
         withdrawals: None,
         parent_timestamp,
+        aura: None,
+        block_rewards_override: None,
     }
 }
 
