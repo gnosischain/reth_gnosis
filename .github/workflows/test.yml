@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - master
+      - "prerelease-*"
     tags:
       - "v*"
 
@@ -132,6 +133,39 @@ jobs:
         run: cargo doc --no-deps --document-private-items --all-features  
         env:
           RUSTDOCFLAGS: -D warnings
+
+  build-and-push-image-prerelease:
+    # Build the image for prerelease-* branches, tagged only with the branch name (no `latest`).
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/prerelease-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=branch
+      - name: Build and push Docker image
+        uses: docker/build-push-action@4a13e500e55cf31b7a5d59a38ab2040ab0f42f56
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
   build-and-push-image:
     # Build the image only on push to master or on tagged releases.
