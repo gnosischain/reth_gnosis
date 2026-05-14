@@ -1,6 +1,6 @@
 [package]
 name = "reth_gnosis"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 
 [lib]
@@ -12,7 +12,7 @@ name = "reth"
 path = "src/main.rs"
 
 [dependencies]
-gnosis-primitives = { git = "https://github.com/gnosischain/rust-primitives.git", tag = "v0.2.3" }
+gnosis-primitives = { git = "https://github.com/gnosischain/rust-primitives.git", tag = "v0.2.4" }
 
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
