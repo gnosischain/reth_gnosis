@@ -12,7 +12,7 @@ name = "reth"
 path = "src/main.rs"
 
 [dependencies]
-gnosis-primitives = { git = "https://github.com/gnosischain/rust-primitives.git", tag = "v0.2.3-2" }
+gnosis-primitives = { git = "https://github.com/gnosischain/rust-primitives.git", tag = "v0.2.4" }
 
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
@@ -132,3 +132,9 @@ jemalloc = ["dep:tikv-jemallocator"]
 testing = []
 failing-tests = []
 serde = []
+
+# Local override to test the v0.1.x-compat fix in `gnosis-primitives` without
+# cutting a new tag. Drop this block (and bump the tag in `[dependencies]`)
+# once the fix is released.
+# [patch."https://github.com/gnosischain/rust-primitives.git"]
+# gnosis-primitives = { path = "/root/rust-primitives" }
