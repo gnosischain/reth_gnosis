@@ -7,7 +7,8 @@ use reth_gnosis::engine::GnosisEngineValidator;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::{
-    cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode,
+    cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser,
+    version::init_gnosis_version, GnosisNode,
 };
 use reth_rpc::ValidationApi;
 use reth_rpc_api::servers::BlockSubmissionValidationApiServer;
@@ -43,6 +44,9 @@ pub struct GnosisExt {
 type CliGnosis = GnosisCli<GnosisChainSpecParser, GnosisExt>;
 
 fn main() {
+    // Override reth's global version metadata with gnosis values
+    init_gnosis_version();
+
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
 
