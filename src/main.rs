@@ -46,7 +46,7 @@ type CliGnosis = GnosisCli<GnosisChainSpecParser, GnosisExt>;
 
 fn main() {
     let _ = DownloadDefaults::default()
-        .with_snapshot_api_url(SNAPSHOT_API_URL)
+        .with_snapshot_api_url(format!("{}/api/snapshots", SNAPSHOT_API_URL))
         .with_long_help(format!(
             "Snapshots for Gnosis Chain and Chiado.\n\n\
             Auto-discovery: `reth download --chain chiado` (or `--chain gnosis`) picks \
