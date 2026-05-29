@@ -9,7 +9,8 @@ use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
 use reth_gnosis::initialize::SNAPSHOT_API_URL;
 use reth_gnosis::{
-    cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser, GnosisNode,
+    cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser,
+    version::init_gnosis_version, GnosisNode,
 };
 use reth_rpc::ValidationApi;
 use reth_rpc_api::servers::BlockSubmissionValidationApiServer;
@@ -45,6 +46,9 @@ pub struct GnosisExt {
 type CliGnosis = GnosisCli<GnosisChainSpecParser, GnosisExt>;
 
 fn main() {
+    // Override reth's global version metadata with gnosis values
+    init_gnosis_version();
+
     let _ = DownloadDefaults::default()
         .with_snapshot_api_url(format!("{}/api/snapshots", SNAPSHOT_API_URL))
         .with_long_help(format!(
