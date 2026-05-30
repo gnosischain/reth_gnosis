@@ -49,6 +49,9 @@ fn main() {
     // Override reth's global version metadata with gnosis values
     init_gnosis_version();
 
+    // `reth db migrate-v2` is disabled for reth_gnosis
+    reject_migrate_v2();
+
     let _ = DownloadDefaults::default()
         .with_snapshot_api_url(format!("{}/api/snapshots", SNAPSHOT_API_URL))
         .with_long_help(format!(
@@ -96,6 +99,21 @@ fn main() {
 
     // Actual program run
     run_reth(user_cli);
+}
+
+/// Refuses `reth db migrate-v2` before clap dispatches it.
+fn reject_migrate_v2() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let db_pos = args.iter().position(|a| a == "db");
+    let blocked = db_pos.is_some_and(|i| args[i + 1..].iter().any(|a| a == "migrate-v2"));
+
+    if blocked {
+        eprintln!(
+            "\nerror: `db migrate-v2` is not supported in reth_gnosis.\n\
+             Consider a re-sync using snapshot downloads: reth download --chain gnosis\n"
+        );
+        std::process::exit(2);
+    }
 }
 
 fn run_reth(cli: CliGnosis) {
