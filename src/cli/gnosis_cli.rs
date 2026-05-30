@@ -12,7 +12,9 @@ use reth::{
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::{
     common::CliComponentsBuilder,
-    config_cmd, db, download, dump_genesis, export_era, import, init_cmd, init_state,
+    config_cmd, db,
+    download::{self, manifest_cmd},
+    dump_genesis, export_era, import, init_cmd, init_state,
     launcher::FnLauncher,
     node::{self, NoArgs},
     p2p, prune, re_execute, stage,
@@ -203,6 +205,7 @@ where
             Commands::Download(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
             }
+            Commands::SnapshotManifest(command) => command.execute(),
             Commands::ExportEra(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>(rt))
             }
@@ -258,6 +261,9 @@ pub enum Commands<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> {
     /// Download public node snapshots
     #[command(name = "download")]
     Download(download::DownloadCommand<C>),
+    /// Generate a snapshot manifest from local archive files.
+    #[command(name = "snapshot-manifest")]
+    SnapshotManifest(manifest_cmd::SnapshotManifestCommand),
     /// Manipulate individual stages.
     #[command(name = "stage")]
     Stage(stage::Command<C>),
@@ -288,6 +294,7 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> Commands<C, Ext> {
             Self::DumpGenesis(cmd) => cmd.chain_spec(),
             Self::Db(cmd) => cmd.chain_spec(),
             Self::Download(cmd) => cmd.chain_spec(),
+            Self::SnapshotManifest(_) => None,
             Self::Stage(cmd) => cmd.chain_spec(),
             Self::P2P(cmd) => cmd.chain_spec(),
             Self::Config(_) => None,

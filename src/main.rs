@@ -2,10 +2,12 @@ use clap::{Args, Parser};
 use reth::api::FullNodeComponents;
 use reth::args::DefaultStorageValues;
 use reth_cli_commands::common::EnvironmentArgs;
+use reth_cli_commands::download::DownloadDefaults;
 use reth_gnosis::cli::gnosis_cli::Commands;
 use reth_gnosis::engine::GnosisEngineValidator;
 use reth_gnosis::initialize::download_init_state::{CHIADO_DOWNLOAD_SPEC, GNOSIS_DOWNLOAD_SPEC};
 use reth_gnosis::initialize::import_and_ensure_state::download_and_import_init_state;
+use reth_gnosis::initialize::SNAPSHOT_API_URL;
 use reth_gnosis::{
     cli::gnosis_cli::GnosisCli, spec::gnosis_spec::GnosisChainSpecParser,
     version::init_gnosis_version, GnosisNode,
@@ -46,6 +48,18 @@ type CliGnosis = GnosisCli<GnosisChainSpecParser, GnosisExt>;
 fn main() {
     // Override reth's global version metadata with gnosis values
     init_gnosis_version();
+
+    let _ = DownloadDefaults::default()
+        .with_snapshot_api_url(format!("{}/api/snapshots", SNAPSHOT_API_URL))
+        .with_long_help(format!(
+            "Snapshots for Gnosis Chain and Chiado.\n\n\
+            Auto-discovery: `reth download --chain chiado` (or `--chain gnosis`) picks \
+            the latest snapshot from {SNAPSHOT_API_URL}.\n\n\
+            Manual: pass --manifest-url with one of:\n    \
+                {SNAPSHOT_API_URL}/latest/chiado/manifest.json\n    \
+                {SNAPSHOT_API_URL}/latest/gnosis/manifest.json",
+        ))
+        .try_init();
 
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
