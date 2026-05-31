@@ -61,6 +61,9 @@ fn main() {
         ))
         .try_init();
 
+    // `reth db migrate-v2` is disabled for reth_gnosis
+    reject_migrate_v2();
+
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
 
@@ -96,6 +99,22 @@ fn main() {
 
     // Actual program run
     run_reth(user_cli);
+}
+
+/// Refuses `reth db migrate-v2` before clap dispatches it.
+fn reject_migrate_v2() {
+    use clap::CommandFactory;
+
+    let matches = CliGnosis::command().get_matches();
+    let blocked = matches!(matches.subcommand(), Some(("db", db)) if db.subcommand_name() == Some("migrate-v2"));
+
+    if blocked {
+        eprintln!(
+            "\nerror: `db migrate-v2` is not supported in reth_gnosis.\n\
+             Consider re-syncing with snapshots: reth download --chain gnosis (or --chain chiado)\n"
+        );
+        std::process::exit(2);
+    }
 }
 
 fn run_reth(cli: CliGnosis) {
