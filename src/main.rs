@@ -111,7 +111,7 @@ fn reject_migrate_v2() {
     if blocked {
         eprintln!(
             "\nerror: `db migrate-v2` is not supported in reth_gnosis.\n\
-             Consider a re-sync using snapshot downloads: reth download --chain gnosis\n"
+             Consider re-syncing with snapshots: reth download --chain gnosis (or --chain chiado)\n"
         );
         std::process::exit(2);
     }
