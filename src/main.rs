@@ -49,9 +49,6 @@ fn main() {
     // Override reth's global version metadata with gnosis values
     init_gnosis_version();
 
-    // `reth db migrate-v2` is disabled for reth_gnosis
-    reject_migrate_v2();
-
     let _ = DownloadDefaults::default()
         .with_snapshot_api_url(format!("{}/api/snapshots", SNAPSHOT_API_URL))
         .with_long_help(format!(
@@ -63,6 +60,9 @@ fn main() {
                 {SNAPSHOT_API_URL}/latest/gnosis/manifest.json",
         ))
         .try_init();
+
+    // `reth db migrate-v2` is disabled for reth_gnosis
+    reject_migrate_v2();
 
     let user_cli = CliGnosis::parse();
     let _guard = user_cli.init_tracing();
@@ -103,9 +103,10 @@ fn main() {
 
 /// Refuses `reth db migrate-v2` before clap dispatches it.
 fn reject_migrate_v2() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let db_pos = args.iter().position(|a| a == "db");
-    let blocked = db_pos.is_some_and(|i| args[i + 1..].iter().any(|a| a == "migrate-v2"));
+    use clap::CommandFactory;
+
+    let matches = CliGnosis::command().get_matches();
+    let blocked = matches!(matches.subcommand(), Some(("db", db)) if db.subcommand_name() == Some("migrate-v2"));
 
     if blocked {
         eprintln!(
