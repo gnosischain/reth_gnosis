@@ -193,9 +193,9 @@ command.
 
 `reth_gnosis` implements Gnosis Chain's consensus and execution rules on top of Reth:
 
-- **Consensus:** AuRa (pre-merge) and POSDAO, executed from genesis through the merge and beyond.
+- **Consensus:** AuRa (pre-merge) and POSDAO, till merge.
 - **Withdrawals:** credited via the withdrawal/deposit contract, **not** minted as native token.
-- **Block rewards:** the POSDAO block-rewards contract mints bridged xDAI.
+- **Block rewards:** the block-rewards contract mints bridged xDAI.
 - **EIP-1559:** the base fee goes to a **fee collector** contract instead of being burned.
 - **EIP-170:** the contract code-size limit activates at Shanghai (not Spurious Dragon).
 - **Bytecode rewrites:** hardfork-triggered contract upgrades (e.g. the Balancer fork).
