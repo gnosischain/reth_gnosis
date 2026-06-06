@@ -2,8 +2,7 @@
 
 A [Reth](https://github.com/paradigmxyz/reth)-based execution client for **Gnosis Chain** and **Chiado**.
 
-It is **not a fork** — it extends upstream Reth through the `NodeBuilder` API, adding Gnosis-specific
-consensus (AuRa + POSDAO), withdrawals, fee handling, and hardforks on top of stock Reth.
+It is **not a fork** — it extends upstream Reth, adding Gnosis-specific consensus (AuRa + POSDAO), withdrawals, fee handling, and hardforks on top.
 
 | Network | Chain ID | `--chain` value |
 | ------- | -------- | --------------- |
@@ -48,12 +47,11 @@ docker pull ghcr.io/gnosischain/reth_gnosis:master   # or a version tag, e.g. :v
 Mount a data directory and your `jwtsecret`, then run any subcommand by appending it to the image:
 
 ```bash
-mkdir -p ./reth_data
-cp /path/to/jwtsecret ./reth_data/jwtsecret
-
-docker run --network host -v ./reth_data:/data \
+docker run --network host
+    -v ./reth_data:/data
+    -v /path/to/jwtsecret:/jwtsecret:ro \
     ghcr.io/gnosischain/reth_gnosis:master \
-    node --chain chiado --datadir /data --authrpc.jwtsecret=/data/jwtsecret
+    node --chain chiado --datadir /data --authrpc.jwtsecret=/jwtsecret
 ```
 
 ### Option 2 — Build from source
@@ -121,8 +119,10 @@ Fetch a published snapshot, then start the node. Fastest path to a synced node, 
 
 ```bash
 reth download --chain gnosis --minimal   # or --full / --archive
-reth node     --chain gnosis --minimal
+reth node     --chain gnosis             # uses the same pruning config from the download command
 ```
+
+Running `reth node` without running `reth download` first will result in a full sync from genesis. In that case, the `minimal`, `full`, and `archive` flags will set the pruning configuration.
 
 Snapshots are auto-discovered from `https://reth-snapshots.gnosischain.com`. To pin one manually, pass
 `--manifest-url`, e.g. `https://reth-snapshots.gnosischain.com/latest/gnosis/manifest.json`. Browse the
@@ -137,18 +137,6 @@ reth node --chain gnosis --datadir ./reth_data --authrpc.jwtsecret=./reth_data/j
 ```
 
 This is the simplest setup and uses storage v2, but takes longer than a snapshot.
-
-### 3. Post-merge state import (legacy)
-
-The pre-v2 behavior: download a canonical post-merge state and import it before sync. Opt in with a flag.
-**This forces the legacy storage-v1 layout** and is generally only needed for compatibility.
-
-```bash
-reth node --chain gnosis --gnosis.import-post-merge-state true
-```
-
-The import is idempotent — once it succeeds, an `imported.flag` file in the datadir makes later launches
-skip the download regardless of the flag.
 
 ---
 
@@ -199,6 +187,8 @@ command.
 - **EIP-1559:** the base fee goes to a **fee collector** contract instead of being burned.
 - **EIP-170:** the contract code-size limit activates at Shanghai (not Spurious Dragon).
 - **Bytecode rewrites:** hardfork-triggered contract upgrades (e.g. the Balancer fork).
+
+For more details, see the [Gnosis Chain Configs](https://github.com/gnosischain/configs).
 
 ### Implemented
 
