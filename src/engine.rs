@@ -7,6 +7,7 @@ use crate::{
     primitives::block::{GnosisBlock, IntoGnosisBlock, TransactionSigned},
     spec::gnosis_spec::GnosisChainSpec,
 };
+use alloy_primitives::Bytes;
 use reth::rpc::types::engine::{ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV5};
 use reth_ethereum_engine_primitives::{
     EthPayloadAttributes, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
@@ -38,7 +39,20 @@ impl PayloadTypes for GnosisEngineTypes {
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
+        bal: Option<Bytes>,
     ) -> ExecutionData {
+        let (payload, sidecar) = ExecutionPayload::from_block_unchecked_with_extras(
+            block.hash(),
+            &block.into_block(),
+            bal,
+        );
+        ExecutionData { payload, sidecar }
+    }
+}
+
+impl From<GnosisBuiltPayload> for ExecutionData {
+    fn from(value: GnosisBuiltPayload) -> Self {
+        let block = Arc::unwrap_or_clone(value.block);
         let (payload, sidecar) =
             ExecutionPayload::from_block_unchecked(block.hash(), &block.into_block());
         ExecutionData { payload, sidecar }

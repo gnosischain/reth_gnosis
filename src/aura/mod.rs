@@ -7,6 +7,7 @@ pub mod validators;
 use std::sync::Arc;
 
 use alloy_consensus::{constants::EMPTY_OMMER_ROOT_HASH, BlockHeader};
+use alloy_primitives::B256;
 use gnosis_primitives::header::GnosisHeader;
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
@@ -139,8 +140,15 @@ impl FullConsensus<GnosisNodePrimitives> for GnosisConsensus {
         block: &RecoveredBlock<<GnosisNodePrimitives as NodePrimitives>::Block>,
         result: &BlockExecutionResult<<GnosisNodePrimitives as NodePrimitives>::Receipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
+        block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
-        validate_block_post_execution(block, &*self.chain_spec, result, receipt_root_bloom)
+        validate_block_post_execution(
+            block,
+            &*self.chain_spec,
+            result,
+            receipt_root_bloom,
+            block_access_list_hash,
+        )
     }
 }
 
