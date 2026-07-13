@@ -233,7 +233,7 @@ where
 
         let action = frame
             .interpreter
-            .run_plain(instructions.instruction_table(), context);
+            .run_plain(instructions.instruction_table(), instructions.gas_table(),context);
 
         frame.process_next_action(context, action).inspect(|i| {
             if i.is_result() {
@@ -423,29 +423,26 @@ pub use sstore_eip1283_impl::sstore_eip1283;
 mod sstore_eip1283_impl {
     use revm::interpreter::{
         interpreter_types::{InputsTr, InterpreterTypes, RuntimeFlag, StackTr},
-        Host, InstructionContext, InstructionResult,
+        Host, InstructionContext, InstructionExecResult, InstructionResult,
     };
 
     pub fn sstore_eip1283<WIRE: InterpreterTypes, H: Host + ?Sized>(
         context: InstructionContext<'_, H, WIRE>,
-    ) {
+    ) -> InstructionExecResult {
         // require non-static
         if context.interpreter.runtime_flag.is_static() {
-            context
-                .interpreter
-                .halt(InstructionResult::StateChangeDuringStaticCall);
-            return;
+            return Err(InstructionResult::StateChangeDuringStaticCall);
         }
 
         let Some([index, value]) = context.interpreter.stack.popn::<2>() else {
-            context.interpreter.halt(InstructionResult::StackUnderflow);
-            return;
+            return Err(InstructionResult::StackUnderflow);
         };
 
         let target = context.interpreter.input.target_address();
 
-        // NOTE: EIP-1283 does NOT have the 2300 gas stipend check.
-        // That was added in EIP-2200 (Istanbul). Omitting it here.
+        // NOTE: EIP-1283 does NOT have the EIP-2200 (Istanbul) 2300-gas stipend check,
+        // and predates Berlin, so there is no cold-storage path here — plain Constantinople
+        // net gas metering only.
 
         // Static gas
         if !context
@@ -453,15 +450,11 @@ mod sstore_eip1283_impl {
             .gas
             .record_regular_cost(context.host.gas_params().sstore_static_gas())
         {
-            context.interpreter.halt(InstructionResult::OutOfGas);
-            return;
+            return Err(InstructionResult::OutOfGas);
         }
 
         let Some(state_load) = context.host.sstore(target, index, value) else {
-            context
-                .interpreter
-                .halt(InstructionResult::FatalExternalError);
-            return;
+            return Err(InstructionResult::FatalExternalError);
         };
 
         // Dynamic gas — force is_istanbul = true for EIP-1283 net gas metering
@@ -471,8 +464,7 @@ mod sstore_eip1283_impl {
             state_load.is_cold,
         );
         if !context.interpreter.gas.record_regular_cost(dynamic_gas) {
-            context.interpreter.halt(InstructionResult::OutOfGas);
-            return;
+            return Err(InstructionResult::OutOfGas);
         }
 
         // Refund — force is_istanbul = true
@@ -482,5 +474,7 @@ mod sstore_eip1283_impl {
                 .gas_params()
                 .sstore_refund(true, &state_load.data),
         );
+
+        Ok(())
     }
 }

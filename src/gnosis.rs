@@ -10,7 +10,6 @@ use alloy_primitives::{
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use reth_evm::{
-    block::{StateChangePostBlockSource, StateChangeSource, SystemCaller},
     eth::spec::EthExecutorSpec,
     execute::{BlockExecutionError, InternalBlockExecutionError},
     Evm,
@@ -45,15 +44,11 @@ sol!(
 /// Applies the post-block call to the withdrawal / deposit contract, using the given block.
 /// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
 #[inline]
-fn apply_withdrawals_contract_call<SPEC>(
+fn apply_withdrawals_contract_call(
     withdrawal_contract_address: Address,
     withdrawals: &[Withdrawal],
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
-    system_caller: &mut SystemCaller<SPEC>,
-) -> Result<Bytes, BlockExecutionError>
-where
-    SPEC: EthExecutorSpec + GnosisHardForks,
-{
+) -> Result<Bytes, BlockExecutionError> {
     // TODO: Only do the call post-merge
     // TODO: Should this call be made for the genesis block?
 
@@ -82,13 +77,7 @@ where
 
     // SYSTEM_ADDRESS and beneficiary are already pruned from the system-call
     // diff by `evm/factory.rs::transact_system_call`; no extra cleanup here.
-
-    system_caller.invoke_hook_with(|hook| {
-        hook.on_state(
-            StateChangeSource::PostBlock(StateChangePostBlockSource::WithdrawalRequestsContract),
-            &state,
-        );
-    });
+    // reth 2.3.0 removed the OnStateHook plumbing, so no state-hook notification here.
 
     evm.db_mut().commit(state);
 
@@ -109,15 +98,11 @@ where
 /// `is_pre_merge`: when true, preserve SYSTEM_ADDRESS in committed state to match
 /// Nethermind's "EIP-158 disabled for AuRa system calls" semantics.
 #[inline]
-fn apply_block_rewards_contract_call<SPEC>(
+fn apply_block_rewards_contract_call(
     block_rewards_contract: Address,
     coinbase: Address,
     evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
-    system_caller: &mut SystemCaller<SPEC>,
-) -> Result<(AddressMap<u128>, Vec<alloy_primitives::Log>), BlockExecutionError>
-where
-    SPEC: EthExecutorSpec + GnosisHardForks,
-{
+) -> Result<(AddressMap<u128>, Vec<alloy_primitives::Log>), BlockExecutionError> {
     let ResultAndState { result, state } = match evm.transact_system_call(
         alloy_eips::eip4788::SYSTEM_ADDRESS,
         block_rewards_contract,
@@ -180,13 +165,7 @@ where
         })
     })?;
 
-    system_caller.invoke_hook_with(|hook| {
-        hook.on_state(
-            StateChangeSource::PostBlock(StateChangePostBlockSource::WithdrawalRequestsContract),
-            &state,
-        );
-    });
-
+    // reth 2.3.0 removed the OnStateHook plumbing, so no state-hook notification here.
     // SYSTEM_ADDRESS preservation for system calls is handled in
     // `evm/factory.rs::transact_system_call`; no per-call-site logic needed.
     evm.db_mut().commit(state);
@@ -224,7 +203,6 @@ pub(crate) fn apply_post_block_system_calls<SPEC>(
     withdrawals: Option<&Withdrawals>,
     coinbase: Address,
     evm: &mut impl Evm<DB: Database + DatabaseCommit>,
-    system_caller: &mut SystemCaller<SPEC>,
 ) -> Result<(AddressMap<u128>, Bytes, Vec<alloy_primitives::Log>), BlockExecutionError>
 where
     SPEC: EthExecutorSpec + GnosisHardForks,
@@ -236,11 +214,11 @@ where
             message: "block has no withdrawals field".to_owned(),
         })?;
         withdrawal_requests =
-            apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm, system_caller)?;
+            apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm)?;
     }
 
     let (balance_increments, reward_logs) =
-        apply_block_rewards_contract_call(block_rewards_contract, coinbase, evm, system_caller)?;
+        apply_block_rewards_contract_call(block_rewards_contract, coinbase, evm)?;
 
     Ok((balance_increments, withdrawal_requests, reward_logs))
 }
@@ -270,13 +248,9 @@ pub fn rewrite_aura_bytecodes(
             code: Some(bytecode),
             ..original_account_info
         };
-        let account = Account {
-            info: modified_account_info,
-            storage: HashMap::default(),
-            status: AccountStatus::Touched,
-            transaction_id: 0,
-            original_info: Box::new(original_account_info.clone()),
-        };
+        let mut account = Account::from(modified_account_info);
+        account.status = AccountStatus::Touched;
+        *account.original_info_mut() = original_account_info.clone();
         tracing::info!(
             "AuRa Bytecode Rewrite >>> Addr: {}; From: {}; To: {}",
             addr,
@@ -314,13 +288,9 @@ pub fn rewrite_bytecodes(
             code: code.clone(),
             ..original_account_info
         };
-        let account = Account {
-            info: modified_account_info,
-            storage: HashMap::default(),
-            status: revm_state::AccountStatus::Touched,
-            transaction_id: 0,
-            original_info: Box::new(original_account_info.clone()),
-        };
+        let mut account = Account::from(modified_account_info);
+        account.status = revm_state::AccountStatus::Touched;
+        *account.original_info_mut() = original_account_info.clone();
         tracing::info!(
             "Rewriting Bytecode >>> Addr: {}; From: {}; To: {}",
             addr,

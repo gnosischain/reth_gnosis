@@ -9,7 +9,6 @@ use alloy_evm::block::{ExecutableTx, GasOutput, StateDB};
 use alloy_evm::eth::EthTxResult;
 use alloy_evm::Evm;
 use alloy_evm::{
-    block::state_changes::balance_increment_state,
     eth::eip6110::{self, parse_deposits_from_receipts},
     FromTxWithEncoded,
 };
@@ -18,15 +17,12 @@ use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_evm::execute::InternalBlockExecutionError;
 use reth_evm::{
-    block::{
-        BlockExecutor, BlockExecutorFactory, StateChangePostBlockSource, StateChangeSource,
-        SystemCaller,
-    },
+    block::{BlockExecutor, BlockExecutorFactory, SystemCaller},
     eth::{
         receipt_builder::{AlloyReceiptBuilder, ReceiptBuilder, ReceiptBuilderCtx},
         spec::EthExecutorSpec,
     },
-    EvmFactory, FromRecoveredTx, OnStateHook, RecoveredTx,
+    EvmFactory, FromRecoveredTx, RecoveredTx,
 };
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;
@@ -413,8 +409,8 @@ where
             tx_type,
         } = output;
 
-        self.system_caller
-            .on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
+        // reth 2.3.0 removed the per-transaction state hook (OnStateHook) from the block
+        // executor; state changes are observed elsewhere now, so no notification here.
 
         let gas_used = result.tx_gas_used();
 
@@ -507,7 +503,6 @@ where
             withdrawals,
             beneficiary,
             &mut self.evm,
-            &mut self.system_caller,
         )?;
 
         // AuRa-execution-mode-only post-block work: InitiateChange detection +
@@ -578,18 +573,11 @@ where
         // increment balances
         self.evm
             .db_mut()
-            .increment_balances(balance_increments.clone())
+            .increment_balances(balance_increments)
             .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
 
-        // call state hook with changes due to balance increments.
-        self.system_caller.try_on_state_with(|| {
-            balance_increment_state(&balance_increments, self.evm.db_mut()).map(|state| {
-                (
-                    StateChangeSource::PostBlock(StateChangePostBlockSource::BalanceIncrements),
-                    Cow::Owned(state),
-                )
-            })
-        })?;
+        // reth 2.3.0 removed the post-block balance-increment state hook; the reference
+        // EthBlockExecutor now applies the increments directly with no notification.
 
         Ok((
             self.evm,
@@ -600,10 +588,6 @@ where
                 blob_gas_used: self.blob_gas_used,
             },
         ))
-    }
-
-    fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
-        self.system_caller.with_state_hook(hook);
     }
 
     fn evm_mut(&mut self) -> &mut Self::Evm {

@@ -139,8 +139,15 @@ impl FullConsensus<GnosisNodePrimitives> for GnosisConsensus {
         block: &RecoveredBlock<<GnosisNodePrimitives as NodePrimitives>::Block>,
         result: &BlockExecutionResult<<GnosisNodePrimitives as NodePrimitives>::Receipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
+        block_access_list_hash: Option<alloy_primitives::B256>,
     ) -> Result<(), ConsensusError> {
-        validate_block_post_execution(block, &*self.chain_spec, result, receipt_root_bloom)
+        validate_block_post_execution(
+            block,
+            &*self.chain_spec,
+            result,
+            receipt_root_bloom,
+            block_access_list_hash,
+        )
     }
 }
 

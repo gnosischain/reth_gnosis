@@ -60,7 +60,13 @@ pub fn gnosis_revm_spec(chain_spec: &GnosisChainSpec, header: &GnosisHeader) -> 
             .fork(EthereumHardfork::Constantinople)
             .active_at_block(block_number)
         {
-            SpecId::CONSTANTINOPLE
+            // revm-primitives >= 24 removed `SpecId::CONSTANTINOPLE` (on Ethereum mainnet
+            // Constantinople and Petersburg activate at the same block, so EIP-1283 never
+            // went live and the two specs are identical). Gnosis, however, ran a distinct
+            // [Constantinople, Petersburg) window with EIP-1283 active. Map that window to
+            // PETERSBURG (= Constantinople minus EIP-1283) here; EIP-1283 is re-applied
+            // separately via `gnosis_eip1283_active` — see `get_cfg_env` and the EVM factory.
+            SpecId::PETERSBURG
         } else if chain_spec
             .fork(EthereumHardfork::Byzantium)
             .active_at_block(block_number)
@@ -89,12 +95,30 @@ pub fn gnosis_revm_spec(chain_spec: &GnosisChainSpec, header: &GnosisHeader) -> 
     }
 }
 
+/// Whether Gnosis's EIP-1283 (SSTORE net gas metering) is active at `block_number`.
+///
+/// Ethereum mainnet activated Constantinople and Petersburg at the same block, so EIP-1283
+/// never went live and revm has no dedicated Constantinople spec. Gnosis instead ran a real
+/// `[constantinopleBlock, petersburgBlock)` window (blocks 1_604_400..2_508_800 on mainnet)
+/// during which EIP-1283 was active and later removed at Petersburg. This encodes exactly that
+/// window straight from the (still-distinct) chainspec forks, so it is the single source of
+/// truth for re-applying EIP-1283 on top of revm's PETERSBURG spec.
+pub fn gnosis_eip1283_active(chain_spec: &GnosisChainSpec, block_number: u64) -> bool {
+    chain_spec
+        .fork(EthereumHardfork::Constantinople)
+        .active_at_block(block_number)
+        && !chain_spec
+            .fork(EthereumHardfork::Petersburg)
+            .active_at_block(block_number)
+}
+
 /// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
 pub fn get_cfg_env(
     chain_spec: &GnosisChainSpec,
     spec: SpecId,
     timestamp: u64,
     is_pre_merge: bool,
+    eip1283_active: bool,
 ) -> CfgEnv {
     let mut cfg = CfgEnv::new()
         .with_chain_id(chain_spec.chain().id())
@@ -119,7 +143,7 @@ pub fn get_cfg_env(
     // - static (base) cost: 200 (not 5000)
     // - set cost: 20000 - 200 = 19800
     // - reset cost: 5000 - 200 = 4800
-    if spec == SpecId::CONSTANTINOPLE && is_pre_merge {
+    if eip1283_active && is_pre_merge {
         use revm::context_interface::cfg::{GasId, GasParams};
         use std::sync::Arc;
         let table = cfg.gas_params.table();
@@ -208,6 +232,16 @@ impl GnosisEvmConfig {
         let block_rewards_address: Address = serde_json::from_value(block_rewards_address.clone())
             .expect("failed to parse eip1559collector field");
 
+        // Gnosis EIP-1283 window: [constantinopleBlock, petersburgBlock). Mirrors
+        // `gnosis_eip1283_active`, but materialized as a range so the EVM factory (which only
+        // sees the block number, not the chain spec) can reinstate EIP-1283 SSTORE metering.
+        // An empty range (e.g. Chiado, where both blocks are 0) means never active.
+        let eip1283_window = chain_spec
+            .genesis()
+            .config
+            .constantinople_block
+            .map(|c| c..chain_spec.genesis().config.petersburg_block.unwrap_or(u64::MAX));
+
         Self {
             block_assembler: GnosisBlockAssembler::new(chain_spec.clone()),
             executor_factory: GnosisBlockExecutorFactory::new(
@@ -215,6 +249,7 @@ impl GnosisEvmConfig {
                 (*chain_spec).clone(),
                 GnosisEvmFactory {
                     fee_collector_address,
+                    eip1283_window,
                 },
                 block_rewards_address,
             ),
@@ -274,6 +309,7 @@ impl ConfigureEvm for GnosisEvmConfig {
             spec,
             header.timestamp,
             header.is_pre_merge(),
+            gnosis_eip1283_active(self.chain_spec(), header.number()),
         );
 
         if let Some(blob_params) = &blob_params {
@@ -340,7 +376,7 @@ impl ConfigureEvm for GnosisEvmConfig {
 
         // configure evm env based on parent block
         // next_evm_env is for building the next block (post-merge only)
-        let mut cfg = get_cfg_env(&self.chain_spec, spec_id, attributes.timestamp, false);
+        let mut cfg = get_cfg_env(&self.chain_spec, spec_id, attributes.timestamp, false, false);
 
         if let Some(blob_params) = &blob_params {
             cfg.set_max_blobs_per_tx(blob_params.max_blobs_per_tx);
@@ -512,7 +548,7 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
 
         // configure evm env based on parent block
         // Payloads are always post-merge
-        let mut cfg_env = get_cfg_env(self.chain_spec(), spec, timestamp, false);
+        let mut cfg_env = get_cfg_env(self.chain_spec(), spec, timestamp, false, false);
 
         if let Some(blob_params) = &blob_params {
             cfg_env.set_max_blobs_per_tx(blob_params.max_blobs_per_tx);
