@@ -234,7 +234,7 @@ where
             // revm marks all SLOAD-ed slots and accessed accounts in the state diff
             // even if values didn't change. For system calls committed directly via
             // db.commit(), these "read-only" entries would pollute the state trie.
-            for (_addr, account) in res.state.iter_mut() {
+            for account in res.state.values_mut() {
                 account
                     .storage
                     .retain(|_slot, value| value.present_value != value.original_value);
