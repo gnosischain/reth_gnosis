@@ -11,7 +11,10 @@ use reth_db_api::table::Value;
 use reth_era::{
     common::{decode::DecodeCompressedRlp, file_ops::StreamReader},
     e2s::error::E2sError,
-    era1::{file::BlockTupleIterator, types::execution::BlockTuple},
+    era1::{
+        file::{BlockTupleIterator, Era1Reader},
+        types::execution::BlockTuple,
+    },
 };
 use reth_era_downloader::EraMeta;
 use reth_era_utils::{build_index, open, save_stage_checkpoints};
@@ -210,7 +213,7 @@ where
     <P as NodePrimitivesProvider>::Primitives:
         NodePrimitives<BlockHeader = BH, BlockBody = BB, Receipt = Receipt>,
 {
-    let reader = open(meta)?;
+    let reader: Era1Reader<std::fs::File> = open(meta)?;
     let iter = reader.iter().map(Box::new(decode)
         as Box<dyn Fn(Result<BlockTuple, E2sError>) -> eyre::Result<(BH, BB, ReceiptsType)>>);
     let iter = ProcessIter { iter, era: meta };

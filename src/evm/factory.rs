@@ -6,7 +6,7 @@ use reth_evm::{eth::EthEvmContext, EvmEnv, EvmFactory};
 use revm::{
     context::{
         result::{EVMError, HaltReason, ResultAndState},
-        BlockEnv, CfgEnv, TxEnv,
+        BlockEnv, CfgEnv, DBErrorMarker, TxEnv,
     },
     handler::{instructions::EthInstructions, PrecompileProvider},
     inspector::NoOpInspector,
@@ -215,15 +215,13 @@ where
             res.state
                 .entry(alloy_eips::eip4788::SYSTEM_ADDRESS)
                 .and_modify(|acc| {
-                    acc.info = *acc.original_info.clone();
+                    acc.info = acc.original_info();
                     acc.status |= AccountStatus::Created | AccountStatus::Touched;
                 })
-                .or_insert_with(|| Account {
-                    info: AccountInfo::default(),
-                    original_info: Box::new(AccountInfo::default()),
-                    transaction_id: 0,
-                    storage: Default::default(),
-                    status: AccountStatus::Created | AccountStatus::Touched,
+                .or_insert_with(|| {
+                    let mut acc = Account::from(AccountInfo::default());
+                    acc.status = AccountStatus::Created | AccountStatus::Touched;
+                    acc
                 });
 
             res.state.remove(&self.block.beneficiary);
@@ -236,7 +234,7 @@ where
             // revm marks all SLOAD-ed slots and accessed accounts in the state diff
             // even if values didn't change. For system calls committed directly via
             // db.commit(), these "read-only" entries would pollute the state trie.
-            for (_addr, account) in res.state.iter_mut() {
+            for account in res.state.values_mut() {
                 account
                     .storage
                     .retain(|_slot, value| value.present_value != value.original_value);
@@ -305,13 +303,30 @@ where
 #[derive(Debug, Clone, Default)]
 pub struct GnosisEvmFactory {
     pub fee_collector_address: Address,
+    /// Gnosis ran EIP-1283 (SSTORE net gas metering) in the half-open
+    /// `[constantinopleBlock, petersburgBlock)` window — see `gnosis_eip1283_active`.
+    /// revm-primitives >= 24 dropped `SpecId::CONSTANTINOPLE`, so those blocks execute on the
+    /// PETERSBURG spec and the factory carries the window explicitly to reinstate EIP-1283 via
+    /// a custom SSTORE instruction for blocks inside it. `None` = never active (e.g. Chiado).
+    pub eip1283_window: Option<core::ops::Range<u64>>,
+}
+
+impl GnosisEvmFactory {
+    /// Whether the Gnosis EIP-1283 SSTORE override applies at `block_number` (the half-open
+    /// `[constantinopleBlock, petersburgBlock)` window). See `eip1283_window`.
+    fn eip1283_active(&self, block_number: u64) -> bool {
+        self.eip1283_window
+            .as_ref()
+            .is_some_and(|w| w.contains(&block_number))
+    }
 }
 
 impl EvmFactory for GnosisEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> = GnosisEvm<DB, I>;
     type Context<DB: Database> = EthEvmContext<DB>;
     type Tx = TxEnv;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
+    type Error<DBError: DBErrorMarker + core::error::Error + Send + Sync + 'static> =
+        EVMError<DBError>;
     type HaltReason = HaltReason;
     type Spec = SpecId;
     type BlockEnv = BlockEnv;
@@ -319,6 +334,7 @@ impl EvmFactory for GnosisEvmFactory {
 
     fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
+        let block_number = input.block_env.number.saturating_to::<u64>();
         let mut evm = Context::mainnet()
             .with_db(db)
             .with_cfg(input.cfg_env)
@@ -329,14 +345,17 @@ impl EvmFactory for GnosisEvmFactory {
             )));
 
         // Gnosis Constantinople: override SSTORE to apply EIP-1283 net gas metering.
-        // revm's CONSTANTINOPLE spec uses pre-EIP-1283 SSTORE gas, but Gnosis
-        // activates EIP-1283 at Constantinople (block 1604400).
-        if spec_id == SpecId::CONSTANTINOPLE {
+        // revm has no Constantinople spec, so the window runs on PETERSBURG (= Constantinople
+        // minus EIP-1283) and we reinstate EIP-1283 for blocks in the window.
+        if self.eip1283_active(block_number) {
             use revm::bytecode::opcode::SSTORE;
             use revm::interpreter::Instruction;
+            // gas = 0: SSTORE static gas is charged inside the instruction via GasParams,
+            // matching revm's own default gas_table entry for SSTORE.
             evm.instruction.insert_instruction(
                 SSTORE,
-                Instruction::new(crate::evm::gnosis_evm::sstore_eip1283, 0),
+                Instruction::new(crate::evm::gnosis_evm::sstore_eip1283),
+                0,
             );
         }
 
@@ -353,6 +372,7 @@ impl EvmFactory for GnosisEvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
+        let block_number = input.block_env.number.saturating_to::<u64>();
         let mut evm = Context::mainnet()
             .with_db(db)
             .with_cfg(input.cfg_env)
@@ -363,14 +383,17 @@ impl EvmFactory for GnosisEvmFactory {
             )));
 
         // Gnosis Constantinople: override SSTORE to apply EIP-1283 net gas metering.
-        // revm's CONSTANTINOPLE spec uses pre-EIP-1283 SSTORE gas, but Gnosis
-        // activates EIP-1283 at Constantinople (block 1604400).
-        if spec_id == SpecId::CONSTANTINOPLE {
+        // revm has no Constantinople spec, so the window runs on PETERSBURG (= Constantinople
+        // minus EIP-1283) and we reinstate EIP-1283 for blocks in the window.
+        if self.eip1283_active(block_number) {
             use revm::bytecode::opcode::SSTORE;
             use revm::interpreter::Instruction;
+            // gas = 0: SSTORE static gas is charged inside the instruction via GasParams,
+            // matching revm's own default gas_table entry for SSTORE.
             evm.instruction.insert_instruction(
                 SSTORE,
-                Instruction::new(crate::evm::gnosis_evm::sstore_eip1283, 0),
+                Instruction::new(crate::evm::gnosis_evm::sstore_eip1283),
+                0,
             );
         }
 

@@ -7,7 +7,11 @@ use crate::{
     primitives::block::{GnosisBlock, IntoGnosisBlock, TransactionSigned},
     spec::gnosis_spec::GnosisChainSpec,
 };
-use reth::rpc::types::engine::{ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV5};
+use alloy_primitives::Bytes;
+use alloy_rpc_types_engine::{
+    CancunPayloadFields, ExecutionData, ExecutionPayloadSidecar, PraguePayloadFields,
+};
+use reth::rpc::types::engine::{ExecutionPayload, ExecutionPayloadEnvelopeV5};
 use reth_ethereum_engine_primitives::{
     EthPayloadAttributes, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
     ExecutionPayloadEnvelopeV4, ExecutionPayloadEnvelopeV6, ExecutionPayloadV1,
@@ -21,6 +25,7 @@ use reth_node_builder::{
 use reth_primitives_traits::SealedBlock;
 use reth_primitives_traits::{NodePrimitives, RecoveredBlock};
 use serde::{Deserialize, Serialize};
+
 use std::sync::Arc;
 
 /// Custom engine types - uses a custom payload attributes RPC type, but uses the default
@@ -38,9 +43,54 @@ impl PayloadTypes for GnosisEngineTypes {
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
+        bal: Option<Bytes>,
     ) -> ExecutionData {
+        // `bal` carries an optional EIP-7928 block access list; with `None` this reduces to the
+        // pre-2.3.0 `from_block_unchecked` behavior.
+        let (payload, sidecar) = ExecutionPayload::from_block_unchecked_with_extras(
+            block.hash(),
+            &block.into_block(),
+            bal,
+        );
+        ExecutionData { payload, sidecar }
+    }
+}
+
+// PayloadTypes now requires `ExecutionData: From<Self::BuiltPayload>`. Mirrors reth's
+// `EthBuiltPayload::into_execution_data`: Gnosis does not track EIP-7928 block access lists in
+// the built payload, so the block access list is always `None`.
+impl From<GnosisBuiltPayload> for ExecutionData {
+    fn from(value: GnosisBuiltPayload) -> Self {
+        let GnosisBuiltPayload {
+            block, requests, ..
+        } = value;
+        let block_hash = block.hash();
+        let block = Arc::unwrap_or_clone(block).into_block();
+
         let (payload, sidecar) =
-            ExecutionPayload::from_block_unchecked(block.hash(), &block.into_block());
+            ExecutionPayload::from_block_unchecked_with_extras(block_hash, &block, None);
+
+        let sidecar = if let Some(requests) = requests {
+            block
+                .header
+                .parent_beacon_block_root
+                .map_or(sidecar, |parent_beacon_block_root| {
+                    ExecutionPayloadSidecar::v4(
+                        CancunPayloadFields {
+                            parent_beacon_block_root,
+                            versioned_hashes: block
+                                .body
+                                .blob_versioned_hashes_iter()
+                                .copied()
+                                .collect(),
+                        },
+                        PraguePayloadFields::new(requests),
+                    )
+                })
+        } else {
+            sidecar
+        };
+
         ExecutionData { payload, sidecar }
     }
 }

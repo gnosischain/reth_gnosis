@@ -21,7 +21,7 @@ use reth_cli_commands::{
 };
 use reth_consensus::FullConsensus;
 use reth_db::DatabaseEnv;
-use reth_tracing::FileWorkerGuard;
+use reth_tracing::TracingGuards;
 use tracing::info;
 
 use crate::{
@@ -219,7 +219,7 @@ where
     ///
     /// If file logging is enabled, this function returns a guard that must be kept alive to ensure
     /// that all logs are flushed to disk.
-    pub fn init_tracing(&self) -> eyre::Result<Option<FileWorkerGuard>> {
+    pub fn init_tracing(&self) -> eyre::Result<TracingGuards> {
         let guard = self.logs.init_tracing()?;
         Ok(guard)
     }

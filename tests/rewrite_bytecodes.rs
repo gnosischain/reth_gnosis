@@ -35,6 +35,7 @@ fn create_test_evm_env() -> EvmEnv {
 fn create_test_evm(db: CacheDB<EmptyDB>) -> impl Evm<DB = CacheDB<EmptyDB>> {
     let factory = GnosisEvmFactory {
         fee_collector_address: Address::ZERO,
+        eip1283_window: None,
     };
     factory.create_evm(db, create_test_evm_env())
 }

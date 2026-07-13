@@ -137,6 +137,7 @@ fn test_bytecode_rewrite_at_hardfork_activation_block() {
     // Create EVM and executor
     let factory = GnosisEvmFactory {
         fee_collector_address: Address::ZERO,
+        eip1283_window: None,
     };
     let evm_env = create_block_env(current_timestamp);
     let evm = factory.create_evm(&mut state, evm_env);
@@ -210,6 +211,7 @@ fn test_bytecode_not_rewritten_after_hardfork_activation() {
     // Create EVM and executor
     let factory = GnosisEvmFactory {
         fee_collector_address: Address::ZERO,
+        eip1283_window: None,
     };
     let evm_env = create_block_env(current_timestamp);
     let evm = factory.create_evm(&mut state, evm_env);
@@ -270,6 +272,7 @@ fn test_bytecode_not_rewritten_before_hardfork() {
     // Create EVM and executor
     let factory = GnosisEvmFactory {
         fee_collector_address: Address::ZERO,
+        eip1283_window: None,
     };
     let evm_env = create_block_env(current_timestamp);
     let evm = factory.create_evm(&mut state, evm_env);
@@ -312,6 +315,7 @@ fn test_bytecode_rewrite_idempotent_via_block_execution() {
     // Create EVM and executor
     let factory = GnosisEvmFactory {
         fee_collector_address: Address::ZERO,
+        eip1283_window: None,
     };
     let evm_env = create_block_env(current_timestamp);
     let evm = factory.create_evm(&mut state, evm_env);
