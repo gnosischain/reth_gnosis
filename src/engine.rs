@@ -71,19 +71,22 @@ impl From<GnosisBuiltPayload> for ExecutionData {
             ExecutionPayload::from_block_unchecked_with_extras(block_hash, &block, None);
 
         let sidecar = if let Some(requests) = requests {
-            block.header.parent_beacon_block_root.map_or(sidecar, |parent_beacon_block_root| {
-                ExecutionPayloadSidecar::v4(
-                    CancunPayloadFields {
-                        parent_beacon_block_root,
-                        versioned_hashes: block
-                            .body
-                            .blob_versioned_hashes_iter()
-                            .copied()
-                            .collect(),
-                    },
-                    PraguePayloadFields::new(requests),
-                )
-            })
+            block
+                .header
+                .parent_beacon_block_root
+                .map_or(sidecar, |parent_beacon_block_root| {
+                    ExecutionPayloadSidecar::v4(
+                        CancunPayloadFields {
+                            parent_beacon_block_root,
+                            versioned_hashes: block
+                                .body
+                                .blob_versioned_hashes_iter()
+                                .copied()
+                                .collect(),
+                        },
+                        PraguePayloadFields::new(requests),
+                    )
+                })
         } else {
             sidecar
         };

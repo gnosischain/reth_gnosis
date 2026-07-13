@@ -248,13 +248,11 @@ mod tests {
             "blockRewardContractAddress": "0x000000000000000000000000000000000000beef"
         });
         let cfg = AuraConfig::from_json_value(&v).unwrap();
-        assert_eq!(
-            cfg.block_reward_contract_transitions
-                .get(&0)
-                .copied()
-                .is_some(),
-            true
-        );
+        assert!(cfg
+            .block_reward_contract_transitions
+            .get(&0)
+            .copied()
+            .is_some());
     }
 
     #[test]

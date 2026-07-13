@@ -24,7 +24,9 @@ use reth_ethereum_engine_primitives::{
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_evm::{
-    ConfigureEvm, Evm, NextBlockEnvAttributes, block::TxResult, execute::{BlockBuilder, BlockBuilderOutcome},
+    block::TxResult,
+    execute::{BlockBuilder, BlockBuilderOutcome},
+    ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_node_api::PayloadAttributes;
@@ -181,7 +183,9 @@ where
             execution_cache.cache().clone(),
             // It's ok to recreate the cache every time, because it's cheap to do so for a vanilla
             // Ethereum builder every 12s.
-            Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
+            Some(CachedStateMetrics::zeroed(
+                CachedStateMetricsSource::Builder,
+            )),
         ));
     }
     let state = StateProviderDatabase::new(state_provider.as_ref());
@@ -220,14 +224,21 @@ where
 
     let mut best_txs = best_txs(BestTransactionsAttributes::new(
         base_fee,
-        builder.evm_mut().block().blob_gasprice().map(|gasprice| gasprice as u64),
+        builder
+            .evm_mut()
+            .block()
+            .blob_gasprice()
+            .map(|gasprice| gasprice as u64),
     ));
     let mut total_fees = U256::ZERO;
 
     // If we have a sparse trie handle, wire a state hook that streams per-tx state diffs
     // to the background trie pipeline for incremental state root computation.
     if let Some(ref handle) = trie_handle {
-        builder.evm_mut().db_mut().set_state_hook(Some(Box::new(handle.state_hook())));
+        builder
+            .evm_mut()
+            .db_mut()
+            .set_state_hook(Some(Box::new(handle.state_hook())));
     }
 
     builder.apply_pre_execution_changes().map_err(|err| {
@@ -257,8 +268,11 @@ where
 
     let is_osaka = chain_spec.is_osaka_active_at_timestamp(attributes.timestamp);
 
-    let withdrawals_rlp_length =
-        attributes.withdrawals.as_ref().map(|withdrawals| withdrawals.length()).unwrap_or(0);
+    let withdrawals_rlp_length = attributes
+        .withdrawals
+        .as_ref()
+        .map(|withdrawals| withdrawals.length())
+        .unwrap_or(0);
 
     while let Some(pool_tx) = best_txs.next() {
         // ensure we still have capacity for this transaction
@@ -398,7 +412,7 @@ where
                         ),
                     );
                 }
-                continue
+                continue;
             }
             // The executor is the source of truth for block gas availability. Keep this
             // non-fatal in case local builder accounting diverges from executor rules.
@@ -416,7 +430,7 @@ where
                         block_available_gas,
                     ),
                 );
-                continue
+                continue;
             }
             // this is an error that we should treat as fatal for this attempt
             Err(err) => return Err(PayloadBuilderError::evm(err)),

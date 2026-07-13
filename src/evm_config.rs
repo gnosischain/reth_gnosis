@@ -236,11 +236,13 @@ impl GnosisEvmConfig {
         // `gnosis_eip1283_active`, but materialized as a range so the EVM factory (which only
         // sees the block number, not the chain spec) can reinstate EIP-1283 SSTORE metering.
         // An empty range (e.g. Chiado, where both blocks are 0) means never active.
-        let eip1283_window = chain_spec
-            .genesis()
-            .config
-            .constantinople_block
-            .map(|c| c..chain_spec.genesis().config.petersburg_block.unwrap_or(u64::MAX));
+        let eip1283_window = chain_spec.genesis().config.constantinople_block.map(|c| {
+            c..chain_spec
+                .genesis()
+                .config
+                .petersburg_block
+                .unwrap_or(u64::MAX)
+        });
 
         Self {
             block_assembler: GnosisBlockAssembler::new(chain_spec.clone()),
@@ -376,7 +378,13 @@ impl ConfigureEvm for GnosisEvmConfig {
 
         // configure evm env based on parent block
         // next_evm_env is for building the next block (post-merge only)
-        let mut cfg = get_cfg_env(&self.chain_spec, spec_id, attributes.timestamp, false, false);
+        let mut cfg = get_cfg_env(
+            &self.chain_spec,
+            spec_id,
+            attributes.timestamp,
+            false,
+            false,
+        );
 
         if let Some(blob_params) = &blob_params {
             cfg.set_max_blobs_per_tx(blob_params.max_blobs_per_tx);
