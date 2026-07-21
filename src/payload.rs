@@ -164,7 +164,7 @@ where
     let BuildArguments {
         mut cached_reads,
         execution_cache,
-        trie_handle,
+        mut state_root_handle,
         config,
         cancel,
         best_payload,
@@ -234,11 +234,11 @@ where
 
     // If we have a sparse trie handle, wire a state hook that streams per-tx state diffs
     // to the background trie pipeline for incremental state root computation.
-    if let Some(ref handle) = trie_handle {
+    if let Some(task) = state_root_handle.as_mut() {
         builder
             .evm_mut()
             .db_mut()
-            .set_state_hook(Some(Box::new(handle.state_hook())));
+            .set_state_hook(Some(Box::new(task.take_state_hook())));
     }
 
     builder.apply_pre_execution_changes().map_err(|err| {
