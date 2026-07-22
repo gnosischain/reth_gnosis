@@ -1,26 +1,19 @@
 name: Setup LLVM 22
 description: >
-  Install m4 and LLVM 22 (with Polly) so revmc-llvm / llvm-sys can build and link.
-  Required because reth v2.4.0's default features pull in `jit` (revmc -> llvm-sys 221 -> LLVM 22)
-  and `gmp` (gmp-mpfr-sys -> m4). `LLVM_SYS_221_PREFIX` is set in .cargo/config.toml to
-  /usr/lib/llvm-22, which is where apt.llvm.org installs.
+  Install m4 and LLVM 22 so revmc-llvm / llvm-sys can build (reth v2.4.0's `jit` default
+  feature) and gmp-mpfr-sys can build (`gmp` default feature). LLVM setup mirrors reth's
+  own CI: it runs the vendored .github/scripts/install_llvm_ubuntu.sh, which uses the
+  official apt.llvm.org/llvm.sh and symlinks `llvm-config` onto PATH so llvm-sys finds it
+  (no hardcoded LLVM_SYS_221_PREFIX needed).
 
 runs:
   using: composite
   steps:
-    - name: Install m4 + LLVM 22 + Polly
+    - name: Install m4 + LLVM 22
       shell: bash
       run: |
         set -euo pipefail
+        # m4 is preinstalled on GitHub ubuntu runners but ensure it (needed for gmp-mpfr-sys).
         sudo apt-get update
-        sudo apt-get install -y m4 wget gnupg lsb-release
-        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-          | sudo gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
-        codename=$(lsb_release -cs)
-        echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-22 main" \
-          | sudo tee /etc/apt/sources.list.d/llvm-22.list
-        sudo apt-get update
-        sudo apt-get install -y llvm-22 llvm-22-dev libpolly-22-dev
-        # Sanity check: the prefix .cargo/config.toml points at must exist.
-        test -f /usr/lib/llvm-22/lib/libPolly.a
-        /usr/lib/llvm-22/bin/llvm-config --version
+        sudo apt-get install -y m4
+        sudo bash "$GITHUB_WORKSPACE/.github/scripts/install_llvm_ubuntu.sh" 22
