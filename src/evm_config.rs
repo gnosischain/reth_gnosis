@@ -17,8 +17,8 @@ use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{env::EvmEnv, ConfigureEvm, NextBlockEnvAttributes};
 use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_and_block_number, RethReceiptBuilder};
 use revm::context::{BlockEnv, CfgEnv};
-use revm_primitives::hardfork::SpecId;
-use revm_primitives::Bytes;
+use revm::primitives::hardfork::SpecId;
+use revm::primitives::Bytes;
 use std::borrow::Cow;
 use std::{convert::Infallible, sync::Arc};
 

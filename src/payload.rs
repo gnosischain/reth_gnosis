@@ -42,7 +42,7 @@ use reth_transaction_pool::{
     ValidPoolTransaction,
 };
 use revm::context::{Block, Cfg};
-use revm_primitives::U256;
+use revm::primitives::U256;
 use tracing::{debug, trace, warn};
 
 use crate::{

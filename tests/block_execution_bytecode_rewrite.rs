@@ -14,10 +14,10 @@ use reth_gnosis::block::{GnosisBlockExecutionCtx, GnosisBlockExecutor};
 use reth_gnosis::evm::factory::GnosisEvmFactory;
 use reth_gnosis::spec::gnosis_spec::{BalancerHardforkConfig, GnosisChainSpec, GnosisHardForks};
 use revm::context::{BlockEnv, CfgEnv};
+use revm::database::State;
 use revm::database::{CacheDB, EmptyDB};
+use revm::state::{AccountInfo, Bytecode};
 use revm::Database;
-use revm_database::State;
-use revm_state::{AccountInfo, Bytecode};
 use serde_json::json;
 
 const TEST_BYTECODE: &str = "6080604052348015600e575f5ffd5b50603e80601a5f395ff3fe60806040525f5ffdfea2646970667358221220f7f53e1645a9cd5b79da6920c67891306d178dcff5e5683946cc1dae3c65aed664736f6c634300081e0033";

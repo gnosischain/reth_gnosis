@@ -17,7 +17,7 @@ use reth_provider::{
     StaticFileWriter, StorageSettingsCache,
 };
 use reth_static_file_types::StaticFileSegment;
-use revm_primitives::B256;
+use revm::primitives::B256;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;

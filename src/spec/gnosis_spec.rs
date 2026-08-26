@@ -20,8 +20,8 @@ use reth_ethereum_forks::hardfork;
 use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use reth_primitives_traits::SealedHeader;
-use revm_primitives::{b256, Address, FixedBytes, B256, U256};
-use revm_state::Bytecode;
+use revm::primitives::{b256, Address, FixedBytes, B256, U256};
+use revm::state::Bytecode;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Chain {

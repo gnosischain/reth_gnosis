@@ -26,9 +26,9 @@ use reth_evm::{
 };
 use reth_provider::BlockExecutionResult;
 use revm::context::Block;
+use revm::database::DatabaseCommitExt;
+use revm::primitives::{Address, Log};
 use revm::{context::result::ResultAndState, DatabaseCommit, Inspector};
-use revm_database::DatabaseCommitExt;
-use revm_primitives::{Address, Log};
 
 use crate::evm::factory::GnosisEvmFactory;
 use crate::gnosis::{apply_post_block_system_calls, rewrite_bytecodes};

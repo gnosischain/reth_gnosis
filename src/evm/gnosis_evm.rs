@@ -1,3 +1,4 @@
+use revm::primitives::{hardfork::SpecId, Address, U256};
 use revm::{
     context::{
         journaled_state::account::JournaledAccountTr,
@@ -21,7 +22,6 @@ use revm::{
     state::EvmState,
     Database, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectEvm, Inspector,
 };
-use revm_primitives::{hardfork::SpecId, Address, U256};
 
 // REF 1: https://github.com/bluealloy/revm/blob/24162b7ddbf467f4541f49c3e93bcff6e704b198/book/src/framework.md
 // REF 2: https://github.com/bluealloy/revm/blob/dff454328b2932937803f98adb546aa7e6f8bec2/examples/erc20_gas/src/handler.rs#L148

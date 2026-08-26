@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, Bytes};
-use revm_primitives::{hex::FromHex, KECCAK_EMPTY};
-use revm_state::Bytecode;
+use revm::primitives::{hex::FromHex, KECCAK_EMPTY};
+use revm::state::Bytecode;
 use serde_json::{self, Value};
 
 use crate::spec::gnosis_spec::BalancerHardforkConfig;
