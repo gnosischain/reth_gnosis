@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.97.1-trixie AS chef
 WORKDIR /app
 
 LABEL org.opencontainers.image.source=https://github.com/paradigmxyz/reth
@@ -30,11 +30,11 @@ ENV BUILD_PROFILE $BUILD_PROFILE
 
 # Extra Cargo flags
 ARG RUSTFLAGS=""
-ENV RUSTFLAGS "$RUSTFLAGS"
+ENV RUSTFLAGS="$RUSTFLAGS"
 
 # Extra Cargo features
 ARG FEATURES=""
-ENV FEATURES $FEATURES
+ENV FEATURES="$FEATURES"
 
 # Builds dependencies
 RUN cargo chef cook --profile $BUILD_PROFILE --features "$FEATURES" --recipe-path recipe.json
