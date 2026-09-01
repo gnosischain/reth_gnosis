@@ -1,0 +1,19 @@
+name: Setup LLVM 22
+description: >
+  Install m4 and LLVM 22 so revmc-llvm / llvm-sys can build (reth v2.4.0's `jit` default
+  feature) and gmp-mpfr-sys can build (`gmp` default feature). LLVM setup mirrors reth's
+  own CI: it runs the vendored .github/scripts/install_llvm_ubuntu.sh, which uses the
+  official apt.llvm.org/llvm.sh and symlinks `llvm-config` onto PATH so llvm-sys finds it
+  (no hardcoded LLVM_SYS_221_PREFIX needed).
+
+runs:
+  using: composite
+  steps:
+    - name: Install m4 + LLVM 22
+      shell: bash
+      run: |
+        set -euo pipefail
+        # m4 is preinstalled on GitHub ubuntu runners but ensure it (needed for gmp-mpfr-sys).
+        sudo apt-get update
+        sudo apt-get install -y m4
+        sudo bash "$GITHUB_WORKSPACE/.github/scripts/install_llvm_ubuntu.sh" 22

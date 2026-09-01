@@ -14,12 +14,12 @@ use reth_evm::{
     execute::{BlockExecutionError, InternalBlockExecutionError},
     Evm,
 };
+use revm::state::{Account, AccountInfo};
 use revm::Database;
 use revm::{
     context::result::{ExecutionResult, Output, ResultAndState},
     DatabaseCommit,
 };
-use revm_state::{Account, AccountInfo};
 use std::fmt::Display;
 
 // Codegen from https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
@@ -229,7 +229,7 @@ pub fn rewrite_aura_bytecodes(
     evm: &mut impl Evm<DB: Database + DatabaseCommit>,
     rewrites: &std::collections::BTreeMap<Address, alloy_primitives::Bytes>,
 ) {
-    use revm_state::{AccountStatus, Bytecode};
+    use revm::state::{AccountStatus, Bytecode};
     let mut state: AddressMap<Account> = Default::default();
     for (addr, code) in rewrites {
         let original_account_info = evm
@@ -289,7 +289,7 @@ pub fn rewrite_bytecodes(
             ..original_account_info
         };
         let mut account = Account::from(modified_account_info);
-        account.status = revm_state::AccountStatus::Touched;
+        account.status = revm::state::AccountStatus::Touched;
         *account.original_info_mut() = original_account_info.clone();
         tracing::info!(
             "Rewriting Bytecode >>> Addr: {}; From: {}; To: {}",

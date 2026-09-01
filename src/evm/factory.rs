@@ -3,6 +3,9 @@ use alloy_evm::{Database, Evm};
 use core::ops::{Deref, DerefMut};
 use reth::revm::precompile::{PrecompileSpecId, Precompiles};
 use reth_evm::{eth::EthEvmContext, EvmEnv, EvmFactory};
+use revm::primitives::{hardfork::SpecId, Address, Bytes};
+use revm::primitives::{TxKind, U256};
+use revm::state::{Account, AccountInfo, AccountStatus};
 use revm::{
     context::{
         result::{EVMError, HaltReason, ResultAndState},
@@ -13,9 +16,6 @@ use revm::{
     interpreter::{interpreter::EthInterpreter, InterpreterResult},
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext,
 };
-use revm_primitives::{hardfork::SpecId, Address, Bytes};
-use revm_primitives::{TxKind, U256};
-use revm_state::{Account, AccountInfo, AccountStatus};
 
 // https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
 const TX_GAS_LIMIT: u64 = 30_000_000;
