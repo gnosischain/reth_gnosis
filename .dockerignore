@@ -1,6 +1,7 @@
 ethereum-tests/
 fixtures/
 .github/
+!.github/scripts/install_llvm_ubuntu.sh
 *.jsonl
 *.rlp
 target/
