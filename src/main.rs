@@ -129,6 +129,7 @@ fn run_reth(cli: CliGnosis) {
                     ctx.config().rpc.flashbots_config(),
                     ctx.node().task_executor().clone(),
                     Arc::new(GnosisEngineValidator::new(ctx.config().chain.clone())),
+                    None,
                 );
                 ctx.modules.merge_if_module_configured(
                     RethRpcModule::Flashbots,
