@@ -202,9 +202,9 @@ where
             Commands::ImportEra(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>(rt))
             }
-            Commands::Download(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>())
-            }
+            Commands::Download(command) => runner.run_blocking_until_ctrl_c(async move {
+                command.execute::<GnosisNode>().await.map(|_| ())
+            }),
             Commands::SnapshotManifest(command) => command.execute(),
             Commands::ExportEra(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<GnosisNode>(rt))
