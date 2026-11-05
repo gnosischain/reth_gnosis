@@ -9,7 +9,9 @@ use crate::{
 };
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
+use alloy_primitives::{b256, Address, FixedBytes, B256, U256};
 use derive_more::{Constructor, Deref, Into};
+use evm2::bytecode::Bytecode;
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, ChainHardforks, ChainSpec,
     DepositContract, EthChainSpec, EthereumHardfork, EthereumHardforks, ForkCondition, ForkFilter,
@@ -17,11 +19,8 @@ use reth_chainspec::{
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_ethereum_forks::hardfork;
-use reth_evm::eth::spec::EthExecutorSpec;
 use reth_network_peers::{parse_nodes, NodeRecord};
 use reth_primitives_traits::SealedHeader;
-use revm::primitives::{b256, Address, FixedBytes, B256, U256};
-use revm::state::Bytecode;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Chain {
@@ -265,8 +264,9 @@ impl EthereumHardforks for GnosisChainSpec {
     }
 }
 
-impl EthExecutorSpec for GnosisChainSpec {
-    fn deposit_contract_address(&self) -> Option<Address> {
+impl GnosisChainSpec {
+    /// Returns the deposit contract address, which on Gnosis also processes withdrawals.
+    pub fn deposit_contract_address(&self) -> Option<Address> {
         self.deposit_contract
             .map(|deposit_contract| deposit_contract.address)
     }

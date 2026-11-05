@@ -1,24 +1,32 @@
 use alloy_consensus::BlockHeader;
+use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, B256, U256};
+use evm2::{
+    env::BlockEnvExt,
+    evm::{Database, Db},
+    EvmFeatures, SpecId, Version,
+};
 use gnosis_primitives::header::GnosisHeader;
 use reth::rpc::types::engine::ExecutionData;
-use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
-use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
+use reth_evm::precompile_cache::{
+    CachedPrecompileProvider, PrecompileCacheMap, PrecompileCachePolicy,
+};
+use reth_evm::{
+    ConfigureEngineEvm, EvmEnvFor, EvmFor, ExecutableTxIterator, ExecutionCtxFor, SpecFor,
+};
+use reth_evm_ethereum::{spec_id_by_timestamp_and_block_number, ExecutableRecoveredTx};
 use reth_primitives_traits::TxTy;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
 use reth_provider::errors::any::AnyError;
 use reth_provider::HeaderProvider;
-use revm::context_interface::block::BlobExcessGasAndPrice;
 
 use alloy_eips::Decodable2718;
+use alloy_primitives::Bytes;
 use core::fmt::Debug;
 use reth_chainspec::EthereumHardfork;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
-use reth_evm::{env::EvmEnv, ConfigureEvm, NextBlockEnvAttributes};
-use reth_evm_ethereum::{revm_spec, revm_spec_by_timestamp_and_block_number, RethReceiptBuilder};
-use revm::context::{BlockEnv, CfgEnv};
-use revm::primitives::hardfork::SpecId;
-use revm::primitives::Bytes;
+use reth_evm::{ConfigureEvm, NextBlockEnvAttributes};
+use reth_evm_ethereum::RethReceiptBuilder;
 use std::borrow::Cow;
 use std::{convert::Infallible, sync::Arc};
 
@@ -27,14 +35,15 @@ use std::sync::Mutex;
 use crate::blobs::CANCUN_BLOB_PARAMS;
 use crate::block::{AuraExecutionCtx, GnosisBlockExecutionCtx, GnosisBlockExecutorFactory};
 use crate::build::GnosisBlockAssembler;
-use crate::evm::factory::GnosisEvmFactory;
+use crate::evm::factory::GnosisEvmEnv;
+use crate::evm::GnosisEvmFactory;
 use crate::primitives::block::GnosisBlock;
 use crate::primitives::GnosisNodePrimitives;
 use crate::spec::gnosis_spec::GnosisChainSpec;
 
-/// Compute the correct revm SpecId for a GnosisHeader.
+/// Compute the correct evm2 [`SpecId`] for a [`GnosisHeader`].
 ///
-/// For pre-merge (AuRa) headers, the standard `revm_spec()` returns `SpecId::MERGE` because
+/// For pre-merge (AuRa) headers, the standard spec mapping returns `SpecId::MERGE` because
 /// the chain spec's Paris fork condition defaults to `activation_block_number: 0` when
 /// `merge_netsplit_block` is absent. This function detects pre-merge headers and returns
 /// the correct pre-merge spec instead.
@@ -60,12 +69,12 @@ pub fn gnosis_revm_spec(chain_spec: &GnosisChainSpec, header: &GnosisHeader) -> 
             .fork(EthereumHardfork::Constantinople)
             .active_at_block(block_number)
         {
-            // revm-primitives >= 24 removed `SpecId::CONSTANTINOPLE` (on Ethereum mainnet
-            // Constantinople and Petersburg activate at the same block, so EIP-1283 never
-            // went live and the two specs are identical). Gnosis, however, ran a distinct
-            // [Constantinople, Petersburg) window with EIP-1283 active. Map that window to
-            // PETERSBURG (= Constantinople minus EIP-1283) here; EIP-1283 is re-applied
-            // separately via `gnosis_eip1283_active` — see `get_cfg_env` and the EVM factory.
+            // evm2 has no `SpecId::CONSTANTINOPLE` (on Ethereum mainnet Constantinople and
+            // Petersburg activate at the same block, so EIP-1283 never went live and the two
+            // specs are identical). Gnosis, however, ran a distinct [Constantinople, Petersburg)
+            // window with EIP-1283 active. Map that window to PETERSBURG (= Constantinople minus
+            // EIP-1283) here; EIP-1283 is re-applied separately via `gnosis_eip1283_active` — see
+            // `gnosis_version` and the EVM factory.
             SpecId::PETERSBURG
         } else if chain_spec
             .fork(EthereumHardfork::Byzantium)
@@ -91,18 +100,18 @@ pub fn gnosis_revm_spec(chain_spec: &GnosisChainSpec, header: &GnosisHeader) -> 
             SpecId::FRONTIER
         }
     } else {
-        revm_spec(chain_spec, header)
+        spec_id_by_timestamp_and_block_number(chain_spec, header.timestamp, header.number)
     }
 }
 
 /// Whether Gnosis's EIP-1283 (SSTORE net gas metering) is active at `block_number`.
 ///
 /// Ethereum mainnet activated Constantinople and Petersburg at the same block, so EIP-1283
-/// never went live and revm has no dedicated Constantinople spec. Gnosis instead ran a real
+/// never went live and evm2 has no dedicated Constantinople spec. Gnosis instead ran a real
 /// `[constantinopleBlock, petersburgBlock)` window (blocks 1_604_400..2_508_800 on mainnet)
 /// during which EIP-1283 was active and later removed at Petersburg. This encodes exactly that
 /// window straight from the (still-distinct) chainspec forks, so it is the single source of
-/// truth for re-applying EIP-1283 on top of revm's PETERSBURG spec.
+/// truth for re-applying EIP-1283 on top of evm2's PETERSBURG spec.
 pub fn gnosis_eip1283_active(chain_spec: &GnosisChainSpec, block_number: u64) -> bool {
     chain_spec
         .fork(EthereumHardfork::Constantinople)
@@ -112,52 +121,52 @@ pub fn gnosis_eip1283_active(chain_spec: &GnosisChainSpec, block_number: u64) ->
             .active_at_block(block_number)
 }
 
-/// Returns a configuration environment for the EVM based on the given chain specification and timestamp.
-pub fn get_cfg_env(
+/// Returns the evm2 runtime configuration for a Gnosis block.
+///
+/// Starts from evm2's base version for `spec` and applies the Gnosis deviations.
+pub fn gnosis_version(
     chain_spec: &GnosisChainSpec,
     spec: SpecId,
     timestamp: u64,
     is_pre_merge: bool,
     eip1283_active: bool,
-) -> CfgEnv {
-    let mut cfg = CfgEnv::new()
-        .with_chain_id(chain_spec.chain().id())
-        .with_spec_and_mainnet_gas_params(spec);
+    blob_params: Option<BlobParams>,
+) -> Version {
+    let mut version = Version::new(spec);
+    version.chain_id = chain_spec.chain().id();
 
     if !chain_spec.is_shanghai_active_at_timestamp(timestamp) {
         // EIP-170 is enabled at the Shanghai Fork on Gnosis Chain
-        cfg.limit_contract_code_size = Some(usize::MAX);
+        version.features.remove(EvmFeatures::CODE_SIZE_CHECK);
     }
 
     // Gnosis/Chiado has "service transactions" with zero gas price that bypass the basefee
     // check. Only disable for pre-merge London+ blocks where service txs exist.
-    // Post-merge system calls handle basefee via transact_system_call's disable_base_fee.
-    if is_pre_merge && spec >= SpecId::LONDON {
-        cfg.disable_base_fee = true;
+    // Post-merge system calls do not go through the base fee check.
+    if is_pre_merge && spec.enables(SpecId::LONDON) {
+        version.features.remove(EvmFeatures::BASE_FEE_CHECK);
     }
 
-    // For Gnosis Constantinople blocks (EIP-1283 active), override SSTORE gas params
-    // to match EIP-1283's base cost of 200 (= SLOAD cost) instead of 5000 (SSTORE_RESET).
-    // The custom sstore_eip1283 instruction forces is_istanbul=true for dynamic gas,
-    // but the gas params need to match EIP-1283's formula:
-    // - static (base) cost: 200 (not 5000)
-    // - set cost: 20000 - 200 = 19800
-    // - reset cost: 5000 - 200 = 4800
+    // For Gnosis Constantinople blocks (EIP-1283 active), use EIP-1283's SSTORE gas schedule.
+    // The EVM factory installs the matching net-metering SSTORE instruction.
     if eip1283_active && is_pre_merge {
-        use revm::context_interface::cfg::{GasId, GasParams};
-        use std::sync::Arc;
-        let table = cfg.gas_params.table();
-        let mut new_table = *table;
-        // EIP-1283: SSTORE base cost = 200 (SLOAD cost), not 5000 (SSTORE_RESET)
-        new_table[GasId::sstore_static().as_usize()] = 200;
-        new_table[GasId::sstore_set_without_load_cost().as_usize()] = 20000 - 200;
-        new_table[GasId::sstore_reset_without_cold_load_cost().as_usize()] = 5000 - 200;
-        new_table[GasId::sstore_set_refund().as_usize()] = 20000 - 200;
-        new_table[GasId::sstore_reset_refund().as_usize()] = 5000 - 200;
-        cfg.set_gas_params(GasParams::new(Arc::new(new_table)));
+        crate::evm::eip1283_gas_params(&mut version.gas_params);
     }
 
-    cfg
+    if let Some(blob_params) = blob_params {
+        version.max_blobs_per_tx = blob_params.max_blobs_per_tx as usize;
+    }
+
+    version
+}
+
+/// Returns the EIP-4844 blob base fee for `excess_blob_gas` under `blob_params`, zero when either
+/// is missing.
+fn blob_basefee(excess_blob_gas: Option<u64>, blob_params: Option<BlobParams>) -> U256 {
+    excess_blob_gas
+        .zip(blob_params)
+        .map(|(excess_blob_gas, params)| U256::from(params.calc_blob_fee(excess_blob_gas)))
+        .unwrap_or_default()
 }
 
 /// Minimal trait for looking up block headers by hash.
@@ -183,7 +192,7 @@ where
 #[derive(Clone)]
 pub struct GnosisEvmConfig {
     /// Inner [`GnosisBlockExecutorFactory`].
-    pub executor_factory: GnosisBlockExecutorFactory<RethReceiptBuilder, GnosisEvmFactory>,
+    pub executor_factory: GnosisBlockExecutorFactory<RethReceiptBuilder>,
     /// Ethereum block assembler.
     pub block_assembler: GnosisBlockAssembler<GnosisChainSpec>,
     /// Spec.
@@ -286,11 +295,52 @@ impl GnosisEvmConfig {
     }
 }
 
+impl GnosisEvmConfig {
+    /// Builds the EVM environment for an executed block's header.
+    fn header_evm_env(&self, header: &GnosisHeader) -> GnosisEvmEnv {
+        let chain_spec = self.chain_spec();
+        let blob_params = chain_spec.blob_params_at_timestamp(header.timestamp);
+        let spec = gnosis_revm_spec(chain_spec, header);
+        let version = gnosis_version(
+            chain_spec,
+            spec,
+            header.timestamp,
+            header.is_pre_merge(),
+            gnosis_eip1283_active(chain_spec, header.number()),
+            blob_params,
+        );
+        let is_merge = spec.enables(SpecId::MERGE);
+        let block = BlockEnvExt {
+            number: U256::from(header.number()),
+            beneficiary: header.beneficiary(),
+            timestamp: U256::from(header.timestamp()),
+            gas_limit: U256::from(header.gas_limit()),
+            basefee: U256::from(header.base_fee_per_gas().unwrap_or_default()),
+            difficulty: if is_merge {
+                U256::ZERO
+            } else {
+                header.difficulty()
+            },
+            prevrandao: header
+                .mix_hash()
+                .filter(|_| is_merge)
+                .map(|hash| U256::from_be_bytes(hash.0))
+                .unwrap_or_default(),
+            // derive the EIP-4844 blob fees from the header's `excess_blob_gas` and the
+            // current blob params
+            blob_basefee: blob_basefee(header.excess_blob_gas, blob_params),
+            slot_num: U256::from(header.slot_number().unwrap_or_default()),
+            ..Default::default()
+        };
+        GnosisEvmEnv::new_with_version(spec, block, version)
+    }
+}
+
 impl ConfigureEvm for GnosisEvmConfig {
     type Primitives = GnosisNodePrimitives;
     type Error = Infallible;
     type NextBlockEnvCtx = NextBlockEnvAttributes;
-    type BlockExecutorFactory = GnosisBlockExecutorFactory<RethReceiptBuilder, GnosisEvmFactory>;
+    type BlockExecutorFactory = GnosisBlockExecutorFactory<RethReceiptBuilder>;
     type BlockAssembler = GnosisBlockAssembler<GnosisChainSpec>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
@@ -301,142 +351,98 @@ impl ConfigureEvm for GnosisEvmConfig {
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &GnosisHeader) -> Result<EvmEnv, Self::Error> {
-        let blob_params = self.chain_spec().blob_params_at_timestamp(header.timestamp);
-        let spec = gnosis_revm_spec(self.chain_spec(), header);
-
-        // configure evm env based on parent block
-        let mut cfg_env = get_cfg_env(
-            self.chain_spec(),
-            spec,
-            header.timestamp,
-            header.is_pre_merge(),
-            gnosis_eip1283_active(self.chain_spec(), header.number()),
-        );
-
-        if let Some(blob_params) = &blob_params {
-            cfg_env.set_max_blobs_per_tx(blob_params.max_blobs_per_tx);
-        }
-
-        if self
-            .chain_spec()
-            .is_osaka_active_at_timestamp(header.timestamp)
-        {
-            cfg_env.tx_gas_limit_cap = Some(MAX_TX_GAS_LIMIT_OSAKA);
-        }
-
-        // derive the EIP-4844 blob fees from the header's `excess_blob_gas` and the current
-        // blobparams
-        let blob_excess_gas_and_price =
-            header
-                .excess_blob_gas
-                .zip(blob_params)
-                .map(|(excess_blob_gas, params)| {
-                    let blob_gasprice = params.calc_blob_fee(excess_blob_gas);
-                    BlobExcessGasAndPrice {
-                        excess_blob_gas,
-                        blob_gasprice,
-                    }
-                });
-
-        let block_env = BlockEnv {
-            number: U256::from(header.number()),
-            beneficiary: header.beneficiary(),
-            timestamp: U256::from(header.timestamp()),
-            difficulty: if spec >= SpecId::MERGE {
-                U256::ZERO
-            } else {
-                header.difficulty()
-            },
-            prevrandao: if spec >= SpecId::MERGE {
-                header.mix_hash()
-            } else {
-                None
-            },
-            gas_limit: header.gas_limit(),
-            basefee: header.base_fee_per_gas().unwrap_or_default(),
-            blob_excess_gas_and_price,
-            slot_num: header.slot_number().unwrap_or_default(),
-        };
-
-        Ok(EvmEnv { cfg_env, block_env })
+    fn evm_env(&self, header: &GnosisHeader) -> Result<GnosisEvmEnv, Self::Error> {
+        Ok(self.header_evm_env(header))
     }
 
     fn next_evm_env(
         &self,
         parent: &GnosisHeader,
         attributes: &NextBlockEnvAttributes,
-    ) -> Result<EvmEnv, Self::Error> {
+    ) -> Result<GnosisEvmEnv, Self::Error> {
         // ensure we're not missing any timestamp based hardforks
         let chain_spec = self.chain_spec();
         let blob_params = chain_spec.blob_params_at_timestamp(attributes.timestamp);
-        let spec_id = revm_spec_by_timestamp_and_block_number(
+        let spec = spec_id_by_timestamp_and_block_number(
             chain_spec,
             attributes.timestamp,
             parent.number() + 1,
         );
 
-        // configure evm env based on parent block
         // next_evm_env is for building the next block (post-merge only)
-        let mut cfg = get_cfg_env(
-            &self.chain_spec,
-            spec_id,
+        let version = gnosis_version(
+            chain_spec,
+            spec,
             attributes.timestamp,
             false,
             false,
+            blob_params,
         );
-
-        if let Some(blob_params) = &blob_params {
-            cfg.set_max_blobs_per_tx(blob_params.max_blobs_per_tx);
-        }
-
-        if self
-            .chain_spec()
-            .is_osaka_active_at_timestamp(attributes.timestamp)
-        {
-            cfg.tx_gas_limit_cap = Some(MAX_TX_GAS_LIMIT_OSAKA);
-        }
 
         // if the parent block did not have excess blob gas (i.e. it was pre-cancun), but it is
         // cancun now, we need to set the excess blob gas to the default value(0)
-        let blob_excess_gas_and_price = parent
+        let blob_basefee = parent
             .maybe_next_block_excess_blob_gas(blob_params)
-            .or_else(|| (spec_id == SpecId::CANCUN).then_some(0))
+            .or_else(|| (spec == SpecId::CANCUN).then_some(0))
             .map(|excess_blob_gas| {
-                let blob_gasprice = blob_params
-                    .unwrap_or(CANCUN_BLOB_PARAMS)
-                    .calc_blob_fee(excess_blob_gas);
-                BlobExcessGasAndPrice {
-                    excess_blob_gas,
-                    blob_gasprice,
-                }
-            });
+                U256::from(
+                    blob_params
+                        .unwrap_or(CANCUN_BLOB_PARAMS)
+                        .calc_blob_fee(excess_blob_gas),
+                )
+            })
+            .unwrap_or_default();
 
-        let basefee = chain_spec.next_block_base_fee(parent, attributes.timestamp);
+        // calculate basefee based on parent block's gas usage
+        let basefee = chain_spec
+            .next_block_base_fee(parent, attributes.timestamp)
+            .unwrap_or_default();
 
-        let gas_limit = attributes.gas_limit;
-
-        let block_env = BlockEnv {
+        let block = BlockEnvExt {
             number: U256::from(parent.number + 1),
             beneficiary: attributes.suggested_fee_recipient,
             timestamp: U256::from(attributes.timestamp),
+            gas_limit: U256::from(attributes.gas_limit),
+            basefee: U256::from(basefee),
             difficulty: U256::ZERO,
-            prevrandao: Some(attributes.prev_randao),
-            gas_limit,
-            // calculate basefee based on parent block's gas usage
-            basefee: basefee.unwrap_or_default(),
-            // calculate excess gas based on parent block's blob gas usage
-            blob_excess_gas_and_price,
-            slot_num: attributes.slot_number.unwrap_or_default(),
+            prevrandao: U256::from_be_bytes(attributes.prev_randao.0),
+            blob_basefee,
+            slot_num: U256::from(attributes.slot_number.unwrap_or_default()),
+            ..Default::default()
         };
 
-        Ok((cfg, block_env).into())
+        Ok(GnosisEvmEnv::new_with_version(spec, block, version))
+    }
+
+    fn evm_with_precompile_cache<'a, DB>(
+        &self,
+        db: DB,
+        evm_env: EvmEnvFor<Self>,
+        cache_map: PrecompileCacheMap<SpecFor<Self>>,
+        metrics_enabled: bool,
+    ) -> EvmFor<'a, Self>
+    where
+        DB: Database + 'a,
+    {
+        let factory = self.executor_factory.evm_factory();
+        // Gnosis installs only the standard Ethereum precompiles, which are all pure.
+        let precompiles = CachedPrecompileProvider::new(
+            factory.precompiles(evm_env.spec),
+            cache_map,
+            evm_env.spec,
+            PrecompileCachePolicy::All,
+            metrics_enabled,
+        );
+        factory.create_evm_with_precompiles(Db::new(db), evm_env, precompiles)
     }
 
     fn context_for_block<'a>(
         &self,
         block: &'a SealedBlock<GnosisBlock>,
-    ) -> Result<GnosisBlockExecutionCtx<'a>, Self::Error> {
+    ) -> Result<GnosisBlockExecutionCtx<'a>, Self::Error>
+    where
+        Self: 'a,
+    {
         let block_number = block.header().number;
 
         // Look up parent header to get its timestamp for hardfork activation checks
@@ -541,8 +547,7 @@ impl ConfigureEvm for GnosisEvmConfig {
             block_rewards_override,
         })
     }
-    // modifications to EIP-1559 gas accounting handler has been moved to Handler in gnosis_evm.rs
-    // ConfigureEvmEnv and BlockExecutionStrategyFactory traits are merged into a single ConfigureEvm trait
+    // Gnosis fee handling lives in the evm2 transaction hooks in `evm/handler.rs`.
 }
 
 impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
@@ -550,58 +555,44 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();
 
-        let blob_params = self.chain_spec().blob_params_at_timestamp(timestamp);
-        let spec =
-            revm_spec_by_timestamp_and_block_number(self.chain_spec(), timestamp, block_number);
+        let chain_spec = self.chain_spec();
+        let blob_params = chain_spec.blob_params_at_timestamp(timestamp);
+        let spec = spec_id_by_timestamp_and_block_number(chain_spec, timestamp, block_number);
 
-        // configure evm env based on parent block
         // Payloads are always post-merge
-        let mut cfg_env = get_cfg_env(self.chain_spec(), spec, timestamp, false, false);
+        let version = gnosis_version(chain_spec, spec, timestamp, false, false, blob_params);
 
-        if let Some(blob_params) = &blob_params {
-            cfg_env.set_max_blobs_per_tx(blob_params.max_blobs_per_tx);
-        }
-
-        if self.chain_spec().is_osaka_active_at_timestamp(timestamp) {
-            cfg_env.tx_gas_limit_cap = Some(MAX_TX_GAS_LIMIT_OSAKA);
-        }
-
-        // derive the EIP-4844 blob fees from the header's `excess_blob_gas` and the current
-        // blobparams
-        let blob_excess_gas_and_price =
-            payload
-                .payload
-                .excess_blob_gas()
-                .zip(blob_params)
-                .map(|(excess_blob_gas, params)| {
-                    let blob_gasprice = params.calc_blob_fee(excess_blob_gas);
-                    BlobExcessGasAndPrice {
-                        excess_blob_gas,
-                        blob_gasprice,
-                    }
-                });
-
-        let block_env = BlockEnv {
+        let prev_randao = payload.payload.as_v1().prev_randao;
+        let block = BlockEnvExt {
             number: U256::from(block_number),
             beneficiary: payload.payload.fee_recipient(),
             timestamp: U256::from(timestamp),
-            difficulty: if spec >= SpecId::MERGE {
+            gas_limit: U256::from(payload.payload.gas_limit()),
+            basefee: U256::from(payload.payload.saturated_base_fee_per_gas()),
+            difficulty: if spec.enables(SpecId::MERGE) {
                 U256::ZERO
             } else {
-                payload.payload.as_v1().prev_randao.into()
+                U256::from_be_bytes(prev_randao.0)
             },
-            prevrandao: (spec >= SpecId::MERGE).then(|| payload.payload.as_v1().prev_randao),
-            gas_limit: payload.payload.gas_limit(),
-            basefee: payload.payload.saturated_base_fee_per_gas(),
-            blob_excess_gas_and_price,
-            slot_num: payload
-                .payload
-                .as_v4()
-                .map(|v4| v4.slot_number)
-                .unwrap_or_default(),
+            prevrandao: if spec.enables(SpecId::MERGE) {
+                U256::from_be_bytes(prev_randao.0)
+            } else {
+                U256::ZERO
+            },
+            // derive the EIP-4844 blob fees from the payload's `excess_blob_gas` and the
+            // current blob params
+            blob_basefee: blob_basefee(payload.payload.excess_blob_gas(), blob_params),
+            slot_num: U256::from(
+                payload
+                    .payload
+                    .as_v4()
+                    .map(|v4| v4.slot_number)
+                    .unwrap_or_default(),
+            ),
+            ..Default::default()
         };
 
-        Ok(EvmEnv { cfg_env, block_env })
+        Ok(GnosisEvmEnv::new_with_version(spec, block, version))
     }
 
     fn context_for_payload<'a>(
@@ -638,7 +629,7 @@ impl ConfigureEngineEvm<ExecutionData> for GnosisEvmConfig {
             let tx =
                 TxTy::<Self::Primitives>::decode_2718_exact(tx.as_ref()).map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
-            Ok::<_, AnyError>(tx.with_signer(signer))
+            Ok::<_, AnyError>(ExecutableRecoveredTx::new(tx.with_signer(signer)))
         };
 
         Ok((txs, convert))

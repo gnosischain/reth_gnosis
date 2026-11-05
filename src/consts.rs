@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
-use alloy_primitives::{Address, Bytes};
-use revm::primitives::{hex::FromHex, KECCAK_EMPTY};
-use revm::state::Bytecode;
+use alloy_primitives::{hex::FromHex, Address, Bytes, KECCAK256_EMPTY};
+use evm2::bytecode::Bytecode;
 use serde_json::{self, Value};
 
 use crate::spec::gnosis_spec::BalancerHardforkConfig;
@@ -35,7 +34,7 @@ pub fn parse_balancer_hardfork_config(
             };
             let codehash = match &bytecode {
                 Some(code) => code.hash_slow(),
-                None => KECCAK_EMPTY,
+                None => KECCAK256_EMPTY,
             };
             (addr, bytecode, codehash)
         })
