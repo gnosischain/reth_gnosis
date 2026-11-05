@@ -6,18 +6,17 @@
 //! This tests the actual production code path rather than calling `rewrite_bytecodes` directly.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use reth_evm::block::BlockExecutor;
-use reth_evm::env::EvmEnv;
-use reth_evm::{Evm, EvmFactory};
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnv,
+    evm::{AccountInfo, InMemoryDB},
+    SpecId,
+};
+use reth_evm::BlockExecutor;
 use reth_evm_ethereum::RethReceiptBuilder;
 use reth_gnosis::block::{GnosisBlockExecutionCtx, GnosisBlockExecutor};
-use reth_gnosis::evm::factory::GnosisEvmFactory;
+use reth_gnosis::evm::{factory::GnosisEvmEnv, GnosisEvmFactory, GnosisEvmTypes};
 use reth_gnosis::spec::gnosis_spec::{BalancerHardforkConfig, GnosisChainSpec, GnosisHardForks};
-use revm::context::{BlockEnv, CfgEnv};
-use revm::database::State;
-use revm::database::{CacheDB, EmptyDB};
-use revm::state::{AccountInfo, Bytecode};
-use revm::Database;
 use serde_json::json;
 
 const TEST_BYTECODE: &str = "6080604052348015600e575f5ffd5b50603e80601a5f395ff3fe60806040525f5ffdfea2646970667358221220f7f53e1645a9cd5b79da6920c67891306d178dcff5e5683946cc1dae3c65aed664736f6c634300081e0033";
@@ -45,15 +44,27 @@ fn create_test_chain_spec_with_balancer_hardfork() -> GnosisChainSpec {
 }
 
 /// Creates EVM environment for a block at the given timestamp.
-fn create_block_env(timestamp: u64) -> EvmEnv {
-    EvmEnv {
-        cfg_env: CfgEnv::default().with_chain_id(100), // Gnosis chain ID
-        block_env: BlockEnv {
-            timestamp: U256::from(timestamp),
-            number: U256::from(1),
-            ..Default::default()
-        },
+fn create_block_env(timestamp: u64) -> GnosisEvmEnv {
+    let block = BlockEnv::<GnosisEvmTypes> {
+        timestamp: U256::from(timestamp),
+        number: U256::from(1),
+        ..Default::default()
+    };
+    GnosisEvmEnv::new(SpecId::OSAKA, block, 100) // Gnosis chain ID
+}
+
+fn account(code: Option<Bytecode>) -> AccountInfo {
+    let info = AccountInfo::empty()
+        .with_balance(U256::from(1000))
+        .with_nonce(5);
+    match code {
+        Some(code) => info.with_code(code),
+        None => info,
     }
+}
+
+fn wrong_code() -> Bytecode {
+    Bytecode::new_legacy(Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]))
 }
 
 /// Creates a GnosisBlockExecutionCtx with the given parent timestamp.
@@ -71,40 +82,19 @@ fn create_execution_ctx(parent_timestamp: u64) -> GnosisBlockExecutionCtx<'stati
 }
 
 /// Sets up a database with "wrong" bytecode at the target addresses.
-fn setup_db_with_wrong_bytecode(config: &BalancerHardforkConfig) -> CacheDB<EmptyDB> {
-    let mut db = CacheDB::new(EmptyDB::default());
-    let wrong_code = Bytecode::new_legacy(Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]));
-
+fn setup_db_with_wrong_bytecode(config: &BalancerHardforkConfig) -> InMemoryDB {
+    let mut db = InMemoryDB::default();
     for (addr, _, _) in &config.config {
-        db.insert_account_info(
-            *addr,
-            AccountInfo {
-                balance: U256::from(1000),
-                nonce: 5,
-                code_hash: wrong_code.hash_slow(),
-                code: Some(wrong_code.clone()),
-                account_id: None,
-            },
-        );
+        db.insert_account_info(addr, account(Some(wrong_code())));
     }
     db
 }
 
 /// Sets up a database with correct bytecode (already rewritten).
-fn setup_db_with_correct_bytecode(config: &BalancerHardforkConfig) -> CacheDB<EmptyDB> {
-    let mut db = CacheDB::new(EmptyDB::default());
-
-    for (addr, expected_code, expected_hash) in &config.config {
-        db.insert_account_info(
-            *addr,
-            AccountInfo {
-                balance: U256::from(1000),
-                nonce: 5,
-                code_hash: *expected_hash,
-                code: expected_code.clone(),
-                account_id: None,
-            },
-        );
+fn setup_db_with_correct_bytecode(config: &BalancerHardforkConfig) -> InMemoryDB {
+    let mut db = InMemoryDB::default();
+    for (addr, expected_code, _) in &config.config {
+        db.insert_account_info(addr, account(expected_code.clone()));
     }
     db
 }
@@ -132,7 +122,6 @@ fn test_bytecode_rewrite_at_hardfork_activation_block() {
 
     // Setup database with WRONG bytecode
     let db = setup_db_with_wrong_bytecode(config);
-    let mut state = State::builder().with_database(db).build();
 
     // Create EVM and executor
     let factory = GnosisEvmFactory {
@@ -140,7 +129,7 @@ fn test_bytecode_rewrite_at_hardfork_activation_block() {
         eip1283_window: None,
     };
     let evm_env = create_block_env(current_timestamp);
-    let evm = factory.create_evm(&mut state, evm_env);
+    let evm = factory.create_evm(db, evm_env);
 
     let ctx = create_execution_ctx(parent_timestamp);
 
@@ -160,7 +149,7 @@ fn test_bytecode_rewrite_at_hardfork_activation_block() {
 
     // Verify bytecode was rewritten for ALL configured addresses
     for (addr, _expected_code, expected_hash) in &config.config {
-        let account = executor.evm_mut().db_mut().basic(*addr).unwrap().unwrap();
+        let account = executor.evm_mut().read_account_info(addr).unwrap().unwrap();
         assert_eq!(
             account.code_hash, *expected_hash,
             "Address {addr:?} should have bytecode rewritten at activation block"
@@ -199,14 +188,7 @@ fn test_bytecode_not_rewritten_after_hardfork_activation() {
     // Setup database with WRONG bytecode
     // If rewrite doesn't happen, bytecode should remain wrong
     let db = setup_db_with_wrong_bytecode(config);
-    let wrong_hash = db
-        .cache
-        .accounts
-        .get(&config.config[0].0)
-        .unwrap()
-        .info
-        .code_hash;
-    let mut state = State::builder().with_database(db).build();
+    let wrong_hash = wrong_code().hash_slow();
 
     // Create EVM and executor
     let factory = GnosisEvmFactory {
@@ -214,7 +196,7 @@ fn test_bytecode_not_rewritten_after_hardfork_activation() {
         eip1283_window: None,
     };
     let evm_env = create_block_env(current_timestamp);
-    let evm = factory.create_evm(&mut state, evm_env);
+    let evm = factory.create_evm(db, evm_env);
 
     let ctx = create_execution_ctx(parent_timestamp);
 
@@ -226,7 +208,7 @@ fn test_bytecode_not_rewritten_after_hardfork_activation() {
 
     // Verify bytecode was NOT rewritten (still has wrong code)
     let (addr, _, expected_hash) = &config.config[0];
-    let account = executor.evm_mut().db_mut().basic(*addr).unwrap().unwrap();
+    let account = executor.evm_mut().read_account_info(addr).unwrap().unwrap();
     assert_ne!(
         account.code_hash, *expected_hash,
         "Bytecode should NOT be rewritten after activation block"
@@ -260,14 +242,7 @@ fn test_bytecode_not_rewritten_before_hardfork() {
 
     // Setup database with WRONG bytecode
     let db = setup_db_with_wrong_bytecode(config);
-    let wrong_hash = db
-        .cache
-        .accounts
-        .get(&config.config[0].0)
-        .unwrap()
-        .info
-        .code_hash;
-    let mut state = State::builder().with_database(db).build();
+    let wrong_hash = wrong_code().hash_slow();
 
     // Create EVM and executor
     let factory = GnosisEvmFactory {
@@ -275,7 +250,7 @@ fn test_bytecode_not_rewritten_before_hardfork() {
         eip1283_window: None,
     };
     let evm_env = create_block_env(current_timestamp);
-    let evm = factory.create_evm(&mut state, evm_env);
+    let evm = factory.create_evm(db, evm_env);
 
     let ctx = create_execution_ctx(parent_timestamp);
 
@@ -287,7 +262,7 @@ fn test_bytecode_not_rewritten_before_hardfork() {
 
     // Verify bytecode was NOT rewritten
     let (addr, _, expected_hash) = &config.config[0];
-    let account = executor.evm_mut().db_mut().basic(*addr).unwrap().unwrap();
+    let account = executor.evm_mut().read_account_info(addr).unwrap().unwrap();
     assert_ne!(
         account.code_hash, *expected_hash,
         "Bytecode should NOT be rewritten before hardfork"
@@ -310,7 +285,6 @@ fn test_bytecode_rewrite_idempotent_via_block_execution() {
 
     // Setup database with CORRECT bytecode (already rewritten)
     let db = setup_db_with_correct_bytecode(config);
-    let mut state = State::builder().with_database(db).build();
 
     // Create EVM and executor
     let factory = GnosisEvmFactory {
@@ -318,7 +292,7 @@ fn test_bytecode_rewrite_idempotent_via_block_execution() {
         eip1283_window: None,
     };
     let evm_env = create_block_env(current_timestamp);
-    let evm = factory.create_evm(&mut state, evm_env);
+    let evm = factory.create_evm(db, evm_env);
 
     let ctx = create_execution_ctx(parent_timestamp);
 
@@ -330,7 +304,7 @@ fn test_bytecode_rewrite_idempotent_via_block_execution() {
 
     // Verify bytecode still has correct values (idempotent)
     for (addr, _, expected_hash) in &config.config {
-        let account = executor.evm_mut().db_mut().basic(*addr).unwrap().unwrap();
+        let account = executor.evm_mut().read_account_info(addr).unwrap().unwrap();
         assert_eq!(
             account.code_hash, *expected_hash,
             "Bytecode should remain correct after idempotent rewrite"

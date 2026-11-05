@@ -2,18 +2,17 @@ use std::sync::Arc;
 
 use alloy_consensus::{proofs, BlockBody, BlockHeader, Header, TxReceipt, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, B256};
 use gnosis_primitives::header::GnosisHeader;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_errors::BlockExecutionError;
 use reth_ethereum_primitives::{Receipt, TransactionSigned};
 use reth_evm::{
-    block::BlockExecutorFactory,
     execute::{BlockAssembler, BlockAssemblerInput},
+    BlockExecutorFactory, EvmEnv,
 };
 use reth_primitives_traits::logs_bloom;
 use reth_provider::BlockExecutionResult;
-use revm::context::Block;
 
 use crate::{
     block::GnosisBlockExecutionCtx, primitives::block::GnosisBlock,
@@ -51,10 +50,10 @@ impl<ChainSpec> Clone for GnosisBlockAssembler<ChainSpec> {
 impl<F, ChainSpec> BlockAssembler<F> for GnosisBlockAssembler<ChainSpec>
 where
     F: for<'a> BlockExecutorFactory<
-        ExecutionCtx<'a> = GnosisBlockExecutionCtx<'a>,
-        Transaction = TransactionSigned,
-        Receipt = Receipt,
-    >,
+            ExecutionCtx<'a> = GnosisBlockExecutionCtx<'a>,
+            Transaction = TransactionSigned,
+            Receipt = Receipt,
+        > + 'static,
     ChainSpec: EthChainSpec + EthereumHardforks,
 {
     type Block = GnosisBlock;
@@ -79,7 +78,8 @@ where
             ..
         } = input;
 
-        let timestamp = evm_env.block_env.timestamp().saturating_to();
+        let block = evm_env.block_env();
+        let timestamp = block.timestamp.saturating_to();
 
         let transactions_root = proofs::calculate_transaction_root(&transactions);
         let receipts_root = Receipt::calculate_receipt_root_no_memo(receipts);
@@ -124,19 +124,19 @@ where
         let header = Header {
             parent_hash: ctx.parent_hash,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
-            beneficiary: evm_env.block_env.beneficiary(),
+            beneficiary: block.beneficiary,
             state_root,
             transactions_root,
             receipts_root,
             withdrawals_root,
             logs_bloom,
             timestamp,
-            mix_hash: evm_env.block_env.prevrandao().unwrap_or_default(),
+            mix_hash: B256::from(block.prevrandao),
             nonce: BEACON_NONCE.into(),
-            base_fee_per_gas: Some(evm_env.block_env.basefee()),
-            number: evm_env.block_env.number().saturating_to(),
-            gas_limit: evm_env.block_env.gas_limit(),
-            difficulty: evm_env.block_env.difficulty(),
+            base_fee_per_gas: Some(block.basefee.saturating_to()),
+            number: block.number.saturating_to(),
+            gas_limit: block.gas_limit.saturating_to(),
+            difficulty: block.difficulty,
             gas_used: *gas_used,
             extra_data: self.extra_data.clone(),
             parent_beacon_block_root: ctx.parent_beacon_block_root,

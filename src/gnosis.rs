@@ -1,26 +1,24 @@
-use crate::errors::GnosisBlockExecutionError;
-use crate::spec::gnosis_spec::{BalancerHardforkConfig, GnosisHardForks};
-use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_eips::eip4895::{Withdrawal, Withdrawals};
-use alloy_primitives::U256;
-use alloy_primitives::{
-    map::{AddressMap, HashMap},
-    Address, Bytes,
-};
+//! Gnosis-specific block processing helpers.
+//!
+//! The block executor ([`crate::block`]) runs the system calls; this module builds their call data,
+//! decodes their results, and computes the state changes for Gnosis bytecode rewrites.
+
+use std::collections::BTreeMap;
+
+use alloy_consensus::TxReceipt;
+use alloy_eips::eip4895::Withdrawal;
+use alloy_primitives::{map::AddressMap, Address, Bytes, Log, U256};
 use alloy_sol_macro::sol;
-use alloy_sol_types::SolCall;
-use reth_evm::{
-    eth::spec::EthExecutorSpec,
-    execute::{BlockExecutionError, InternalBlockExecutionError},
-    Evm,
+use alloy_sol_types::{SolCall, SolEvent};
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, PendingState},
+    DatabaseError, Evm, EvmTypes,
 };
-use revm::state::{Account, AccountInfo};
-use revm::Database;
-use revm::{
-    context::result::{ExecutionResult, Output, ResultAndState},
-    DatabaseCommit,
-};
-use std::fmt::Display;
+use reth_evm::execute::BlockValidationError;
+
+use crate::errors::GnosisBlockExecutionError;
+use crate::spec::gnosis_spec::BalancerHardforkConfig;
 
 // Codegen from https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
 sol!(
@@ -41,265 +39,192 @@ sol!(
     );
 );
 
-/// Applies the post-block call to the withdrawal / deposit contract, using the given block.
-/// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
-#[inline]
-fn apply_withdrawals_contract_call(
-    withdrawal_contract_address: Address,
-    withdrawals: &[Withdrawal],
-    evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
-) -> Result<Bytes, BlockExecutionError> {
-    // TODO: Only do the call post-merge
-    // TODO: Should this call be made for the genesis block?
-
-    let ResultAndState { result, state } = match evm.transact_system_call(
-        alloy_eips::eip4788::SYSTEM_ADDRESS,
-        withdrawal_contract_address,
-        executeSystemWithdrawalsCall {
-            maxFailedWithdrawalsToProcess: U256::from(4),
-            _amounts: withdrawals.iter().map(|w| w.amount).collect::<Vec<_>>(),
-            _addresses: withdrawals.iter().map(|w| w.address).collect::<Vec<_>>(),
-        }
-        .abi_encode()
-        .into(),
-    ) {
-        Ok(res) => res,
-        Err(e) => {
-            return Err(BlockExecutionError::Internal(
-                InternalBlockExecutionError::Other(
-                    format!("withdrawal contract system call revert: {e}").into(),
-                ),
-            ))
-        }
-    };
-
-    // TODO: Should check the execution is successful? Is an Ok from transact() enough?
-
-    // SYSTEM_ADDRESS and beneficiary are already pruned from the system-call
-    // diff by `evm/factory.rs::transact_system_call`; no extra cleanup here.
-    // reth 2.3.0 removed the OnStateHook plumbing, so no state-hook notification here.
-
-    evm.db_mut().commit(state);
-
-    match result {
-        ExecutionResult::Success { output, .. } => Ok(output.into_data()),
-        ExecutionResult::Revert { output, .. } => Err(BlockExecutionError::Internal(
-            InternalBlockExecutionError::Other(format!("execution reverted: {output}").into()),
-        )),
-        ExecutionResult::Halt { reason, .. } => Err(BlockExecutionError::Internal(
-            InternalBlockExecutionError::Other(format!("execution halted: {reason:?}").into()),
-        )),
-    }
+sol! {
+    #[allow(missing_docs)]
+    event DepositEvent(
+        bytes pubkey,
+        bytes withdrawal_credentials,
+        bytes amount,
+        bytes signature,
+        bytes index
+    );
 }
 
-/// Applies the post-block call to the block rewards POSDAO contract, using the given block,
-/// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
+/// Number of failed withdrawals the withdrawal contract retries per block, per the Gnosis
+/// withdrawals spec.
+const MAX_FAILED_WITHDRAWALS_TO_PROCESS: u64 = 4;
+
+/// Size of one EIP-6110 deposit request: 48-byte pubkey, 32-byte withdrawal credentials, 8-byte
+/// amount, 96-byte signature, and 8-byte index.
+const DEPOSIT_REQUEST_SIZE: usize = 48 + 32 + 8 + 96 + 8;
+
+/// Returns the call data for the post-block withdrawal contract call.
 ///
-/// `is_pre_merge`: when true, preserve SYSTEM_ADDRESS in committed state to match
-/// Nethermind's "EIP-158 disabled for AuRa system calls" semantics.
-#[inline]
-fn apply_block_rewards_contract_call(
-    block_rewards_contract: Address,
-    coinbase: Address,
-    evm: &mut impl Evm<DB: DatabaseCommit, Error: Display>,
-) -> Result<(AddressMap<u128>, Vec<alloy_primitives::Log>), BlockExecutionError> {
-    let ResultAndState { result, state } = match evm.transact_system_call(
-        alloy_eips::eip4788::SYSTEM_ADDRESS,
-        block_rewards_contract,
-        rewardCall {
-            benefactors: vec![coinbase],
-            // Type 0 = RewardAuthor
-            kind: vec![0],
-        }
-        .abi_encode()
-        .into(),
-    ) {
-        Ok(res) => res,
-        Err(e) => {
-            return Err(BlockExecutionError::from(
-                GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call error: {e}"),
-                },
-            ));
-        }
-    };
-
-    // If the block rewards contract was filtered out of the state diff (read-only access)
-    // or its code hash is empty, return early with no rewards.
-    if state
-        .get(&block_rewards_contract)
-        .is_none_or(|account| account.info.code_hash == KECCAK_EMPTY)
-    {
-        return Ok((HashMap::default(), Vec::new()));
+/// Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
+pub(crate) fn withdrawals_call_data(withdrawals: &[Withdrawal]) -> Bytes {
+    executeSystemWithdrawalsCall {
+        maxFailedWithdrawalsToProcess: U256::from(MAX_FAILED_WITHDRAWALS_TO_PROCESS),
+        _amounts: withdrawals.iter().map(|w| w.amount).collect(),
+        _addresses: withdrawals.iter().map(|w| w.address).collect(),
     }
+    .abi_encode()
+    .into()
+}
 
-    let (output_bytes, reward_logs) = match result {
-        ExecutionResult::Success { output, logs, .. } => match output {
-            Output::Call(output_bytes) |
-            // Should never happen, we craft a transaction without constructor code
-            Output::Create(output_bytes, _) => (output_bytes, logs),
-        },
-        ExecutionResult::Revert { output, .. } => {
-            return Err(BlockExecutionError::from(
-                GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call revert {output}"),
-                },
-            ));
-        }
-        ExecutionResult::Halt { reason, .. } => {
-            return Err(BlockExecutionError::from(
-                GnosisBlockExecutionError::CustomErrorMessage {
-                    message: format!("block rewards contract system call halt {reason:?}"),
-                },
-            ));
-        }
-    };
+/// Returns the call data for the post-block block-rewards contract call.
+///
+/// Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
+pub(crate) fn block_rewards_call_data(coinbase: Address) -> Bytes {
+    rewardCall {
+        benefactors: vec![coinbase],
+        // Type 0 = RewardAuthor
+        kind: vec![0],
+    }
+    .abi_encode()
+    .into()
+}
 
-    let result = rewardCall::abi_decode_returns(output_bytes.as_ref()).map_err(|e| {
-        BlockExecutionError::from(GnosisBlockExecutionError::CustomErrorMessage {
+/// Decodes the block-rewards contract output into native balance increments.
+pub(crate) fn decode_block_rewards(
+    output: &Bytes,
+) -> Result<AddressMap<U256>, GnosisBlockExecutionError> {
+    let rewards = rewardCall::abi_decode_returns(output).map_err(|e| {
+        GnosisBlockExecutionError::CustomErrorMessage {
             message: format!(
                 "error parsing block rewards contract system call return {:?}: {}",
-                hex::encode(output_bytes),
+                hex::encode(output),
                 e
             ),
-        })
+        }
     })?;
 
-    // reth 2.3.0 removed the OnStateHook plumbing, so no state-hook notification here.
-    // SYSTEM_ADDRESS preservation for system calls is handled in
-    // `evm/factory.rs::transact_system_call`; no per-call-site logic needed.
-    evm.db_mut().commit(state);
-
-    let mut balance_increments = AddressMap::default();
-    for (address, amount) in result
+    let mut balance_increments = AddressMap::<U256>::default();
+    for (address, amount) in rewards
         .receiversNative
         .iter()
-        .zip(result.rewardsNative.iter())
+        .zip(rewards.rewardsNative.iter())
     {
-        *balance_increments.entry(*address).or_default() += amount.to::<u128>();
+        let increment = balance_increments.entry(*address).or_default();
+        *increment = increment.saturating_add(*amount);
     }
-
-    Ok((balance_increments, reward_logs))
+    Ok(balance_increments)
 }
 
-// TODO: this can be simplified by using the existing apply_post_execution_changes
-// which does all of the same things
-//
-// [Gnosis/fork:DIFF]: Upstream code in EthBlockExecutor computes balance changes for:
-// - Pre-merge omer and block rewards
-// - Beacon withdrawal mints
-// - DAO hardfork drain balances
-//
-// Gnosis post-block system calls:
-// - Do NOT credit withdrawals as native token mint
-// - Call into deposit contract with withdrawal data
-// - Call block rewards contract for bridged xDAI mint
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_post_block_system_calls<SPEC>(
-    chain_spec: &SPEC,
-    block_rewards_contract: Address,
-    withdrawal_contract: Address,
-    block_timestamp: u64,
-    withdrawals: Option<&Withdrawals>,
-    coinbase: Address,
-    evm: &mut impl Evm<DB: Database + DatabaseCommit>,
-) -> Result<(AddressMap<u128>, Bytes, Vec<alloy_primitives::Log>), BlockExecutionError>
+/// Returns the concatenated EIP-6110 deposit requests emitted by `deposit_contract` in
+/// `receipts`.
+pub(crate) fn parse_deposit_requests<R>(
+    deposit_contract: Address,
+    receipts: &[R],
+) -> Result<Vec<u8>, BlockValidationError>
 where
-    SPEC: EthExecutorSpec + GnosisHardForks,
+    R: TxReceipt<Log = Log>,
 {
-    let mut withdrawal_requests = Bytes::new();
-
-    if chain_spec.is_shanghai_active_at_timestamp(block_timestamp) {
-        let withdrawals = withdrawals.ok_or(GnosisBlockExecutionError::CustomErrorMessage {
-            message: "block has no withdrawals field".to_owned(),
-        })?;
-        withdrawal_requests =
-            apply_withdrawals_contract_call(withdrawal_contract, withdrawals, evm)?;
+    let mut out = Vec::new();
+    for log in receipts.iter().flat_map(|receipt| receipt.logs()) {
+        if log.address != deposit_contract
+            || log.topics().first() != Some(&DepositEvent::SIGNATURE_HASH)
+        {
+            continue;
+        }
+        let deposit = DepositEvent::decode_log(log)
+            .map_err(|err| BlockValidationError::DepositRequestDecode(err.to_string()))?;
+        out.reserve(DEPOSIT_REQUEST_SIZE);
+        out.extend_from_slice(deposit.pubkey.as_ref());
+        out.extend_from_slice(deposit.withdrawal_credentials.as_ref());
+        out.extend_from_slice(deposit.amount.as_ref());
+        out.extend_from_slice(deposit.signature.as_ref());
+        out.extend_from_slice(deposit.index.as_ref());
     }
-
-    let (balance_increments, reward_logs) =
-        apply_block_rewards_contract_call(block_rewards_contract, coinbase, evm)?;
-
-    Ok((balance_increments, withdrawal_requests, reward_logs))
+    Ok(out)
 }
 
-/// Rewrite contract bytecodes from an AuRa pre-merge bytecode rewrite map.
-/// Used for chain hardforks like Gnosis block 21,735,000 token contract upgrade.
-pub fn rewrite_aura_bytecodes(
-    evm: &mut impl Evm<DB: Database + DatabaseCommit>,
-    rewrites: &std::collections::BTreeMap<Address, alloy_primitives::Bytes>,
-) {
-    use revm::state::{AccountStatus, Bytecode};
-    let mut state: AddressMap<Account> = Default::default();
-    for (addr, code) in rewrites {
-        let original_account_info = evm
-            .db_mut()
-            .basic(*addr)
-            .unwrap_or_default()
-            .unwrap_or_default();
+/// Returns the state changes for an AuRa pre-merge bytecode rewrite map.
+///
+/// Used for chain hardforks like the Gnosis block 21,735,000 token contract upgrade. Accounts
+/// that already have the target code are left untouched.
+pub fn rewrite_aura_bytecodes<T: EvmTypes>(
+    evm: &mut Evm<'_, T>,
+    rewrites: &BTreeMap<Address, Bytes>,
+) -> Result<PendingState, DatabaseError> {
+    let mut state = PendingState::default();
+    for (address, code) in rewrites {
+        let original = evm.read_account_info(address)?;
         let bytecode = Bytecode::new_legacy(code.clone());
-        let new_code_hash = bytecode.hash_slow();
-        if original_account_info.code_hash == new_code_hash {
-            tracing::trace!(">>> Skipping AuRa rewrite for address: {}", addr);
+        let code_hash = bytecode.hash_slow();
+        let original_code_hash = original
+            .as_ref()
+            .map_or(AccountInfo::empty().code_hash, |info| info.code_hash);
+        if original_code_hash == code_hash {
+            tracing::trace!(target: "reth::gnosis", %address, "skipping AuRa bytecode rewrite");
             continue;
         }
-        let modified_account_info = AccountInfo {
-            code_hash: new_code_hash,
-            code: Some(bytecode),
-            ..original_account_info
-        };
-        let mut account = Account::from(modified_account_info);
-        account.status = AccountStatus::Touched;
-        *account.original_info_mut() = original_account_info.clone();
         tracing::info!(
-            "AuRa Bytecode Rewrite >>> Addr: {}; From: {}; To: {}",
-            addr,
-            original_account_info.code_hash,
-            account.info.code_hash
+            target: "reth::gnosis",
+            %address,
+            from = %original_code_hash,
+            to = %code_hash,
+            "AuRa bytecode rewrite"
         );
-        state.insert(*addr, account);
+        insert_code_change(&mut state, *address, original, Some(bytecode));
     }
-    evm.db_mut().commit(state);
+    Ok(state)
 }
 
-pub fn rewrite_bytecodes(
-    evm: &mut impl Evm<DB: Database + DatabaseCommit>,
+/// Returns the state changes for the Balancer hardfork bytecode rewrites.
+///
+/// Accounts that already have the expected code hash are left untouched.
+pub fn rewrite_bytecodes<T: EvmTypes>(
+    evm: &mut Evm<'_, T>,
     balancer_hardfork_config: &BalancerHardforkConfig,
-) {
-    let mut state: AddressMap<Account> = Default::default();
-    for (addr, code, expected_code_hash) in &balancer_hardfork_config.config {
-        let original_account_info = evm
-            .db_mut()
-            .basic(*addr)
-            .unwrap_or_default()
-            .unwrap_or_default();
-        if &original_account_info.code_hash == expected_code_hash {
-            // No need to rewrite
-            tracing::trace!(">>> Skipping rewrite for address: {}", addr);
-            tracing::trace!("    Code hash matches expected: {}", expected_code_hash);
+) -> Result<PendingState, DatabaseError> {
+    let mut state = PendingState::default();
+    for (address, code, expected_code_hash) in &balancer_hardfork_config.config {
+        let original = evm.read_account_info(address)?;
+        let original_code_hash = original
+            .as_ref()
+            .map_or(AccountInfo::empty().code_hash, |info| info.code_hash);
+        if &original_code_hash == expected_code_hash {
+            tracing::trace!(
+                target: "reth::gnosis",
+                %address,
+                code_hash = %expected_code_hash,
+                "skipping Balancer bytecode rewrite"
+            );
             continue;
         }
-        let modified_account_info = AccountInfo {
-            code_hash: if let Some(ref code) = code {
-                code.hash_slow()
-            } else {
-                KECCAK_EMPTY
-            },
-            code: code.clone(),
-            ..original_account_info
-        };
-        let mut account = Account::from(modified_account_info);
-        account.status = revm::state::AccountStatus::Touched;
-        *account.original_info_mut() = original_account_info.clone();
         tracing::info!(
-            "Rewriting Bytecode >>> Addr: {}; From: {}; To: {}",
-            addr,
-            original_account_info.code_hash,
-            account.info.code_hash
+            target: "reth::gnosis",
+            %address,
+            from = %original_code_hash,
+            to = %expected_code_hash,
+            "Balancer bytecode rewrite"
         );
-        state.insert(*addr, account);
+        insert_code_change(&mut state, *address, original, code.clone());
     }
+    Ok(state)
+}
 
-    // commit the modified accounts to the EVM database
-    evm.db_mut().commit(state);
+/// Records replacing the code of `address` with `code` (or removing it when `None`), keeping its
+/// balance and nonce.
+///
+/// The revm implementation committed these changes as touched-but-not-created accounts, so an
+/// account left empty by the rewrite is removed (EIP-161) rather than kept as an empty account.
+fn insert_code_change(
+    state: &mut PendingState,
+    address: Address,
+    original: Option<AccountInfo>,
+    code: Option<Bytecode>,
+) {
+    let base = original.clone().unwrap_or_else(AccountInfo::empty);
+    let mut current = AccountInfo::new(
+        base.balance,
+        base.nonce,
+        AccountInfo::empty().code_hash,
+        None,
+    );
+    if let Some(code) = code {
+        current = current.with_code(code);
+    }
+    let current = (!current.is_empty()).then_some(current);
+    state.insert_account(address, original, current);
 }

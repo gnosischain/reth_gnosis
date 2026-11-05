@@ -1,405 +1,93 @@
-use alloy_evm::precompiles::PrecompilesMap;
-use alloy_evm::{Database, Evm};
-use core::ops::{Deref, DerefMut};
-use reth::revm::precompile::{PrecompileSpecId, Precompiles};
-use reth_evm::{eth::EthEvmContext, EvmEnv, EvmFactory};
-use revm::primitives::{hardfork::SpecId, Address, Bytes};
-use revm::primitives::{TxKind, U256};
-use revm::state::{Account, AccountInfo, AccountStatus};
-use revm::{
-    context::{
-        result::{EVMError, HaltReason, ResultAndState},
-        BlockEnv, CfgEnv, DBErrorMarker, TxEnv,
-    },
-    handler::{instructions::EthInstructions, PrecompileProvider},
-    inspector::NoOpInspector,
-    interpreter::{interpreter::EthInterpreter, InterpreterResult},
-    Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext,
+//! Construction of Gnosis evm2 instances.
+
+use core::ops::Range;
+
+use alloy_primitives::Address;
+use evm2::{
+    evm::{precompile::PrecompileProvider, DynDatabase},
+    registry::TxRegistry,
+    Evm, ExecutionConfig, Precompiles, SpecId, TxResult,
 };
+use reth_evm_ethereum::EthEvmEnv;
 
-// https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md
-const TX_GAS_LIMIT: u64 = 30_000_000;
+use super::{eip1283, handler::gnosis_tx_registry, GnosisEvmExt, GnosisEvmTypes};
 
-#[allow(missing_debug_implementations)] // missing revm::Context Debug impl
-pub struct GnosisEvm<DB: Database, I, PRECOMPILE = PrecompilesMap> {
-    inner: crate::evm::gnosis_evm::GnosisEvm<
-        EthEvmContext<DB>,
-        I,
-        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
-        PRECOMPILE,
-    >,
-    inspect: bool,
-}
+/// Gnosis EVM environment.
+pub type GnosisEvmEnv = EthEvmEnv<GnosisEvmTypes>;
 
-impl<DB: Database, I, PRECOMPILE> GnosisEvm<DB, I, PRECOMPILE> {
-    /// Creates a new Gnosis EVM instance.
-    ///
-    /// The `inspect` argument determines whether the configured [`Inspector`] of the given
-    /// [`GnosisEvm`] should be invoked on [`Evm::transact`].
-    pub const fn new(
-        evm: crate::evm::gnosis_evm::GnosisEvm<
-            EthEvmContext<DB>,
-            I,
-            EthInstructions<EthInterpreter, EthEvmContext<DB>>,
-            PRECOMPILE,
-        >,
-        inspect: bool,
-    ) -> Self {
-        Self {
-            inner: evm,
-            inspect,
-        }
-    }
-
-    /// Consumes self and return the inner EVM instance.
-    pub fn into_inner(
-        self,
-    ) -> super::gnosis_evm::GnosisEvm<
-        EthEvmContext<DB>,
-        I,
-        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
-        PRECOMPILE,
-    > {
-        self.inner
-    }
-
-    /// Provides a reference to the EVM context.
-    pub const fn ctx(&self) -> &EthEvmContext<DB> {
-        &self.inner.0.ctx
-    }
-
-    /// Provides a mutable reference to the EVM context.
-    pub fn ctx_mut(&mut self) -> &mut EthEvmContext<DB> {
-        &mut self.inner.0.ctx
-    }
-
-    /// Provides a mutable reference to the EVM inspector.
-    pub fn inspector_mut(&mut self) -> &mut I {
-        &mut self.inner.0.inspector
-    }
-}
-
-impl<DB: Database, I, PRECOMPILE> Deref for GnosisEvm<DB, I, PRECOMPILE> {
-    type Target = EthEvmContext<DB>;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.ctx()
-    }
-}
-
-impl<DB: Database, I, PRECOMPILE> DerefMut for GnosisEvm<DB, I, PRECOMPILE> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.ctx_mut()
-    }
-}
-
-impl<DB, I, PRECOMPILE> Evm for GnosisEvm<DB, I, PRECOMPILE>
-where
-    DB: Database,
-    I: Inspector<EthEvmContext<DB>>,
-    PRECOMPILE: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>,
-{
-    type DB = DB;
-    type Tx = TxEnv;
-    type Error = EVMError<DB::Error>;
-    type HaltReason = HaltReason;
-    type Spec = SpecId;
-    type BlockEnv = BlockEnv;
-    type Precompiles = PRECOMPILE;
-    type Inspector = I;
-
-    fn block(&self) -> &BlockEnv {
-        &self.block
-    }
-
-    fn cfg_env(&self) -> &CfgEnv<SpecId> {
-        &self.cfg
-    }
-
-    fn chain_id(&self) -> u64 {
-        self.cfg.chain_id
-    }
-
-    fn transact_raw(
-        &mut self,
-        tx: Self::Tx,
-    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        if self.inspect {
-            self.inner.inspect_tx(tx)
-        } else {
-            self.inner.transact(tx)
-        }
-    }
-
-    fn transact_system_call(
-        &mut self,
-        caller: Address,
-        contract: Address,
-        data: Bytes,
-    ) -> Result<ResultAndState, Self::Error> {
-        // Nethermind uses 30M gas for SystemTransaction.
-        // We disable the block gas limit check so we can use this gas limit
-        // without modifying block.gas_limit (which affects GASLIMIT opcode).
-        let tx = TxEnv {
-            caller,
-            kind: TxKind::Call(contract),
-            // Explicitly set nonce to 0 so revm does not do any nonce checks
-            nonce: 0,
-            gas_limit: TX_GAS_LIMIT,
-            value: U256::ZERO,
-            data,
-            // Setting the gas price to zero enforces that no value is transferred as part of the
-            // call, and that the call will not count against the block's gas limit
-            gas_price: 0,
-            // The chain ID check is not relevant here and is disabled if set to None
-            chain_id: None,
-            // Setting the gas priority fee to None ensures the effective gas price is derived from
-            // the `gas_price` field, which we need to be zero
-            gas_priority_fee: None,
-            access_list: Default::default(),
-            // blob fields can be None for this tx
-            blob_hashes: Vec::new(),
-            max_fee_per_blob_gas: 0,
-            tx_type: 0,
-            authorization_list: Default::default(),
-        };
-
-        let mut disable_nonce_check = true;
-        let mut disable_block_gas_limit = true;
-        let mut disable_base_fee = true;
-        let mut tx_gas_limit_cap = Some(TX_GAS_LIMIT);
-
-        // disable nonce check, block gas limit check, base fee check, and set tx gas limit cap
-        core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
-        core::mem::swap(
-            &mut self.cfg.disable_block_gas_limit,
-            &mut disable_block_gas_limit,
-        );
-        core::mem::swap(&mut self.cfg.disable_base_fee, &mut disable_base_fee);
-        core::mem::swap(&mut self.cfg.tx_gas_limit_cap, &mut tx_gas_limit_cap);
-
-        let mut res = self.transact(tx);
-
-        // swap back
-        core::mem::swap(&mut self.cfg.disable_nonce_check, &mut disable_nonce_check);
-        core::mem::swap(
-            &mut self.cfg.disable_block_gas_limit,
-            &mut disable_block_gas_limit,
-        );
-        core::mem::swap(&mut self.cfg.disable_base_fee, &mut disable_base_fee);
-        core::mem::swap(&mut self.cfg.tx_gas_limit_cap, &mut tx_gas_limit_cap);
-
-        // NOTE: We assume that only the contract storage is modified. Revm currently marks the
-        // caller and block beneficiary accounts as "touched" when we do the above transact calls,
-        // and includes them in the result.
-        //
-        // We're doing this state cleanup to make sure that changeset only includes the changed
-        // contract storage.
-        if let Ok(res) = &mut res {
-            // SYSTEM_ADDRESS handling — single source of truth for the
-            // "EIP-158 disabled for system calls" rule.
-            //
-            // Mirrors gnosischain/go-ethereum's `core/state/statedb.go::Finalise`,
-            // which exempts SYSTEM_ADDRESS from the empty-account purge applied
-            // to every other account. The mechanism here is equivalent: by
-            // marking SYSTEM_ADDRESS with `Created | Touched` we route it
-            // through `apply_account_state::newly_created` in the state cache
-            // (preserved as an empty account) instead of `touch_empty_eip161`
-            // (pruned).
-            //
-            // Also: undo any nonce bump from revm's
-            // `validate_against_state_and_deduct_caller` so that committed
-            // state never reflects a pseudo-tx from the system address.
-            res.state
-                .entry(alloy_eips::eip4788::SYSTEM_ADDRESS)
-                .and_modify(|acc| {
-                    acc.info = acc.original_info();
-                    acc.status |= AccountStatus::Created | AccountStatus::Touched;
-                })
-                .or_insert_with(|| {
-                    let mut acc = Account::from(AccountInfo::default());
-                    acc.status = AccountStatus::Created | AccountStatus::Touched;
-                    acc
-                });
-
-            res.state.remove(&self.block.beneficiary);
-            // Remove fee collector from system call state — GnosisEvmHandler touches it
-            // during reward_beneficiary, but system calls should not collect fees
-            let fee_collector = self.inner.1;
-            res.state.remove(&fee_collector);
-
-            // Filter out unchanged storage slots and unmodified accounts.
-            // revm marks all SLOAD-ed slots and accessed accounts in the state diff
-            // even if values didn't change. For system calls committed directly via
-            // db.commit(), these "read-only" entries would pollute the state trie.
-            for account in res.state.values_mut() {
-                account
-                    .storage
-                    .retain(|_slot, value| value.present_value != value.original_value);
-            }
-            // Note: Don't remove read-only accounts from the state diff.
-            // The State::commit() handles unchanged accounts correctly by checking
-            // the account status flags internally.
-        }
-
-        res
-    }
-
-    fn db_mut(&mut self) -> &mut Self::DB {
-        &mut self.journaled_state.database
-    }
-
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
-        let Context {
-            block: block_env,
-            cfg: cfg_env,
-            journaled_state,
-            ..
-        } = self.inner.0.ctx;
-
-        (journaled_state.database, EvmEnv { block_env, cfg_env })
-    }
-
-    fn set_inspector_enabled(&mut self, enabled: bool) {
-        self.inspect = enabled;
-    }
-
-    fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
-        &mut self.inner.0.precompiles
-    }
-
-    fn inspector_mut(&mut self) -> &mut Self::Inspector {
-        &mut self.inner.0.inspector
-    }
-
-    fn precompiles(&self) -> &Self::Precompiles {
-        &self.inner.0.precompiles
-    }
-
-    fn inspector(&self) -> &Self::Inspector {
-        &self.inner.0.inspector
-    }
-
-    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
-        (
-            &self.inner.0.ctx.journaled_state.database,
-            &self.inner.0.inspector,
-            &self.inner.0.precompiles,
-        )
-    }
-
-    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
-        (
-            &mut self.inner.0.ctx.journaled_state.database,
-            &mut self.inner.0.inspector,
-            &mut self.inner.0.precompiles,
-        )
-    }
-}
-
-/// Custom EVM configuration.
+/// Creates evm2 instances configured for a Gnosis chain.
 #[derive(Debug, Clone, Default)]
 pub struct GnosisEvmFactory {
+    /// EIP-1559 fee collector that receives minted base and blob fees.
     pub fee_collector_address: Address,
     /// Gnosis ran EIP-1283 (SSTORE net gas metering) in the half-open
-    /// `[constantinopleBlock, petersburgBlock)` window — see `gnosis_eip1283_active`.
-    /// revm-primitives >= 24 dropped `SpecId::CONSTANTINOPLE`, so those blocks execute on the
-    /// PETERSBURG spec and the factory carries the window explicitly to reinstate EIP-1283 via
-    /// a custom SSTORE instruction for blocks inside it. `None` = never active (e.g. Chiado).
-    pub eip1283_window: Option<core::ops::Range<u64>>,
+    /// `[constantinopleBlock, petersburgBlock)` window. evm2 has no Constantinople spec, so those
+    /// blocks execute on `PETERSBURG` and the factory installs the EIP-1283 SSTORE for blocks in
+    /// this window. `None` means never active (e.g. Chiado).
+    pub eip1283_window: Option<Range<u64>>,
 }
 
 impl GnosisEvmFactory {
-    /// Whether the Gnosis EIP-1283 SSTORE override applies at `block_number` (the half-open
-    /// `[constantinopleBlock, petersburgBlock)` window). See `eip1283_window`.
+    /// Whether the Gnosis EIP-1283 SSTORE override applies at `block_number`.
     fn eip1283_active(&self, block_number: u64) -> bool {
         self.eip1283_window
             .as_ref()
-            .is_some_and(|w| w.contains(&block_number))
-    }
-}
-
-impl EvmFactory for GnosisEvmFactory {
-    type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> = GnosisEvm<DB, I>;
-    type Context<DB: Database> = EthEvmContext<DB>;
-    type Tx = TxEnv;
-    type Error<DBError: DBErrorMarker + core::error::Error + Send + Sync + 'static> =
-        EVMError<DBError>;
-    type HaltReason = HaltReason;
-    type Spec = SpecId;
-    type BlockEnv = BlockEnv;
-    type Precompiles = PrecompilesMap;
-
-    fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
-        let spec_id = input.cfg_env.spec;
-        let block_number = input.block_env.number.saturating_to::<u64>();
-        let mut evm = Context::mainnet()
-            .with_db(db)
-            .with_cfg(input.cfg_env)
-            .with_block(input.block_env)
-            .build_mainnet_with_inspector(NoOpInspector {})
-            .with_precompiles(PrecompilesMap::from_static(Precompiles::new(
-                PrecompileSpecId::from_spec_id(spec_id),
-            )));
-
-        // Gnosis Constantinople: override SSTORE to apply EIP-1283 net gas metering.
-        // revm has no Constantinople spec, so the window runs on PETERSBURG (= Constantinople
-        // minus EIP-1283) and we reinstate EIP-1283 for blocks in the window.
-        if self.eip1283_active(block_number) {
-            use revm::bytecode::opcode::SSTORE;
-            use revm::interpreter::Instruction;
-            // gas = 0: SSTORE static gas is charged inside the instruction via GasParams,
-            // matching revm's own default gas_table entry for SSTORE.
-            evm.instruction.insert_instruction(
-                SSTORE,
-                Instruction::new(crate::evm::gnosis_evm::sstore_eip1283),
-                0,
-            );
-        }
-
-        GnosisEvm {
-            inner: super::gnosis_evm::GnosisEvm(evm, self.fee_collector_address),
-            inspect: false,
-        }
+            .is_some_and(|window| window.contains(&block_number))
     }
 
-    fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>, EthInterpreter>>(
+    /// Returns the transaction registry for `spec`.
+    pub fn tx_registry(
         &self,
-        db: DB,
-        input: EvmEnv,
-        inspector: I,
-    ) -> Self::Evm<DB, I> {
-        let spec_id = input.cfg_env.spec;
-        let block_number = input.block_env.number.saturating_to::<u64>();
-        let mut evm = Context::mainnet()
-            .with_db(db)
-            .with_cfg(input.cfg_env)
-            .with_block(input.block_env)
-            .build_mainnet_with_inspector(inspector)
-            .with_precompiles(PrecompilesMap::from_static(Precompiles::new(
-                PrecompileSpecId::from_spec_id(spec_id),
-            )));
+        spec: SpecId,
+    ) -> TxRegistry<GnosisEvmTypes, TxResult<GnosisEvmTypes>> {
+        gnosis_tx_registry(spec)
+    }
 
-        // Gnosis Constantinople: override SSTORE to apply EIP-1283 net gas metering.
-        // revm has no Constantinople spec, so the window runs on PETERSBURG (= Constantinople
-        // minus EIP-1283) and we reinstate EIP-1283 for blocks in the window.
-        if self.eip1283_active(block_number) {
-            use revm::bytecode::opcode::SSTORE;
-            use revm::interpreter::Instruction;
-            // gas = 0: SSTORE static gas is charged inside the instruction via GasParams,
-            // matching revm's own default gas_table entry for SSTORE.
-            evm.instruction.insert_instruction(
-                SSTORE,
-                Instruction::new(crate::evm::gnosis_evm::sstore_eip1283),
-                0,
-            );
-        }
+    /// Returns the precompiles for `spec`. Gnosis uses the standard Ethereum set.
+    pub fn precompiles(&self, spec: SpecId) -> Precompiles<GnosisEvmTypes> {
+        Precompiles::base(spec)
+    }
 
-        GnosisEvm {
-            inner: super::gnosis_evm::GnosisEvm(evm, self.fee_collector_address),
-            inspect: true,
+    /// Returns the execution config (version data and opcode table) for `env`.
+    fn execution_config(&self, env: &GnosisEvmEnv) -> ExecutionConfig<GnosisEvmTypes> {
+        let block_number = env.block.number.saturating_to::<u64>();
+        // The window maps to PETERSBURG (see `gnosis_revm_spec`); the custom table is a
+        // PETERSBURG overlay, so it can only be installed on that spec.
+        if env.spec == SpecId::PETERSBURG && self.eip1283_active(block_number) {
+            eip1283::execution_config(env.version)
+        } else {
+            ExecutionConfig::for_spec_and_version(env.spec, env.version)
         }
+    }
+
+    /// Creates an EVM over `db` for `env` with the standard precompiles.
+    pub fn create_evm<'a>(
+        &self,
+        db: impl DynDatabase + 'a,
+        env: GnosisEvmEnv,
+    ) -> Evm<'a, GnosisEvmTypes> {
+        let precompiles = self.precompiles(env.spec);
+        self.create_evm_with_precompiles(db, env, precompiles)
+    }
+
+    /// Creates an EVM over `db` for `env` with the given precompile provider.
+    pub fn create_evm_with_precompiles<'a>(
+        &self,
+        db: impl DynDatabase + 'a,
+        env: GnosisEvmEnv,
+        precompiles: impl PrecompileProvider<GnosisEvmTypes> + 'a,
+    ) -> Evm<'a, GnosisEvmTypes> {
+        let config = self.execution_config(&env);
+        Evm::new_with_execution_config_and_ext(
+            config,
+            env.spec,
+            env.block,
+            self.tx_registry(env.spec),
+            db,
+            precompiles,
+            GnosisEvmExt {
+                fee_collector: self.fee_collector_address,
+            },
+        )
     }
 }

@@ -1,17 +1,21 @@
 use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_primitives::{keccak256, Address, Bytes, U256};
-use reth_evm::{env::EvmEnv, Evm, EvmFactory};
+use alloy_primitives::{Address, Bytes, U256};
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnv,
+    evm::{AccountInfo, InMemoryDB},
+    Evm, SpecId,
+};
 use reth_gnosis::consts::parse_balancer_hardfork_config;
-use reth_gnosis::evm::factory::GnosisEvmFactory;
+use reth_gnosis::evm::{factory::GnosisEvmEnv, GnosisEvmFactory, GnosisEvmTypes};
 use reth_gnosis::gnosis::rewrite_bytecodes;
 use reth_gnosis::spec::gnosis_spec::BalancerHardforkConfig;
-use revm::context::{BlockEnv, CfgEnv};
-use revm::database::{CacheDB, EmptyDB};
-use revm::state::{AccountInfo, Bytecode};
-use revm::Database;
 use serde_json::json;
 
 const TEST_BYTECODE: &str = "6080604052348015600e575f5ffd5b50603e80601a5f395ff3fe60806040525f5ffdfea2646970667358221220f7f53e1645a9cd5b79da6920c67891306d178dcff5e5683946cc1dae3c65aed664736f6c634300081e0033";
+
+/// Gnosis chain ID.
+const CHAIN_ID: u64 = 100;
 
 fn get_test_hardfork_config() -> BalancerHardforkConfig {
     let time_value = json!(1000);
@@ -23,21 +27,42 @@ fn get_test_hardfork_config() -> BalancerHardforkConfig {
         .expect("Test config should parse successfully")
 }
 
-/// Creates a minimal EvmEnv for testing purposes
-fn create_test_evm_env() -> EvmEnv {
-    EvmEnv {
-        cfg_env: CfgEnv::default().with_chain_id(100), // Gnosis chain ID
-        block_env: BlockEnv::default(),
+fn account(balance: u64, nonce: u64, code: Option<Bytecode>) -> AccountInfo {
+    let info = AccountInfo::empty()
+        .with_balance(U256::from(balance))
+        .with_nonce(nonce);
+    match code {
+        Some(code) => info.with_code(code),
+        None => info,
     }
 }
 
-/// Creates a GnosisEvm instance with a CacheDB for testing
-fn create_test_evm(db: CacheDB<EmptyDB>) -> impl Evm<DB = CacheDB<EmptyDB>> {
+/// Creates a Gnosis EVM over `db` for testing.
+fn create_test_evm(db: InMemoryDB) -> Evm<'static, GnosisEvmTypes> {
     let factory = GnosisEvmFactory {
         fee_collector_address: Address::ZERO,
         eip1283_window: None,
     };
-    factory.create_evm(db, create_test_evm_env())
+    factory.create_evm(
+        db,
+        GnosisEvmEnv::new(
+            SpecId::OSAKA,
+            BlockEnv::<GnosisEvmTypes>::default(),
+            CHAIN_ID,
+        ),
+    )
+}
+
+/// Applies the Balancer rewrites to `evm`'s state, as the block executor does.
+fn apply_rewrites(evm: &mut Evm<'_, GnosisEvmTypes>, config: &BalancerHardforkConfig) {
+    let state = rewrite_bytecodes(evm, config).expect("in-memory reads cannot fail");
+    evm.overlay_db_mut().commit_pending(&state);
+}
+
+fn read_account(evm: &mut Evm<'_, GnosisEvmTypes>, address: &Address) -> AccountInfo {
+    evm.read_account_info(address)
+        .expect("in-memory reads cannot fail")
+        .expect("account should exist")
 }
 
 #[test]
@@ -52,30 +77,21 @@ fn test_rewrite_bytecodes_rewrites_when_code_differs() {
     let (addr, _expected_bytecode, expected_code_hash) = config.config[0].clone();
 
     // Setup: Create account with DIFFERENT code than what rewrite expects
-    let mut db = CacheDB::new(EmptyDB::default());
+    let mut db = InMemoryDB::default();
     let original_code = Bytecode::new_legacy(Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]));
     let original_code_hash = original_code.hash_slow();
 
-    db.insert_account_info(
-        addr,
-        AccountInfo {
-            balance: U256::from(1000),
-            nonce: 5,
-            code_hash: original_code_hash,
-            code: Some(original_code),
-            account_id: None,
-        },
-    );
+    db.insert_account_info(&addr, account(1000, 5, Some(original_code)));
 
     // Sanity check: original code hash differs from expected
     assert_ne!(original_code_hash, expected_code_hash);
 
     // Action: Create EVM and call rewrite_bytecodes
     let mut evm = create_test_evm(db);
-    rewrite_bytecodes(&mut evm, &config);
+    apply_rewrites(&mut evm, &config);
 
     // Assert: Code should be rewritten
-    let account = evm.db_mut().basic(addr).unwrap().unwrap();
+    let account = read_account(&mut evm, &addr);
     assert_eq!(
         account.code_hash, expected_code_hash,
         "Code hash should be updated to expected value"
@@ -96,24 +112,15 @@ fn test_rewrite_bytecodes_skips_when_code_matches_expected() {
     let (addr, expected_bytecode, expected_code_hash) = config.config[0].clone();
 
     // Setup: Account already has the expected code hash
-    let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(
-        addr,
-        AccountInfo {
-            balance: U256::from(500),
-            nonce: 10,
-            code_hash: expected_code_hash, // Already matches expected!
-            code: expected_bytecode.clone(),
-            account_id: None,
-        },
-    );
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(&addr, account(500, 10, expected_bytecode.clone()));
 
     // Action: Create EVM and call rewrite_bytecodes
     let mut evm = create_test_evm(db);
-    rewrite_bytecodes(&mut evm, &config);
+    apply_rewrites(&mut evm, &config);
 
     // Assert: Account should remain unchanged (skip path taken)
-    let account = evm.db_mut().basic(addr).unwrap().unwrap();
+    let account = read_account(&mut evm, &addr);
     assert_eq!(account.code_hash, expected_code_hash);
     assert_eq!(account.balance, U256::from(500));
     assert_eq!(account.nonce, 10);
@@ -135,15 +142,15 @@ fn test_rewrite_bytecodes_handles_nonexistent_account() {
     let (addr, _expected_bytecode, expected_code_hash) = code_entry.clone();
 
     // Setup: Empty database - account doesn't exist
-    let db = CacheDB::new(EmptyDB::default());
+    let db = InMemoryDB::default();
 
     // Action: Create EVM and call rewrite_bytecodes
     let mut evm = create_test_evm(db);
-    rewrite_bytecodes(&mut evm, &config);
+    apply_rewrites(&mut evm, &config);
 
     // Assert: Account should now exist with the expected code
     // Note: After commit, we need to check the cache directly
-    let account = evm.db_mut().basic(addr).unwrap().unwrap();
+    let account = read_account(&mut evm, &addr);
     assert_eq!(
         account.code_hash, expected_code_hash,
         "Non-existent account should get the expected code"
@@ -158,29 +165,20 @@ fn test_rewrite_bytecodes_all_addresses_processed() {
     let config = get_test_hardfork_config();
 
     // Setup: Create accounts with wrong code for ALL rewrite addresses
-    let mut db = CacheDB::new(EmptyDB::default());
+    let mut db = InMemoryDB::default();
     let wrong_code = Bytecode::new_legacy(Bytes::from_static(&[0xff, 0xff]));
 
     for (addr, _, _) in &config.config {
-        db.insert_account_info(
-            *addr,
-            AccountInfo {
-                balance: U256::from(100),
-                nonce: 1,
-                code_hash: wrong_code.hash_slow(),
-                code: Some(wrong_code.clone()),
-                account_id: None,
-            },
-        );
+        db.insert_account_info(addr, account(100, 1, Some(wrong_code.clone())));
     }
 
     // Action: Create EVM and call rewrite_bytecodes
     let mut evm = create_test_evm(db);
-    rewrite_bytecodes(&mut evm, &config);
+    apply_rewrites(&mut evm, &config);
 
     // Assert: ALL addresses should have been rewritten
     for (addr, _expected_bytecode, expected_code_hash) in &config.config {
-        let account = evm.db_mut().basic(*addr).unwrap().unwrap();
+        let account = read_account(&mut evm, addr);
         assert_eq!(
             account.code_hash, *expected_code_hash,
             "Address {addr:?} should have expected code hash"
@@ -204,25 +202,16 @@ fn test_rewrite_bytecodes_clears_code_when_none() {
         );
 
         // Setup: Account with some code
-        let mut db = CacheDB::new(EmptyDB::default());
+        let mut db = InMemoryDB::default();
         let existing_code = Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00, 0x60, 0x00]));
-        db.insert_account_info(
-            *addr,
-            AccountInfo {
-                balance: U256::from(999),
-                nonce: 42,
-                code_hash: existing_code.hash_slow(),
-                code: Some(existing_code),
-                account_id: None,
-            },
-        );
+        db.insert_account_info(addr, account(999, 42, Some(existing_code)));
 
         // Action
         let mut evm = create_test_evm(db);
-        rewrite_bytecodes(&mut evm, &config);
+        apply_rewrites(&mut evm, &config);
 
         // Assert: Code should be cleared
-        let account = evm.db_mut().basic(*addr).unwrap().unwrap();
+        let account = read_account(&mut evm, addr);
         assert_eq!(account.code_hash, KECCAK_EMPTY, "Code should be cleared");
         assert!(
             account.code.is_none() || account.code.as_ref().map(|c| c.is_empty()).unwrap_or(true),
@@ -245,29 +234,25 @@ fn test_rewrite_bytecodes_sets_specific_code() {
 
     if let Some((addr, expected_bytecode, expected_code_hash)) = code_entry {
         // Setup: Account with no code
-        let mut db = CacheDB::new(EmptyDB::default());
-        db.insert_account_info(
-            *addr,
-            AccountInfo {
-                balance: U256::from(123),
-                nonce: 7,
-                code_hash: KECCAK_EMPTY,
-                code: None,
-                account_id: None,
-            },
-        );
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(addr, account(123, 7, None));
 
         // Action
         let mut evm = create_test_evm(db);
-        rewrite_bytecodes(&mut evm, &config);
+        apply_rewrites(&mut evm, &config);
 
         // Assert: Account should have the specific bytecode
-        let account = evm.db_mut().basic(*addr).unwrap().unwrap();
+        let account = read_account(&mut evm, addr);
         assert_eq!(account.code_hash, *expected_code_hash);
 
         // Verify the bytecode content matches
         if let Some(expected) = expected_bytecode {
-            let code = account.code.expect("Should have code");
+            let code = evm
+                .overlay_db_mut()
+                .cache
+                .contracts
+                .get(expected_code_hash)
+                .expect("Should have code");
             assert_eq!(code.hash_slow(), expected.hash_slow());
         }
     }
@@ -278,28 +263,26 @@ fn test_rewrite_bytecodes_idempotent() {
     let config = get_test_hardfork_config();
 
     // Setup: Account with wrong code
-    let mut db = CacheDB::new(EmptyDB::default());
+    let mut db = InMemoryDB::default();
     for (addr, _, _) in &config.config {
         db.insert_account_info(
-            *addr,
-            AccountInfo {
-                balance: U256::from(100),
-                nonce: 1,
-                code_hash: keccak256([0xba, 0xd]),
-                code: Some(Bytecode::new_legacy(Bytes::from_static(&[0xba, 0xd]))),
-                account_id: None,
-            },
+            addr,
+            account(
+                100,
+                1,
+                Some(Bytecode::new_legacy(Bytes::from_static(&[0xba, 0xd]))),
+            ),
         );
     }
 
     // Action: Call rewrite_bytecodes TWICE
     let mut evm = create_test_evm(db);
-    rewrite_bytecodes(&mut evm, &config);
-    rewrite_bytecodes(&mut evm, &config); // Second call should be a no-op
+    apply_rewrites(&mut evm, &config);
+    apply_rewrites(&mut evm, &config); // Second call should be a no-op
 
     // Assert: All accounts still have correct code
     for (addr, _, expected_code_hash) in &config.config {
-        let account = evm.db_mut().basic(*addr).unwrap().unwrap();
+        let account = read_account(&mut evm, addr);
         assert_eq!(account.code_hash, *expected_code_hash);
     }
 }
