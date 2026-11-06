@@ -10,7 +10,7 @@ use crate::{
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_primitives::{b256, Address, FixedBytes, B256, U256};
-use derive_more::{Constructor, Deref, Into};
+use derive_more::{Deref, Into};
 use evm2::bytecode::Bytecode;
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, ChainHardforks, ChainSpec,
@@ -89,7 +89,7 @@ hardfork!(
     }
 );
 
-#[derive(Debug, Clone, Default, Into, Constructor, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Into, PartialEq, Eq)]
 pub struct BalancerHardforkConfig {
     pub activation_time: u64,
     pub config: Vec<(Address, Option<Bytecode>, B256)>,

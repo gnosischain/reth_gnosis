@@ -96,7 +96,7 @@ const INITIATE_CHANGE_TOPIC: B256 =
 
 type StateUpdateHook = Option<Box<dyn FnMut(StateUpdate) + Send>>;
 
-// REF: https://github.com/paradigmxyz/reth/blob/8572c88fe04fb2213d86f020ed9e72e612abb097/crates/ethereum/evm/src/executor.rs
+// REF: https://github.com/paradigmxyz/reth/blob/v2.10.0/crates/ethereum/evm/src/executor.rs
 /// Block executor for Gnosis.
 ///
 /// Mirrors reth's `EthBlockExecutor` (including state streaming and block access list
@@ -612,7 +612,7 @@ const fn final_block_gas_used(
     }
 }
 
-// REF: https://github.com/paradigmxyz/reth/blob/8572c88fe04fb2213d86f020ed9e72e612abb097/crates/ethereum/evm/src/executor.rs
+// REF: https://github.com/paradigmxyz/reth/blob/v2.10.0/crates/ethereum/evm/src/executor.rs
 // Along with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
 impl<'a, R> BlockExecutor for GnosisBlockExecutor<'a, R>
 where
