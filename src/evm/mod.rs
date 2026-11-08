@@ -3,9 +3,9 @@
 //! Gnosis diverges from Ethereum execution in three EVM-level ways, each implemented here:
 //!
 //! - Transaction fees: the London base fee (and, from Prague, the blob fee) is minted to the
-//!   chain's EIP-1559 fee collector instead of being burned ([`handler`]).
+//!   chain's EIP-1559 fee collector instead of being burned (the `handler` module).
 //! - Gnosis ran EIP-1283 SSTORE net gas metering between its Constantinople and Petersburg
-//!   blocks, which evm2 has no spec for ([`eip1283`]).
+//!   blocks, which evm2 has no spec for (the `eip1283` module).
 //! - The fee collector address is per-chain configuration, so it travels with each EVM instance
 //!   in [`GnosisEvmExt`].
 
