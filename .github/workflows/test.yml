@@ -63,7 +63,15 @@ jobs:
       - name: Downloading ethereum/tests
         run: git clone --branch v17.0 --depth 1 https://github.com/ethereum/tests ethereum-tests
       - name: Downloading EELS fixtures released at Cancun
-        run: curl -fsSL --retry 5 --retry-all-errors -O https://github.com/ethereum/execution-spec-tests/releases/download/v2.1.1/fixtures.tar.gz && tar -xzf fixtures.tar.gz
+        # Via the API (gh) rather than github.com/.../releases/download, which can 504.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in 1 2 3 4 5; do
+            gh release download v2.1.1 --repo ethereum/execution-spec-tests --pattern fixtures.tar.gz --clobber && break
+            sleep 15
+          done
+          tar -xzf fixtures.tar.gz
       - name: Test specs (EELS and ethereum/tests)
         run: cargo test --features testing --release
 
