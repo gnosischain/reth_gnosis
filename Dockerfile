@@ -5,15 +5,15 @@ LABEL org.opencontainers.image.source=https://github.com/paradigmxyz/reth
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 # Install system dependencies.
-# reth v2.4.0's default features pull in `jit` (revmc -> llvm-sys 221 -> LLVM 22) and
+# reth's default features pull in `jit` (evm2-jit -> inkwell -> llvm-sys 231 -> LLVM 23) and
 # `gmp` (gmp-mpfr-sys -> m4). LLVM setup mirrors reth's own CI via the vendored script,
-# which symlinks `llvm-config` onto PATH so llvm-sys finds it (no LLVM_SYS_221_PREFIX
+# which symlinks `llvm-config` onto PATH so llvm-sys finds it (no LLVM_SYS_231_PREFIX
 # needed). The script is COPYed in the `chef` base stage so it is present before
-# `cargo chef cook` compiles revmc/llvm-sys.
+# `cargo chef cook` compiles evm2-jit/llvm-sys.
 COPY .github/scripts/install_llvm_ubuntu.sh /tmp/install_llvm_ubuntu.sh
 RUN apt-get update && apt-get -y upgrade \
     && apt-get install -y libclang-dev pkg-config m4 \
-    && bash /tmp/install_llvm_ubuntu.sh 22 \
+    && bash /tmp/install_llvm_ubuntu.sh 23 \
     && rm -rf /var/lib/apt/lists/*
 
 # Builds a cargo-chef plan

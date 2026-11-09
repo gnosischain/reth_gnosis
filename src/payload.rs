@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use alloy_consensus::Transaction;
 use alloy_eips::eip7685::Requests;
+use alloy_primitives::U256;
 use alloy_rlp::Encodable;
 use gnosis_primitives::header::GnosisHeader;
 use reth::{
@@ -24,9 +25,9 @@ use reth_ethereum_engine_primitives::{
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_evm::{
-    block::TxResult,
-    execute::{BlockBuilder, BlockBuilderOutcome},
-    ConfigureEvm, Evm, NextBlockEnvAttributes,
+    database::StateProviderDatabase,
+    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor},
+    ConfigureEvm, EvmEnv, NextBlockEnvAttributes,
 };
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_node_api::PayloadAttributes;
@@ -35,15 +36,12 @@ use reth_payload_builder::{BlobSidecars, PayloadId};
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_primitives_traits::SealedBlock;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
-use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::{EvmStateProvider, StateProvider};
 use reth_transaction_pool::{
     error::{Eip4844PoolTransactionError, InvalidPoolTransactionError},
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
     ValidPoolTransaction,
 };
-use revm::context::{Block, Cfg};
-use revm::primitives::U256;
 use tracing::{debug, trace, warn};
 
 use crate::{
@@ -165,7 +163,9 @@ where
     let BuildArguments {
         mut cached_reads,
         execution_cache,
-        mut state_root_handle,
+        // The state root is computed synchronously in `builder.finish` below, so the
+        // background state-root task is not fed.
+        state_root_handle: _,
         config,
         cancel,
         best_payload,
@@ -198,15 +198,12 @@ where
     );
     let chain_spec = client.chain_spec();
     let is_amsterdam = chain_spec.is_amsterdam_active_at_timestamp(attributes.timestamp());
-    let mut db = State::builder()
-        .with_database(cached_reads.as_db_mut(state))
-        .with_bundle_update()
-        .with_bal_builder_if(is_amsterdam)
-        .build();
+    let blob_params = chain_spec.blob_params_at_timestamp(attributes.timestamp);
+    let cached_db = cached_reads.as_db_mut(state);
 
     let mut builder = evm_config
         .builder_for_next_block(
-            &mut db,
+            cached_db,
             &parent_header,
             NextBlockEnvAttributes {
                 timestamp: attributes.timestamp(),
@@ -220,33 +217,24 @@ where
             },
         )
         .map_err(PayloadBuilderError::other)?;
+    if is_amsterdam {
+        builder.executor_mut().enable_block_access_list_builder();
+    }
 
     debug!(target: "payload_builder", id=%payload_id, parent_header = ?parent_header.hash(), parent_number = parent_header.number, "building new payload");
     let mut cumulative_tx_gas_used = 0;
     let mut block_regular_gas_used = 0;
     let mut block_state_gas_used = 0;
-    let block_gas_limit: u64 = builder.evm_mut().block().gas_limit();
-    let tx_gas_limit_cap = builder.evm_mut().cfg_env().tx_gas_limit_cap();
-    let base_fee = builder.evm_mut().block().basefee();
+    let block_gas_limit: u64 = builder.evm_env().block_env().gas_limit.saturating_to();
+    let separate_block_gas = builder.evm_env().uses_separate_block_gas();
+    let regular_gas_limit_cap = builder.evm_env().regular_gas_limit_cap();
+    let base_fee = builder.evm_env().block_base_fee();
+    let blob_fee = blob_params
+        .as_ref()
+        .map(|_| builder.evm_env().block_blob_base_fee());
 
-    let mut best_txs = best_txs(BestTransactionsAttributes::new(
-        base_fee,
-        builder
-            .evm_mut()
-            .block()
-            .blob_gasprice()
-            .map(|gasprice| gasprice as u64),
-    ));
+    let mut best_txs = best_txs(BestTransactionsAttributes::new(base_fee, blob_fee));
     let mut total_fees = U256::ZERO;
-
-    // If we have a sparse trie handle, wire a state hook that streams per-tx state diffs
-    // to the background trie pipeline for incremental state root computation.
-    if let Some(task) = state_root_handle.as_mut() {
-        builder
-            .evm_mut()
-            .db_mut()
-            .set_state_hook(Some(Box::new(task.take_state_hook())));
-    }
 
     builder.apply_pre_execution_changes().map_err(|err| {
         warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
@@ -260,7 +248,6 @@ where
     let mut block_blob_count = 0;
     let mut block_transactions_rlp_length = 0;
 
-    let blob_params = chain_spec.blob_params_at_timestamp(attributes.timestamp);
     let protocol_max_blob_count = blob_params
         .as_ref()
         .map(|params| params.max_blob_count)
@@ -283,10 +270,10 @@ where
 
     while let Some(pool_tx) = best_txs.next() {
         // ensure we still have capacity for this transaction
-        let exceeds_gas_limit = if is_amsterdam {
+        let exceeds_gas_limit = if separate_block_gas {
             let regular_available_gas = block_gas_limit.saturating_sub(block_regular_gas_used);
             let state_available_gas = block_gas_limit.saturating_sub(block_state_gas_used);
-            let regular_tx_gas_limit = pool_tx.gas_limit().min(tx_gas_limit_cap);
+            let regular_tx_gas_limit = pool_tx.gas_limit().min(regular_gas_limit_cap);
 
             if regular_tx_gas_limit > regular_available_gas {
                 Some((regular_tx_gas_limit, regular_available_gas))
@@ -397,10 +384,7 @@ where
         let miner_fee = tx.effective_tip_per_gas(base_fee);
         let tx_hash = *tx.tx_hash();
 
-        let mut tx_regular_gas_used = 0;
-        let gas_output = match builder.execute_transaction_with_result_closure(tx, |result| {
-            tx_regular_gas_used = result.result().result.gas().block_regular_gas_used();
-        }) {
+        let gas_output = match builder.execute_transaction(tx) {
             Ok(gas_output) => gas_output,
             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 error, ..
@@ -460,7 +444,7 @@ where
         let miner_fee = miner_fee.expect("fee is always valid; execution succeeded");
         total_fees += U256::from(miner_fee) * U256::from(gas_used);
         cumulative_tx_gas_used += gas_used;
-        block_regular_gas_used += tx_regular_gas_used;
+        block_regular_gas_used += gas_output.regular_gas_used();
         block_state_gas_used += gas_output.state_gas_used();
 
         // Add blob tx sidecar to the payload.

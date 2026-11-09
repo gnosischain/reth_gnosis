@@ -1,37 +1,41 @@
-use std::borrow::Cow;
+use std::{any::Any, borrow::Cow, sync::Arc};
 
-use alloy_consensus::{Transaction, TransactionEnvelope, TxReceipt};
-use alloy_eips::eip4895::Withdrawals;
-use alloy_eips::eip7002::WITHDRAWAL_REQUEST_TYPE;
-use alloy_eips::eip7251;
-use alloy_eips::{eip7685::Requests, Encodable2718};
-use alloy_evm::block::{ExecutableTx, GasOutput, StateDB};
-use alloy_evm::eth::EthTxResult;
-use alloy_evm::Evm;
-use alloy_evm::{
-    eth::eip6110::{self, parse_deposits_from_receipts},
-    FromTxWithEncoded,
+use alloy_consensus::{
+    transaction::{TransactionEnvelope, TxHashRef},
+    Transaction, TxReceipt,
 };
-use alloy_primitives::B256;
-use reth_chainspec::EthereumHardforks;
-use reth_errors::{BlockExecutionError, BlockValidationError};
-use reth_evm::execute::InternalBlockExecutionError;
-use reth_evm::{
-    block::{BlockExecutor, BlockExecutorFactory, SystemCaller},
-    eth::{
-        receipt_builder::{AlloyReceiptBuilder, ReceiptBuilder, ReceiptBuilderCtx},
-        spec::EthExecutorSpec,
+use alloy_eip7928::{BlockAccessIndex, BlockAccessList};
+use alloy_eips::{
+    eip4895::Withdrawals, eip6110::DEPOSIT_REQUEST_TYPE, eip7002::WITHDRAWAL_REQUEST_TYPE,
+    eip7251::CONSOLIDATION_REQUEST_TYPE, eip7685::Requests,
+};
+use alloy_primitives::{map::AddressMap, Address, Bytes, Log, TxKind, B256, U256};
+use evm2::{
+    ethereum::intrinsic_and_floor_gas,
+    evm::{
+        AccountInfo, Bal, PendingState, SystemTx, BEACON_ROOTS_ADDRESS,
+        CONSOLIDATION_REQUEST_ADDRESS, HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS,
+        SYSTEM_CALL_GAS_LIMIT, WITHDRAWAL_REQUEST_ADDRESS,
     },
-    EvmFactory, FromRecoveredTx, RecoveredTx,
+    registry::HandlerError,
+    Evm, EvmFeatures, TxResult, TxResultWithState,
 };
-use reth_provider::BlockExecutionResult;
-use revm::context::Block;
-use revm::database::DatabaseCommitExt;
-use revm::primitives::{Address, Log};
-use revm::{context::result::ResultAndState, DatabaseCommit, Inspector};
+use reth_chainspec::EthereumHardforks;
+use reth_evm::{
+    execute::{map_database_error, map_handler_error},
+    BlockExecutionError, BlockExecutionOutput, BlockExecutor, BlockExecutorFactory,
+    BlockTransactionResult, BlockValidationError, CommitChanges, ExecutorTx, GasOutput,
+    InternalBlockExecutionError, InvalidTxError, ReceiptBuilder, ReceiptBuilderCtx, RecoveredTx,
+};
+use reth_evm_ethereum::RethReceiptBuilder;
+use reth_execution_types::{BlockExecutionResult, BlockState, StateUpdate};
 
-use crate::evm::factory::GnosisEvmFactory;
-use crate::gnosis::{apply_post_block_system_calls, rewrite_bytecodes};
+use crate::errors::GnosisBlockExecutionError;
+use crate::evm::{factory::GnosisEvmEnv, GnosisEvmFactory, GnosisEvmTypes};
+use crate::gnosis::{
+    block_rewards_call_data, decode_block_rewards, parse_deposit_requests, rewrite_aura_bytecodes,
+    rewrite_bytecodes, withdrawals_call_data,
+};
 use crate::spec::gnosis_spec::{GnosisChainSpec, GnosisHardForks};
 
 /// Per-block context for AuRa-execution-mode blocks (pre-merge blocks of an
@@ -49,15 +53,14 @@ pub struct AuraExecutionCtx {
     /// address and feed the rolling-finality tracker.
     pub validator_contract: Option<Address>,
     /// Rolling finality tracker for `InitiateChange` finalization (POSDAO).
-    pub rolling_finality: std::sync::Arc<std::sync::Mutex<crate::aura::finality::RollingFinality>>,
+    pub rolling_finality: Arc<std::sync::Mutex<crate::aura::finality::RollingFinality>>,
     /// POSDAO activation block number. Rolling finality is only consulted
     /// when `block_num >= posdao_transition`. Before POSDAO, `InitiateChange`
     /// events use immediate finalization at `N+1`. Required (no Option,
     /// no sentinel — lifted from the chain spec's `aura.posdaoTransition`).
     pub posdao_transition: u64,
     /// AuRa pre-merge bytecode rewrites to apply at this exact block, if any.
-    pub aura_bytecode_rewrites:
-        Option<std::collections::BTreeMap<Address, alloy_primitives::Bytes>>,
+    pub aura_bytecode_rewrites: Option<std::collections::BTreeMap<Address, Bytes>>,
 }
 
 /// Gnosis-specific block execution context.
@@ -83,81 +86,278 @@ pub struct GnosisBlockExecutionCtx<'a> {
     pub block_rewards_override: Option<Address>,
 }
 
-// REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/op-evm/src/block/mod.rs#L42
-/// Block executor for Gnosis.
-#[derive(Debug)]
-pub struct GnosisBlockExecutor<'a, Evm, R: ReceiptBuilder> {
-    /// Reference to the specification object.
-    spec: GnosisChainSpec,
+/// `getValidators()` selector.
+const GET_VALIDATORS_SELECTOR: [u8; 4] = [0xb7, 0xab, 0x4d, 0xb5];
+/// `finalizeChange()` selector.
+const FINALIZE_CHANGE_SELECTOR: [u8; 4] = [0x75, 0x28, 0x62, 0x11];
+/// `keccak256("InitiateChange(bytes32,address[])")`, emitted by POSDAO validator contracts.
+const INITIATE_CHANGE_TOPIC: B256 =
+    alloy_primitives::b256!("55252fa6eee4741b4e24a74a70e9c11fd2c2281df8d6ea13126ff845f7825c89");
 
+type StateUpdateHook = Option<Box<dyn FnMut(StateUpdate) + Send>>;
+
+// REF: https://github.com/paradigmxyz/reth/blob/v2.10.1/crates/ethereum/evm/src/executor.rs
+/// Block executor for Gnosis.
+///
+/// Mirrors reth's `EthBlockExecutor` (including state streaming and block access list
+/// plumbing), with Gnosis system calls, fee handling and AuRa logic layered on top.
+#[expect(
+    missing_debug_implementations,
+    reason = "evm2::Evm has no Debug impl for its erased fields"
+)]
+pub struct GnosisBlockExecutor<'a, R: ReceiptBuilder> {
+    /// Reference to the specification object.
+    spec: &'a GnosisChainSpec,
     /// Context for block execution.
     pub ctx: GnosisBlockExecutionCtx<'a>,
     /// Inner EVM.
-    evm: Evm,
-    /// Utility to call system smart contracts.
-    system_caller: SystemCaller<GnosisChainSpec>,
+    evm: Evm<'a, GnosisEvmTypes>,
     /// Receipt builder.
     receipt_builder: R,
-
+    /// Block rewards contract used unless `ctx.block_rewards_override` is set.
+    block_rewards_address: Address,
+    /// Accumulated state changes of the block.
+    block_state: BlockState,
+    /// Optional hook streaming every committed state change (used for parallel state roots).
+    state_update_hook: StateUpdateHook,
     /// Receipts of executed transactions.
     receipts: Vec<R::Receipt>,
-    /// Total gas used by transactions in this block.
-    gas_used: u64,
-
-    /// Blob gas used by the block.
-    /// Before cancun activation, this is always 0.
+    /// Total receipt gas used by transactions in this block.
+    cumulative_gas_used: u64,
+    /// Regular gas used, for EIP-8037 separate block gas accounting.
+    block_regular_gas_used: u64,
+    /// State gas used, for EIP-8037 separate block gas accounting.
+    block_state_gas_used: u64,
+    /// Whether the block meters regular and state gas separately (EIP-8037).
+    separate_block_gas: bool,
+    /// Blob gas used by the block. Before cancun activation, this is always 0.
     pub blob_gas_used: u64,
-
-    // Gnosis-specific fields
-    block_rewards_address: Address,
 }
 
-impl<'a, Evm, R> GnosisBlockExecutor<'a, Evm, R>
-where
-    R: ReceiptBuilder,
-{
-    /// Creates a new [`GnosisBlockExecutor`]
-    pub fn new(
-        evm: Evm,
-        ctx: GnosisBlockExecutionCtx<'a>,
-        spec: &GnosisChainSpec,
-        receipt_builder: R,
-        block_rewards_address: Address,
-    ) -> Self {
-        Self {
-            evm,
-            ctx,
-            receipts: Vec::new(),
-            gas_used: 0,
-            blob_gas_used: 0,
-            system_caller: SystemCaller::new(spec.clone()),
-            spec: spec.clone(),
-            receipt_builder,
-            block_rewards_address,
-        }
+/// Detached Gnosis transaction result with the metadata needed to commit its receipt.
+#[derive(Debug)]
+pub struct GnosisTransactionResultWithState<TxType> {
+    result: TxResultWithState<GnosisEvmTypes>,
+    tx_type: TxType,
+    blob_gas_used: u64,
+}
+
+impl<TxType> BlockTransactionResult<GnosisEvmTypes> for GnosisTransactionResultWithState<TxType> {
+    fn result(&self) -> &TxResultWithState<GnosisEvmTypes> {
+        &self.result
     }
 }
 
-/// System-call helpers. Live in their own impl block because they need
-/// the `E: Evm<DB: StateDB>` bound that the constructor / decoder above don't.
-impl<'a, E, R> GnosisBlockExecutor<'a, E, R>
-where
-    E: Evm<DB: StateDB>,
-    R: ReceiptBuilder,
-{
-    /// Run a system call from `SYSTEM_ADDRESS` to `contract` and commit the
-    /// resulting state diff. SYSTEM_ADDRESS preservation is handled inside
-    /// `evm/factory.rs::transact_system_call`.
-    fn system_call_and_commit(
+impl<'a, R: ReceiptBuilder> GnosisBlockExecutor<'a, R> {
+    /// Creates a new [`GnosisBlockExecutor`].
+    pub fn new(
+        evm: Evm<'a, GnosisEvmTypes>,
+        ctx: GnosisBlockExecutionCtx<'a>,
+        spec: &'a GnosisChainSpec,
+        receipt_builder: R,
+        block_rewards_address: Address,
+    ) -> Self {
+        let separate_block_gas = evm.version().feature(EvmFeatures::EIP8037);
+        Self {
+            spec,
+            ctx,
+            evm,
+            receipt_builder,
+            block_rewards_address,
+            block_state: BlockState::new(),
+            state_update_hook: None,
+            receipts: Vec::new(),
+            cumulative_gas_used: 0,
+            block_regular_gas_used: 0,
+            block_state_gas_used: 0,
+            separate_block_gas,
+            blob_gas_used: 0,
+        }
+    }
+
+    /// Returns the accumulated block state.
+    pub const fn block_state(&self) -> &BlockState {
+        &self.block_state
+    }
+
+    fn block_number(&self) -> u64 {
+        self.evm.block().number.saturating_to()
+    }
+
+    fn block_timestamp(&self) -> u64 {
+        self.evm.block().timestamp.saturating_to()
+    }
+
+    fn emit_state(&mut self, update: StateUpdate) {
+        if update.is_empty() {
+            return;
+        }
+        if let Some(hook) = self.state_update_hook.as_mut() {
+            hook(update);
+        }
+    }
+
+    /// Commits constructed state changes to the EVM overlay and the block state, streaming them
+    /// to the state hook.
+    ///
+    /// Every state change of the block must go through this or [`Self::commit_detached`] /
+    /// [`Self::system_call`]: the engine computes the state root from the streamed updates.
+    fn commit_pending_state(&mut self, state: &PendingState) {
+        let mut update = StateUpdate::default();
+        let stream = self.state_update_hook.is_some();
+        for changes in state.account_changes() {
+            self.block_state
+                .commit_account_changes(changes, stream.then_some(&mut update));
+        }
+        self.evm.overlay_db_mut().commit_pending(state);
+        self.emit_state(update);
+    }
+
+    /// Commits a detached transaction result and returns its execution outcome.
+    fn commit_detached(
+        &mut self,
+        output: TxResultWithState<GnosisEvmTypes>,
+    ) -> TxResult<GnosisEvmTypes> {
+        let TxResultWithState {
+            result,
+            pending_state,
+            ..
+        } = output;
+        let mut update = StateUpdate::default();
+        let stream = self.state_update_hook.is_some();
+        for changes in pending_state.account_changes() {
+            self.block_state
+                .commit_account_changes(changes, stream.then_some(&mut update));
+        }
+        // Reattach the finalized transaction so evm2 recycles its allocations, as reth does.
+        self.evm.state_mut().set_pending_state(pending_state);
+        self.evm.state_mut().commit_transaction();
+        self.emit_state(update);
+        result
+    }
+
+    /// Runs a system call from `SYSTEM_ADDRESS` to `contract` and commits its state changes,
+    /// whatever its outcome.
+    ///
+    /// Gnosis system calls (Nethermind's `SystemTransaction`) pay no fees and do not bump the
+    /// caller nonce, which is evm2's system call semantics. The pre-evm2 implementation ran them
+    /// as 30M gas transactions through the regular transaction handler, so this keeps that
+    /// handler's observable gas semantics: intrinsic gas is deducted from the 30M limit, and the
+    /// caller, the coinbase (from EIP-3651) and the precompiles start warm.
+    ///
+    /// On top of that, Gnosis exempts `SYSTEM_ADDRESS` from EIP-158 empty-account cleanup (see
+    /// gnosischain/go-ethereum `core/state/statedb.go::Finalise`): a system call leaves it in
+    /// state as an (empty) account.
+    fn system_call(
         &mut self,
         contract: Address,
-        data: alloy_primitives::Bytes,
-    ) -> Result<revm::context::result::ExecutionResult<E::HaltReason>, E::Error> {
-        let revm::context::result::ResultAndState { result, state } = self
+        data: Bytes,
+    ) -> Result<TxResult<GnosisEvmTypes>, BlockExecutionError> {
+        let (intrinsic_gas, _floor_gas) = intrinsic_and_floor_gas(
+            self.evm.version(),
+            SYSTEM_ADDRESS,
+            TxKind::Call(contract),
+            &data,
+            0,
+            0,
+            U256::ZERO,
+        );
+        let beneficiary = self.evm.block().beneficiary;
+        if self.evm.feature(EvmFeatures::EIP3651) {
+            self.evm.state_mut().prewarm(&beneficiary);
+        }
+        self.evm.state_mut().prewarm(&SYSTEM_ADDRESS);
+        self.evm.warm_precompiles();
+
+        let tx = SystemTx::new(contract, data)
+            .with_gas_limit(SYSTEM_CALL_GAS_LIMIT.saturating_sub(intrinsic_gas));
+        let output = self
             .evm
-            .transact_system_call(alloy_eips::eip4788::SYSTEM_ADDRESS, contract, data)?;
-        self.evm.db_mut().commit(state);
+            .system_call(tx)
+            .map_err(map_handler_error)?
+            .detach();
+        let result = self.commit_detached(output);
+        self.ensure_system_address_exists()?;
         Ok(result)
+    }
+
+    /// Creates `SYSTEM_ADDRESS` as an empty account if it does not exist yet.
+    fn ensure_system_address_exists(&mut self) -> Result<(), BlockExecutionError> {
+        if self
+            .evm
+            .read_account_info(&SYSTEM_ADDRESS)
+            .map_err(map_database_error)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let mut state = PendingState::default();
+        state.insert_account(SYSTEM_ADDRESS, None, Some(AccountInfo::empty()));
+        self.commit_pending_state(&state);
+        Ok(())
+    }
+
+    /// Adds non-zero `increments` to account balances, creating accounts as needed.
+    fn increment_balances(
+        &mut self,
+        increments: AddressMap<U256>,
+    ) -> Result<(), BlockExecutionError> {
+        let mut state = PendingState::default();
+        for (address, increment) in increments {
+            // revm's `State::increment_balances` skipped zero increments entirely.
+            if increment.is_zero() {
+                continue;
+            }
+            let original = self
+                .evm
+                .read_account_info(&address)
+                .map_err(map_database_error)?;
+            let mut current = original.clone().unwrap_or_else(AccountInfo::empty);
+            current.balance = current.balance.saturating_add(increment);
+            state.insert_account(address, original, Some(current));
+        }
+        self.commit_pending_state(&state);
+        Ok(())
+    }
+
+    /// Records a committed transaction's receipt and gas usage.
+    fn record_transaction(
+        &mut self,
+        outcome: TxResult<GnosisEvmTypes>,
+        tx_type: <R::Transaction as TransactionEnvelope>::TxType,
+        blob_gas_used: u64,
+    ) -> GasOutput {
+        let tx_gas_used = outcome.tx_gas_used();
+        let regular_gas_used = outcome.execution_gas_spent();
+        let state_gas_used = outcome.state_gas_spent();
+        self.block_regular_gas_used = self.block_regular_gas_used.saturating_add(regular_gas_used);
+        self.block_state_gas_used = self.block_state_gas_used.saturating_add(state_gas_used);
+        self.cumulative_gas_used += tx_gas_used;
+        self.blob_gas_used += blob_gas_used;
+        self.receipts
+            .push(
+                self.receipt_builder
+                    .build_receipt::<GnosisEvmTypes>(ReceiptBuilderCtx {
+                        tx_type,
+                        result: outcome,
+                        cumulative_gas_used: self.cumulative_gas_used,
+                    }),
+            );
+        GasOutput::new_with_regular(tx_gas_used, regular_gas_used, state_gas_used)
+    }
+
+    const fn block_access_list_builder_enabled(&self) -> bool {
+        self.evm.state().bal_builder().is_some()
+    }
+
+    #[inline]
+    fn set_transaction_block_access_index(&mut self) {
+        if self.block_access_list_builder_enabled() {
+            let index = self.receipts.len() as u64 + 1;
+            self.evm
+                .state_mut()
+                .set_bal_index(BlockAccessIndex::new(index));
+        }
     }
 
     /// Call `getValidators()` on the validator contract, commit the result,
@@ -174,32 +374,25 @@ where
         block_num: u64,
         log_label: &'static str,
     ) -> Result<(), BlockExecutionError> {
-        // getValidators() selector = 0xb7ab4db5
-        let get_validators_data = alloy_primitives::Bytes::from_static(&[0xb7, 0xab, 0x4d, 0xb5]);
         let result = self
-            .system_call_and_commit(validator_contract, get_validators_data)
+            .system_call(
+                validator_contract,
+                Bytes::from_static(&GET_VALIDATORS_SELECTOR),
+            )
             .map_err(|e| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("AuRa getValidators() syscall failed at block {block_num}: {e}").into(),
+                aura_error(format!(
+                    "AuRa getValidators() syscall failed at block {block_num}: {e}"
                 ))
             })?;
-        let output = match result {
-            revm::context::result::ExecutionResult::Success { output, .. } => output,
-            other => {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!(
-                            "AuRa getValidators() at block {block_num} did not succeed: {other:?}"
-                        )
-                        .into(),
-                    ),
-                ));
-            }
-        };
-        let validators = decode_address_array(&output.into_data()).map_err(|_| {
-            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                format!("AuRa getValidators() at block {block_num} returned undecodable data")
-                    .into(),
+        if !result.status {
+            return Err(aura_error(format!(
+                "AuRa getValidators() at block {block_num} did not succeed: {:?} {}",
+                result.stop, result.output
+            )));
+        }
+        let validators = decode_address_array(&result.output).map_err(|_| {
+            aura_error(format!(
+                "AuRa getValidators() at block {block_num} returned undecodable data"
             ))
         })?;
         tracing::info!(
@@ -212,15 +405,169 @@ where
         // invoke this helper, so `self.ctx.aura` is always `Some` here.
         // Read defensively in case a future caller forgets that contract.
         if let Some(aura) = self.ctx.aura.as_ref() {
-            let mut rf = aura.rolling_finality.lock().map_err(|_| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    "AuRa rolling-finality mutex poisoned".into(),
-                ))
-            })?;
+            let mut rf = aura
+                .rolling_finality
+                .lock()
+                .map_err(|_| aura_error("AuRa rolling-finality mutex poisoned".into()))?;
             rf.set_validators(validators);
         }
         Ok(())
     }
+
+    /// Runs the EIP-7002/EIP-7251 request contract call at `address` and returns its output.
+    fn request_system_call(&mut self, address: Address) -> Result<Bytes, BlockExecutionError> {
+        let result = self.system_call(address, Bytes::new())?;
+        if result.status {
+            return Ok(result.output);
+        }
+        let message = if result.is_revert() {
+            format!("execution reverted: {}", result.output)
+        } else {
+            format!("execution halted: {:?}", result.stop)
+        };
+        Err(match address {
+            WITHDRAWAL_REQUEST_ADDRESS => {
+                BlockValidationError::WithdrawalRequestsContractCall { message }
+            }
+            _ => BlockValidationError::ConsolidationRequestsContractCall { message },
+        }
+        .into())
+    }
+
+    /// Gnosis post-block system calls.
+    ///
+    /// [Gnosis/fork:DIFF]: upstream Ethereum computes balance changes for pre-merge ommer and
+    /// block rewards, beacon withdrawal mints, and the DAO hardfork drain. Gnosis instead:
+    /// - does NOT credit withdrawals as native token mint,
+    /// - calls the deposit contract with the withdrawal data,
+    /// - calls the block rewards contract for the bridged xDAI mint.
+    ///
+    /// Returns the native balance increments and the logs of the block rewards call.
+    fn apply_post_block_system_calls(
+        &mut self,
+        block_rewards_contract: Address,
+        withdrawal_contract: Address,
+    ) -> Result<(AddressMap<U256>, Vec<Log>), BlockExecutionError> {
+        if self
+            .spec
+            .is_shanghai_active_at_timestamp(self.block_timestamp())
+        {
+            let call_data = {
+                let withdrawals = self.ctx.withdrawals.as_deref().ok_or(
+                    GnosisBlockExecutionError::CustomErrorMessage {
+                        message: "block has no withdrawals field".to_owned(),
+                    },
+                )?;
+                withdrawals_call_data(withdrawals)
+            };
+            // Ref: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
+            let result = self
+                .system_call(withdrawal_contract, call_data)
+                .map_err(|e| {
+                    gnosis_error(format!("withdrawal contract system call revert: {e}"))
+                })?;
+            if !result.status {
+                return Err(gnosis_error(if result.is_revert() {
+                    format!("execution reverted: {}", result.output)
+                } else {
+                    format!("execution halted: {:?}", result.stop)
+                }));
+            }
+        }
+
+        // Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
+        //
+        // Without contract code there are no rewards, and the call's state changes are not
+        // committed (as in the revm implementation).
+        let rewards_contract_has_code = self
+            .evm
+            .read_account_info(&block_rewards_contract)
+            .map_err(map_database_error)?
+            .is_some_and(|info| !info.is_empty_code_hash());
+        if !rewards_contract_has_code {
+            return Ok((AddressMap::default(), Vec::new()));
+        }
+
+        let coinbase = self.evm.block().beneficiary;
+        let result = self
+            .system_call(block_rewards_contract, block_rewards_call_data(coinbase))
+            .map_err(|e| gnosis_error(format!("block rewards contract system call error: {e}")))?;
+        if !result.status {
+            return Err(gnosis_error(if result.is_revert() {
+                format!(
+                    "block rewards contract system call revert {}",
+                    result.output
+                )
+            } else {
+                format!("block rewards contract system call halt {:?}", result.stop)
+            }));
+        }
+        let balance_increments = decode_block_rewards(&result.output)?;
+        Ok((balance_increments, result.logs))
+    }
+
+    /// AuRa-execution-mode-only post-block work: `InitiateChange` detection and signer push into
+    /// rolling finality.
+    fn apply_aura_post_block(&self, aura: &AuraExecutionCtx, reward_logs: &[Log]) {
+        let block_num = self.block_number();
+        let is_posdao = block_num >= aura.posdao_transition;
+
+        // Check receipts AND reward system-call logs for InitiateChange events.
+        // In POSDAO, the reward contract calls the validator contract which
+        // emits InitiateChange. These events are in the reward syscall logs,
+        // NOT in user-transaction receipts.
+        if let Some(validator_contract) = aura.validator_contract {
+            let is_initiate_change = |log: &Log| {
+                log.address == validator_contract
+                    && log.topics().first() == Some(&INITIATE_CHANGE_TOPIC)
+            };
+            let has_initiate_change = self
+                .receipts
+                .iter()
+                .any(|receipt| receipt.logs().iter().any(is_initiate_change))
+                || reward_logs.iter().any(is_initiate_change);
+
+            if has_initiate_change {
+                if is_posdao {
+                    tracing::info!(
+                        target: "reth::gnosis",
+                        block = block_num,
+                        validator = %validator_contract,
+                        "InitiateChange event detected (POSDAO), adding to rolling finality"
+                    );
+                    if let Ok(mut rf) = aura.rolling_finality.lock() {
+                        rf.add_pending_transition(block_num, validator_contract);
+                    }
+                } else {
+                    tracing::info!(
+                        target: "reth::gnosis",
+                        block = block_num,
+                        validator = %validator_contract,
+                        "InitiateChange event detected (pre-POSDAO), immediate finalize at N+1"
+                    );
+                    if let Ok(mut rf) = aura.rolling_finality.lock() {
+                        rf.set_immediate_finalize(block_num + 1, validator_contract);
+                    }
+                }
+            }
+        }
+
+        // Push this block's signer into the rolling finality tracker (POSDAO only).
+        if is_posdao {
+            let signer = self.evm.block().beneficiary;
+            if let Ok(mut rf) = aura.rolling_finality.lock() {
+                rf.push(block_num, signer);
+            }
+        }
+    }
+}
+
+fn aura_error(message: String) -> BlockExecutionError {
+    BlockExecutionError::Internal(InternalBlockExecutionError::Other(message.into()))
+}
+
+fn gnosis_error(message: String) -> BlockExecutionError {
+    GnosisBlockExecutionError::CustomErrorMessage { message }.into()
 }
 
 /// ABI-decode an `address[]` from `getValidators()` return data.
@@ -250,21 +597,72 @@ fn decode_address_array(data: &[u8]) -> Result<Vec<Address>, ()> {
     Ok(addresses)
 }
 
-// REF: https://github.com/alloy-rs/evm/blob/99d5b552c131e3419448c214e09474bf4f0d1e4b/crates/evm/src/eth/block.rs#L81
-// ALong with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
-impl<E, R> BlockExecutor for GnosisBlockExecutor<'_, E, R>
+const fn final_block_gas_used(
+    separate_block_gas: bool,
+    cumulative_gas_used: u64,
+    block_regular_gas_used: u64,
+    block_state_gas_used: u64,
+) -> u64 {
+    if !separate_block_gas {
+        cumulative_gas_used
+    } else if block_regular_gas_used > block_state_gas_used {
+        block_regular_gas_used
+    } else {
+        block_state_gas_used
+    }
+}
+
+// REF: https://github.com/paradigmxyz/reth/blob/v2.10.1/crates/ethereum/evm/src/executor.rs
+// Along with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
+impl<'a, R> BlockExecutor for GnosisBlockExecutor<'a, R>
 where
-    E: Evm<DB: StateDB, Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
-    R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
-    <R::Transaction as TransactionEnvelope>::TxType: Send + 'static,
+    R: ReceiptBuilder,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
-    type Evm = E;
-    type Result = EthTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
+    type Evm = Evm<'a, GnosisEvmTypes>;
+    type TransactionResultWithState =
+        GnosisTransactionResultWithState<<R::Transaction as TransactionEnvelope>::TxType>;
+    type BlockAccessList = Bal;
+
+    fn evm(&self) -> &Self::Evm {
+        &self.evm
+    }
+
+    fn evm_mut(&mut self) -> &mut Self::Evm {
+        &mut self.evm
+    }
+
+    fn set_state_hook(&mut self, hook: impl FnMut(StateUpdate) + Send + 'static) -> bool {
+        self.state_update_hook = Some(Box::new(hook));
+        true
+    }
+
+    fn convert_block_access_list(
+        block_access_list: &BlockAccessList,
+    ) -> Result<Self::BlockAccessList, BlockExecutionError> {
+        Bal::try_from(block_access_list.as_slice()).map_err(BlockExecutionError::other)
+    }
+
+    fn set_block_access_list(&mut self, block_access_list: Arc<Self::BlockAccessList>) {
+        self.evm.state_mut().set_bal(block_access_list);
+    }
+
+    fn set_block_access_index(&mut self, index: BlockAccessIndex) {
+        self.evm.state_mut().set_bal_index(index);
+    }
+
+    fn enable_block_access_list_builder(&mut self) {
+        self.evm.state_mut().enable_bal_builder();
+        self.evm.state_mut().reset_bal_index();
+    }
+
+    fn take_block_access_list(&mut self) -> Option<BlockAccessList> {
+        self.evm.state_mut().take_bal_builder().map(Into::into)
+    }
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        let block_num = self.evm.block().number().to::<u64>();
+        let block_num = self.block_number();
 
         // AuRa-execution-mode block (= pre-merge block of an AuRa chain).
         // For post-merge blocks and non-AuRa chains (including chains that
@@ -275,19 +673,14 @@ where
             let is_posdao = block_num >= aura.posdao_transition;
 
             // Initialize validator set via getValidators() if empty.
-            // The transact_system_call result IS committed — it's a view function so
-            // the only state changes are cache entries (nonce/beneficiary cleaned up
-            // by transact_system_call's cleanup logic).
+            // The system call result IS committed — it's a view function so
+            // the only state change is SYSTEM_ADDRESS creation.
             if is_posdao {
                 if let Some(validator_contract) = aura.validator_contract {
                     let needs_init = aura
                         .rolling_finality
                         .lock()
-                        .map_err(|_| {
-                            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                                "AuRa rolling-finality mutex poisoned".into(),
-                            ))
-                        })?
+                        .map_err(|_| aura_error("AuRa rolling-finality mutex poisoned".into()))?
                         .validator_count()
                         == 0;
                     if needs_init {
@@ -309,7 +702,9 @@ where
                     count = rewrites.len(),
                     "Applying AuRa bytecode rewrites"
                 );
-                crate::gnosis::rewrite_aura_bytecodes(&mut self.evm, rewrites);
+                let state =
+                    rewrite_aura_bytecodes(&mut self.evm, rewrites).map_err(map_database_error)?;
+                self.commit_pending_state(&state);
             }
 
             // AuRa: call finalizeChange() on validator contract at epoch boundaries.
@@ -321,15 +716,15 @@ where
                     validator = %validator_contract,
                     "Calling finalizeChange() on validator contract"
                 );
-                // finalizeChange() selector = 0x75286211
-                let finalize_data = alloy_primitives::Bytes::from_static(&[0x75, 0x28, 0x62, 0x11]);
-                self.system_call_and_commit(validator_contract, finalize_data)
+                // The outcome is not checked: the call's state changes are committed either way.
+                let _ = self
+                    .system_call(
+                        validator_contract,
+                        Bytes::from_static(&FINALIZE_CHANGE_SELECTOR),
+                    )
                     .map_err(|e| {
-                        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                            format!(
-                                "AuRa finalizeChange() syscall failed at block {block_num}: {e}"
-                            )
-                            .into(),
+                        aura_error(format!(
+                            "AuRa finalizeChange() syscall failed at block {block_num}: {e}"
                         ))
                     })?;
                 // After finalizeChange (POSDAO only), refresh the active validator
@@ -348,7 +743,7 @@ where
         // Balancer-hardfork bytecode rewrites are chain-level (timestamp-based),
         // not AuRa-specific — applied for both pre- and post-merge blocks.
         // Only fires at the activation block (active in current, not in parent).
-        let current_timestamp: u64 = self.evm.block().timestamp().to();
+        let current_timestamp = self.block_timestamp();
         let is_balancer_active_now = self
             .spec
             .is_balancer_hardfork_active_at_timestamp(current_timestamp);
@@ -357,130 +752,189 @@ where
             .is_balancer_hardfork_active_at_timestamp(self.ctx.parent_timestamp);
         if is_balancer_active_now && !was_balancer_active_in_parent {
             if let Some(config) = self.spec.balancer_hardfork_config.as_ref() {
-                rewrite_bytecodes(&mut self.evm, config);
+                let state = rewrite_bytecodes(&mut self.evm, config).map_err(map_database_error)?;
+                self.commit_pending_state(&state);
             }
         }
 
-        self.system_caller
-            .apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
-        self.system_caller
-            .apply_beacon_root_contract_call(self.ctx.parent_beacon_block_root, &mut self.evm)?;
+        // EIP-2935: history storage. Reverts and halts are accepted.
+        if self.spec.is_prague_active_at_timestamp(current_timestamp) && block_num != 0 {
+            let _ = self.system_call(HISTORY_STORAGE_ADDRESS, self.ctx.parent_hash.0.into())?;
+        }
+
+        // EIP-4788: beacon roots. Reverts and halts are accepted.
+        if self.spec.is_cancun_active_at_timestamp(current_timestamp) {
+            let parent_beacon_block_root = self
+                .ctx
+                .parent_beacon_block_root
+                .ok_or(BlockValidationError::MissingParentBeaconBlockRoot)?;
+            if block_num == 0 {
+                if !parent_beacon_block_root.is_zero() {
+                    return Err(
+                        BlockValidationError::CancunGenesisParentBeaconBlockRootNotZero {
+                            parent_beacon_block_root,
+                        }
+                        .into(),
+                    );
+                }
+            } else {
+                let _ =
+                    self.system_call(BEACON_ROOTS_ADDRESS, parent_beacon_block_root.0.into())?;
+            }
+        }
 
         Ok(())
     }
 
-    fn execute_transaction_without_commit(
-        &mut self,
-        tx: impl ExecutableTx<Self>,
-    ) -> Result<Self::Result, BlockExecutionError> {
-        let (tx_env, tx) = tx.into_parts();
+    fn into_state(self) -> reth_evm::BundleState {
+        self.block_state.into_bundle()
+    }
 
+    fn validate_transaction_gas_limit(
+        &mut self,
+        transaction_gas_limit: u64,
+    ) -> Result<(), BlockExecutionError> {
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
         // must be no greater than the block's gasLimit.
-        let block_available_gas = self.evm.block().gas_limit() - self.gas_used;
-
-        if tx.tx().gas_limit() > block_available_gas {
+        let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
+        let regular_limit = transaction_gas_limit.min(self.evm.version().tx_gas_limit_cap);
+        let unavailable = if self.separate_block_gas {
+            let regular_available = block_gas_limit.saturating_sub(self.block_regular_gas_used);
+            let state_available = block_gas_limit.saturating_sub(self.block_state_gas_used);
+            if regular_limit > regular_available {
+                Some((transaction_gas_limit, regular_available))
+            } else if transaction_gas_limit > state_available {
+                Some((transaction_gas_limit, state_available))
+            } else {
+                None
+            }
+        } else {
+            let available = block_gas_limit.saturating_sub(self.cumulative_gas_used);
+            (regular_limit > available).then_some((transaction_gas_limit, available))
+        };
+        if let Some((transaction_gas_limit, block_available_gas)) = unavailable {
             return Err(
                 BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
-                    transaction_gas_limit: tx.tx().gas_limit(),
+                    transaction_gas_limit,
                     block_available_gas,
                 }
                 .into(),
             );
         }
+        Ok(())
+    }
 
-        // Execute transaction and return the result
-        let result = self.evm.transact(tx_env).map_err(|err| {
-            let hash = tx.tx().trie_hash();
-            BlockExecutionError::evm(err, hash)
-        })?;
+    fn execute_transaction_with_commit_condition(
+        &mut self,
+        transaction: impl ExecutorTx<Self>,
+        commit: impl FnOnce(&TxResult<GnosisEvmTypes>, evm2::TxStateChanges<'_>) -> CommitChanges,
+    ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        let (transaction, tx) = transaction.into_parts();
+        self.set_transaction_block_access_index();
+        self.validate_transaction_gas_limit(tx.tx().gas_limit())?;
+        let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
+        let tx_type = tx.tx().tx_type();
 
-        Ok(EthTxResult {
+        let stream = self.state_update_hook.is_some();
+        let mut update = StateUpdate::default();
+        let executed = self
+            .evm
+            .transact(&transaction)
+            .map_err(|err| map_transaction_error(err, *tx.tx().tx_hash()))?;
+        if !commit(executed.result(), executed.changes()).should_commit() {
+            let _ = executed.discard();
+            return Ok(None);
+        }
+        for changes in executed.account_changes() {
+            self.block_state
+                .commit_account_changes(changes, stream.then_some(&mut update));
+        }
+        let outcome = executed.commit();
+        self.emit_state(update);
+        Ok(Some(self.record_transaction(
+            outcome,
+            tx_type,
+            blob_gas_used,
+        )))
+    }
+
+    fn execute_transaction_without_commit(
+        &mut self,
+        transaction: impl ExecutorTx<Self>,
+    ) -> Result<Self::TransactionResultWithState, BlockExecutionError> {
+        let (transaction, tx) = transaction.into_parts();
+        self.set_transaction_block_access_index();
+        self.validate_transaction_gas_limit(tx.tx().gas_limit())?;
+        let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
+        let tx_type = tx.tx().tx_type();
+        let result = self
+            .evm
+            .transact(&transaction)
+            .map(|executed| executed.detach())
+            .map_err(|err| map_transaction_error(err, *tx.tx().tx_hash()))?;
+        Ok(GnosisTransactionResultWithState {
             result,
-            blob_gas_used: tx.tx().blob_gas_used().unwrap_or_default(),
-            tx_type: tx.tx().tx_type(),
+            tx_type,
+            blob_gas_used,
         })
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
-        let EthTxResult {
-            result: ResultAndState { result, state },
-            blob_gas_used,
+    fn commit_transaction(
+        &mut self,
+        output: Self::TransactionResultWithState,
+    ) -> Result<GasOutput, BlockExecutionError> {
+        let GnosisTransactionResultWithState {
+            result,
             tx_type,
+            blob_gas_used,
         } = output;
-
-        // reth 2.3.0 removed the per-transaction state hook (OnStateHook) from the block
-        // executor; state changes are observed elsewhere now, so no notification here.
-
-        let gas_used = result.tx_gas_used();
-
-        // append gas used
-        self.gas_used += gas_used;
-
-        // only determine cancun fields when active
-        if self
-            .spec
-            .is_cancun_active_at_timestamp(self.evm.block().timestamp().saturating_to())
-        {
-            self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
-        }
-
-        // Push transaction changeset and calculate header bloom filter for receipt.
-        self.receipts
-            .push(self.receipt_builder.build_receipt(ReceiptBuilderCtx {
-                tx_type,
-                evm: &self.evm,
-                result,
-                state: &state,
-                cumulative_gas_used: self.gas_used,
-            }));
-
-        // Commit the state changes.
-        self.evm.db_mut().commit(state);
-
-        GasOutput::new(gas_used)
+        self.set_transaction_block_access_index();
+        let outcome = self.commit_detached(result);
+        Ok(self.record_transaction(outcome, tx_type, blob_gas_used))
     }
 
-    fn finish(
+    fn receipts(&self) -> &[Self::Receipt] {
+        &self.receipts
+    }
+
+    fn finish_with_block_access_list(
+        self,
+    ) -> Result<(BlockExecutionOutput<Self::Receipt>, Option<BlockAccessList>), BlockExecutionError>
+    {
+        let (output, bal) = self.finish_with_prepared_block_access_list()?;
+        Ok((output, bal.map(Into::into)))
+    }
+
+    fn finish_with_prepared_block_access_list(
         mut self,
-    ) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
-        let deposit_contract = self.spec.deposit_contract_address();
-        let deposit_contract = deposit_contract.unwrap_or_else(|| {
+    ) -> Result<(BlockExecutionOutput<Self::Receipt>, Option<Bal>), BlockExecutionError> {
+        self.set_transaction_block_access_index();
+        let deposit_contract = self.spec.deposit_contract_address().unwrap_or_else(|| {
             panic!("Deposit contract address is not set in the chain specification");
         });
-        let timestamp = self.evm.block().timestamp();
-        let withdrawals = self.ctx.withdrawals.as_deref();
-        let beneficiary = self.evm.block().beneficiary();
 
         let requests = if self
             .spec
-            .is_prague_active_at_timestamp(self.evm.block().timestamp().to())
+            .is_prague_active_at_timestamp(self.block_timestamp())
         {
-            // Collect all EIP-6110 deposits
-            let deposit_requests = parse_deposits_from_receipts(&self.spec, &self.receipts)?;
-
             let mut requests = Requests::default();
 
+            // EIP-6110 deposits
+            let deposit_requests = parse_deposit_requests(deposit_contract, &self.receipts)?;
             if !deposit_requests.is_empty() {
-                requests.push_request_with_type(eip6110::DEPOSIT_REQUEST_TYPE, deposit_requests);
+                requests.push_request_with_type(DEPOSIT_REQUEST_TYPE, deposit_requests);
             }
 
-            let withdrawal_requests = self
-                .system_caller
-                .apply_withdrawal_requests_contract_call(&mut self.evm)?;
+            // EIP-7002 withdrawal requests
+            let withdrawal_requests = self.request_system_call(WITHDRAWAL_REQUEST_ADDRESS)?;
             if !withdrawal_requests.is_empty() {
                 requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawal_requests);
             }
 
-            // Collect all EIP-7251 requests
-            let consolidation_requests = self
-                .system_caller
-                .apply_consolidation_requests_contract_call(&mut self.evm)?;
+            // EIP-7251 consolidation requests
+            let consolidation_requests = self.request_system_call(CONSOLIDATION_REQUEST_ADDRESS)?;
             if !consolidation_requests.is_empty() {
-                requests.push_request_with_type(
-                    eip7251::CONSOLIDATION_REQUEST_TYPE,
-                    consolidation_requests,
-                );
+                requests.push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidation_requests);
             }
             requests
         } else {
@@ -495,135 +949,123 @@ where
             .ctx
             .block_rewards_override
             .unwrap_or(self.block_rewards_address);
-        let (balance_increments, _, reward_logs) = apply_post_block_system_calls(
-            &self.spec,
-            reward_address,
-            deposit_contract,
-            timestamp.to(),
-            withdrawals,
-            beneficiary,
-            &mut self.evm,
-        )?;
+        let (balance_increments, reward_logs) =
+            self.apply_post_block_system_calls(reward_address, deposit_contract)?;
 
-        // AuRa-execution-mode-only post-block work: InitiateChange detection +
-        // signer push into rolling finality. Skipped for post-merge blocks and
-        // non-AuRa chains.
         if let Some(aura) = &self.ctx.aura {
-            let block_num: u64 = self.evm.block().number().to();
-            let is_posdao = block_num >= aura.posdao_transition;
-
-            // Check receipts AND reward system-call logs for InitiateChange events.
-            // In POSDAO, the reward contract calls the validator contract which
-            // emits InitiateChange. These events are in the reward syscall logs,
-            // NOT in user-transaction receipts.
-            // InitiateChange event topic = keccak256("InitiateChange(bytes32,address[])")
-            // = 0x55252fa6eee4741b4e24a74a70e9c11fd2c2281df8d6ea13126ff845f7825c89
-            if let Some(validator_contract) = aura.validator_contract {
-                let initiate_change_topic = alloy_primitives::b256!(
-                    "55252fa6eee4741b4e24a74a70e9c11fd2c2281df8d6ea13126ff845f7825c89"
-                );
-
-                let has_initiate_change_in_receipts = self.receipts.iter().any(|receipt| {
-                    receipt.logs().iter().any(|log| {
-                        log.address == validator_contract
-                            && log.topics().first() == Some(&initiate_change_topic)
-                    })
-                });
-                let has_initiate_change_in_reward = reward_logs.iter().any(|log| {
-                    log.address == validator_contract
-                        && log.topics().first() == Some(&initiate_change_topic)
-                });
-
-                if has_initiate_change_in_receipts || has_initiate_change_in_reward {
-                    if is_posdao {
-                        tracing::info!(
-                            target: "reth::gnosis",
-                            block = block_num,
-                            validator = %validator_contract,
-                            "InitiateChange event detected (POSDAO), adding to rolling finality"
-                        );
-                        if let Ok(mut rf) = aura.rolling_finality.lock() {
-                            rf.add_pending_transition(block_num, validator_contract);
-                        }
-                    } else {
-                        tracing::info!(
-                            target: "reth::gnosis",
-                            block = block_num,
-                            validator = %validator_contract,
-                            "InitiateChange event detected (pre-POSDAO), immediate finalize at N+1"
-                        );
-                        if let Ok(mut rf) = aura.rolling_finality.lock() {
-                            rf.set_immediate_finalize(block_num + 1, validator_contract);
-                        }
-                    }
-                }
-            }
-
-            // Push this block's signer into the rolling finality tracker (POSDAO only).
-            if is_posdao {
-                let signer = self.evm.block().beneficiary();
-                if let Ok(mut rf) = aura.rolling_finality.lock() {
-                    rf.push(block_num, signer);
-                }
-            }
+            self.apply_aura_post_block(aura, &reward_logs);
         }
-
         // Gnosis-specific // End
 
-        // increment balances
-        self.evm
-            .db_mut()
-            .increment_balances(balance_increments)
-            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
+        self.increment_balances(balance_increments)?;
 
-        // reth 2.3.0 removed the post-block balance-increment state hook; the reference
-        // EthBlockExecutor now applies the increments directly with no notification.
-
-        Ok((
-            self.evm,
+        let block_access_list = self.evm.state_mut().take_bal_builder();
+        let gas_used = final_block_gas_used(
+            self.separate_block_gas,
+            self.cumulative_gas_used,
+            self.block_regular_gas_used,
+            self.block_state_gas_used,
+        );
+        let output = BlockExecutionOutput::new(
             BlockExecutionResult {
                 receipts: self.receipts,
                 requests,
-                gas_used: self.gas_used,
+                gas_used,
                 blob_gas_used: self.blob_gas_used,
             },
-        ))
-    }
-
-    fn evm_mut(&mut self) -> &mut Self::Evm {
-        &mut self.evm
-    }
-
-    fn evm(&self) -> &Self::Evm {
-        &self.evm
-    }
-
-    fn receipts(&self) -> &[Self::Receipt] {
-        &self.receipts
+            self.block_state.into_bundle(),
+        );
+        Ok((output, block_access_list))
     }
 }
 
-/// Ethereum block executor factory.
+/// Transaction validation error returned by the evm2 transaction handlers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GnosisInvalidTxError(HandlerError);
+
+impl core::fmt::Display for GnosisInvalidTxError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl core::error::Error for GnosisInvalidTxError {}
+
+impl InvalidTxError for GnosisInvalidTxError {
+    fn is_nonce_too_low(&self) -> bool {
+        matches!(self.0, HandlerError::InvalidNonce { expected, got } if got < expected)
+    }
+
+    fn is_gas_limit_too_high(&self) -> bool {
+        matches!(
+            self.0,
+            HandlerError::GasLimitMoreThanBlock { .. }
+                | HandlerError::TxGasLimitGreaterThanCap { .. }
+        )
+    }
+
+    fn is_gas_limit_too_low(&self) -> bool {
+        matches!(self.0, HandlerError::IntrinsicGasTooLow { .. })
+    }
+
+    /// Exposes the wrapped [`HandlerError`] so RPC layers can recover the structured error.
+    fn as_any(&self) -> &(dyn Any + 'static) {
+        &self.0
+    }
+}
+
+/// Maps a transaction handler error to a block error, as reth's Ethereum executor does:
+/// validation failures become `InvalidTx`, database and fatal errors keep their classification.
+fn map_transaction_error(error: HandlerError, hash: B256) -> BlockExecutionError {
+    match error {
+        HandlerError::Database(database_error) if database_error.is_fatal() => {
+            InternalBlockExecutionError::EVM {
+                hash,
+                error: Box::new(HandlerError::Database(database_error)),
+            }
+            .into()
+        }
+        HandlerError::Database(database_error) => BlockValidationError::EVM {
+            hash,
+            error: Box::new(HandlerError::Database(database_error)),
+        }
+        .into(),
+        error @ (HandlerError::Fatal(_) | HandlerError::WrongTransactionType { .. }) => {
+            InternalBlockExecutionError::EVM {
+                hash,
+                error: Box::new(error),
+            }
+            .into()
+        }
+        error => BlockValidationError::InvalidTx {
+            hash,
+            error: Box::new(GnosisInvalidTxError(error)),
+        }
+        .into(),
+    }
+}
+
+/// Gnosis block executor factory.
 #[derive(Debug, Clone, Default)]
-pub struct GnosisBlockExecutorFactory<R = AlloyReceiptBuilder, EvmFactory = GnosisEvmFactory> {
+pub struct GnosisBlockExecutorFactory<R = RethReceiptBuilder> {
     /// Receipt builder.
     receipt_builder: R,
     /// Chain specification.
     spec: GnosisChainSpec,
     /// EVM factory.
-    evm_factory: EvmFactory,
+    evm_factory: GnosisEvmFactory,
 
     // Gnosis-specific fields to be used in GnosisBlockExecutor
     block_rewards_address: Address,
 }
 
-impl<R, EvmFactory> GnosisBlockExecutorFactory<R, EvmFactory> {
-    /// Creates a new [`GnosisBlockExecutorFactory`] with the given spec, [`EvmFactory`], and
+impl<R> GnosisBlockExecutorFactory<R> {
+    /// Creates a new [`GnosisBlockExecutorFactory`] with the given spec, [`GnosisEvmFactory`], and
     /// [`ReceiptBuilder`].
     pub const fn new(
         receipt_builder: R,
         spec: GnosisChainSpec,
-        evm_factory: EvmFactory,
+        evm_factory: GnosisEvmFactory,
         block_rewards_address: Address,
     ) -> Self {
         Self {
@@ -645,39 +1087,37 @@ impl<R, EvmFactory> GnosisBlockExecutorFactory<R, EvmFactory> {
     }
 
     /// Exposes the EVM factory.
-    pub const fn evm_factory(&self) -> &EvmFactory {
+    pub const fn evm_factory(&self) -> &GnosisEvmFactory {
         &self.evm_factory
     }
 }
 
-impl<R, EvmF> BlockExecutorFactory for GnosisBlockExecutorFactory<R, EvmF>
+impl<R> BlockExecutorFactory for GnosisBlockExecutorFactory<R>
 where
-    R: ReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt<Log = Log>>,
-    EvmF: EvmFactory<Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
-    <R::Transaction as TransactionEnvelope>::TxType: Send + 'static,
-    Self: 'static,
+    R: ReceiptBuilder + 'static,
 {
-    type EvmFactory = EvmF;
-    type ExecutionCtx<'a> = GnosisBlockExecutionCtx<'a>;
+    type EvmFactory = GnosisEvmFactory;
+    type EvmTypes = GnosisEvmTypes;
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
-    type TxExecutionResult =
-        EthTxResult<EvmF::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
-    type Executor<'a, DB: StateDB, I: Inspector<EvmF::Context<DB>>> =
-        GnosisBlockExecutor<'a, EvmF::Evm<DB, I>, &'a R>;
-
-    fn evm_factory(&self) -> &Self::EvmFactory {
-        &self.evm_factory
-    }
-
-    fn create_executor<'a, DB, I>(
-        &'a self,
-        evm: EvmF::Evm<DB, I>,
-        ctx: Self::ExecutionCtx<'a>,
-    ) -> Self::Executor<'a, DB, I>
+    type Evm<'a> = Evm<'a, GnosisEvmTypes>;
+    type EvmEnv = GnosisEvmEnv;
+    type ExecutionCtx<'a>
+        = GnosisBlockExecutionCtx<'a>
     where
-        DB: StateDB,
-        I: Inspector<EvmF::Context<DB>>,
+        Self: 'a;
+    type Executor<'a>
+        = GnosisBlockExecutor<'a, &'a R>
+    where
+        Self: 'a;
+
+    fn create_executor<'a>(
+        &'a self,
+        evm: Self::Evm<'a>,
+        ctx: Self::ExecutionCtx<'a>,
+    ) -> Self::Executor<'a>
+    where
+        Self: 'a,
     {
         GnosisBlockExecutor::new(
             evm,
@@ -686,6 +1126,17 @@ where
             &self.receipt_builder,
             self.block_rewards_address,
         )
+    }
+
+    fn evm_factory(&self) -> &Self::EvmFactory {
+        &self.evm_factory
+    }
+
+    fn evm_with_env<'a, DB>(&self, db: DB, evm_env: Self::EvmEnv) -> Self::Evm<'a>
+    where
+        DB: evm2::evm::DynDatabase + 'a,
+    {
+        self.evm_factory.create_evm(db, evm_env)
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::initialize::download_init_state::{ensure_state, DownloadStateSpec};
 use crate::{spec::gnosis_spec::GnosisChainSpecParser, GnosisNode};
+use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use gnosis_primitives::header::GnosisHeader;
 use reth::tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
@@ -17,7 +18,6 @@ use reth_provider::{
     StaticFileWriter, StorageSettingsCache,
 };
 use reth_static_file_types::StaticFileSegment;
-use revm::primitives::B256;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
