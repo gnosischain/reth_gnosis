@@ -18,7 +18,7 @@ use evm2::{
         SYSTEM_CALL_GAS_LIMIT, WITHDRAWAL_REQUEST_ADDRESS,
     },
     registry::HandlerError,
-    Evm, EvmFeatures, TxResult, TxResultWithState,
+    AnyError, Evm, EvmFeatures, TxResult, TxResultWithState,
 };
 use reth_chainspec::EthereumHardforks;
 use reth_evm::{
@@ -96,11 +96,12 @@ const INITIATE_CHANGE_TOPIC: B256 =
 
 type StateUpdateHook = Option<Box<dyn FnMut(StateUpdate) + Send>>;
 
-// REF: https://github.com/paradigmxyz/reth/blob/v2.10.1/crates/ethereum/evm/src/executor.rs
+// REF: https://github.com/alloy-rs/evm2/blob/66687c18b34d3bdbb899f5eb7605070615c03475/crates/evm2/src/block/ethereum/mod.rs
+// (reth v2.11.0 runs Ethereum blocks on this evm2 executor; its helpers are in `execution.rs`.)
 /// Block executor for Gnosis.
 ///
-/// Mirrors reth's `EthBlockExecutor` (including state streaming and block access list
-/// plumbing), with Gnosis system calls, fee handling and AuRa logic layered on top.
+/// Mirrors evm2's Ethereum `EthBlockExecutor`, which reth's wraps (including state streaming and
+/// block access list plumbing), with Gnosis system calls, fee handling and AuRa logic on top.
 #[expect(
     missing_debug_implementations,
     reason = "evm2::Evm has no Debug impl for its erased fields"
@@ -145,6 +146,10 @@ pub struct GnosisTransactionResultWithState<TxType> {
 impl<TxType> BlockTransactionResult<GnosisEvmTypes> for GnosisTransactionResultWithState<TxType> {
     fn result(&self) -> &TxResultWithState<GnosisEvmTypes> {
         &self.result
+    }
+
+    fn into_result(self) -> TxResultWithState<GnosisEvmTypes> {
+        self.result
     }
 }
 
@@ -612,7 +617,8 @@ const fn final_block_gas_used(
     }
 }
 
-// REF: https://github.com/paradigmxyz/reth/blob/v2.10.1/crates/ethereum/evm/src/executor.rs
+// REF: https://github.com/alloy-rs/evm2/blob/66687c18b34d3bdbb899f5eb7605070615c03475/crates/evm2/src/block/ethereum/mod.rs
+// (reth v2.11.0 runs Ethereum blocks on this evm2 executor; its helpers are in `execution.rs`.)
 // Along with the usual logic, we introduce some Gnosis-specific logic here (Denoted as such)
 impl<'a, R> BlockExecutor for GnosisBlockExecutor<'a, R>
 where
@@ -1005,7 +1011,10 @@ impl InvalidTxError for GnosisInvalidTxError {
     }
 
     fn is_gas_limit_too_low(&self) -> bool {
-        matches!(self.0, HandlerError::IntrinsicGasTooLow { .. })
+        matches!(
+            self.0,
+            HandlerError::IntrinsicGasTooLow { .. } | HandlerError::GasLimitBelowFloor { .. }
+        )
     }
 
     /// Exposes the wrapped [`HandlerError`] so RPC layers can recover the structured error.
@@ -1021,19 +1030,19 @@ fn map_transaction_error(error: HandlerError, hash: B256) -> BlockExecutionError
         HandlerError::Database(database_error) if database_error.is_fatal() => {
             InternalBlockExecutionError::EVM {
                 hash,
-                error: Box::new(HandlerError::Database(database_error)),
+                error: AnyError::new(HandlerError::Database(database_error)),
             }
             .into()
         }
         HandlerError::Database(database_error) => BlockValidationError::EVM {
             hash,
-            error: Box::new(HandlerError::Database(database_error)),
+            error: AnyError::new(HandlerError::Database(database_error)),
         }
         .into(),
         error @ (HandlerError::Fatal(_) | HandlerError::WrongTransactionType { .. }) => {
             InternalBlockExecutionError::EVM {
                 hash,
-                error: Box::new(error),
+                error: AnyError::new(error),
             }
             .into()
         }
