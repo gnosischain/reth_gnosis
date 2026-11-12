@@ -17,7 +17,7 @@ The validator set evolves in three stages:
 
 Two Gnosis-specific quirks matter for execution (not consensus):
 - **Block rewards**: every block (pre- AND post-merge) calls a Gnosis-specific reward contract via system call. The contract returns `(receivers, amounts)` and we credit each receiver. Goes through the AuRa `block_reward_contract_transitions` — different addresses are active at different block ranges.
-- **`SYSTEM_ADDRESS` is exempt from EIP-158 pruning**: the `0xfff...fffe` caller of every system call would normally be pruned post-Spurious-Dragon as an empty touched account, but on Gnosis it stays in the trie. This is *not* an AuRa-specific behavior — `gnosischain/go-ethereum::core/state/statedb.go::Finalise` exempts SYSTEM_ADDRESS unconditionally, across all chains and call types. We mirror that with a single `entry/and_modify/or_insert_with` block in `src/evm/factory.rs::transact_system_call` that flags SYSTEM_ADDRESS with `Created | Touched` so the DB's `apply_account_state` routes it through `newly_created` (preserved) instead of `touch_empty_eip161` (pruned).
+- **`SYSTEM_ADDRESS` is exempt from EIP-158 pruning**: the `0xfff...fffe` caller of every system call would normally be pruned post-Spurious-Dragon as an empty touched account, but on Gnosis it stays in the trie. This is *not* an AuRa-specific behavior — `gnosischain/go-ethereum::core/state/statedb.go::Finalise` exempts SYSTEM_ADDRESS unconditionally, across all chains and call types. We mirror that in `src/block.rs::GnosisBlockExecutor::system_call`: after every system call, `ensure_system_address_exists` creates SYSTEM_ADDRESS as an empty account if it is missing, so it stays in the trie.
 
 ---
 
@@ -44,11 +44,12 @@ The whole AuRa addition is `src/aura/` (consensus + algorithms) plus surgical ch
 | `src/lib.rs` | Builds `GnosisConsensus` instead of `EthBeaconConsensus` and constructs `GnosisEvmConfig`; on `build_evm` runs `aura::recovery::reconstruct_finality_state` if the canonical head is pre-merge AuRa, seeding the `RollingFinality` from the last 32 blocks of receipts |
 | `src/cli/gnosis_cli.rs` | Same swap for the CLI helper components |
 | `src/main.rs` | Adds the `--gnosis.import-post-merge-state` flag (`GnosisExt`). Default behavior is genesis sync via AuRa on reth's v2 storage layout; passing the flag forces v1 storage (`DefaultStorageValues::default().with_v2(false).try_init()`) and runs `download_and_import_init_state` on Gnosis (chain 100) and Chiado (chain 10200). Idempotent — `imported.flag` in the datadir prevents re-import. |
-| `src/evm_config.rs` | `gnosis_revm_spec` (correct `SpecId` for pre-merge headers); pre-merge `disable_base_fee`; Constantinople EIP-1283 SSTORE gas overrides; `GnosisBlockExecutionCtx` is built here per block, including `compute_finalize_change_address` (list→contract transition logic), `validator_contract`, `block_rewards_override`, `aura_bytecode_rewrites`, and the shared `Arc<Mutex<RollingFinality>>` |
-| `src/block.rs` | `GnosisBlockExecutionCtx` carries the AuRa fields; `apply_pre_execution_changes` runs AuRa system calls (validator init, `finalizeChange`, refresh); `finish` detects `InitiateChange` events from receipts + reward logs and feeds the rolling-finality tracker; helpers `system_call_and_commit` and `refresh_validators_via_get_validators` factor out the common pattern |
-| `src/gnosis.rs` | Block-reward call returns `(balance_increments, reward_logs)` so InitiateChange detection can read the logs; `rewrite_aura_bytecodes` (per-block bytecode replacements). All call sites use bare `evm.transact_system_call(...) + db.commit(state)` — SYSTEM_ADDRESS preservation lives in `evm/factory.rs`, not here. |
-| `src/evm/factory.rs` | `transact_system_call` is reworked: 30M gas, `disable_base_fee`/`disable_block_gas_limit`/`disable_nonce_check` swapped on for the call's duration. **Sole site for SYSTEM_ADDRESS preservation**: a single `entry().and_modify(...).or_insert_with(...)` block ensures SYSTEM_ADDRESS is flagged `Created \| Touched` in every system-call result (matching `gnosischain/go-ethereum::core/state/statedb.go::Finalise`). Also removes block beneficiary + fee-collector from the diff and filters unchanged storage slots. |
-| `src/evm/gnosis_evm.rs` | `reward_beneficiary` skips basefee for "free" txs (gasPrice=0 AND priority_fee=0) — service-transaction handling; custom `sstore_eip1283` instruction for Gnosis Constantinople (EIP-1283 net gas metering, which revm only enables at Istanbul via EIP-2200) |
+| `src/evm_config.rs` | `gnosis_spec_id` (correct `SpecId` for pre-merge headers); drops `EvmFeatures::BASE_FEE_CHECK` for pre-merge London+ blocks (service transactions); `gnosis_eip1283_active` and the EIP-1283 SSTORE gas schedule for the Constantinople window; `GnosisBlockExecutionCtx` is built here per block, including `compute_finalize_change_address` (list→contract transition logic), `validator_contract`, `block_rewards_override`, `aura_bytecode_rewrites`, and the shared `Arc<Mutex<RollingFinality>>` |
+| `src/block.rs` | `GnosisBlockExecutionCtx` carries the AuRa fields; `apply_pre_execution_changes` runs AuRa system calls (validator init, `finalizeChange`, refresh); `finish` detects `InitiateChange` events from receipts + reward logs and feeds the rolling-finality tracker; `system_call` runs every system call (30M gas minus intrinsic gas, as an evm2 `SystemTx`) and preserves SYSTEM_ADDRESS; `refresh_validators_via_get_validators` factors out the validator refresh |
+| `src/gnosis.rs` | Call data and output decoding for the Gnosis system calls (`withdrawals_call_data`, `block_rewards_call_data`, `decode_block_rewards`, `parse_deposit_requests`) and the bytecode rewrites (`rewrite_bytecodes`, `rewrite_aura_bytecodes`) as `PendingState`. The calls themselves run in `block.rs`; the block-reward call returns `(balance_increments, reward_logs)` so InitiateChange detection can read the logs. |
+| `src/evm/factory.rs` | `GnosisEvmFactory` builds the evm2 `Evm`: the Gnosis transaction registry (fee hooks), the standard precompiles, the fee collector address, and the EIP-1283 execution config for blocks in the Constantinople window |
+| `src/evm/handler.rs` | Fee hooks on evm2's Ethereum transaction handlers: mint `basefee * gas_used` to the fee collector from London, except for "free" service txs (`is_free`: gasPrice=0 AND priority_fee=0), and the blob fee from Prague |
+| `src/evm/eip1283.rs` | `sstore_eip1283` instruction and gas schedule for Gnosis Constantinople (EIP-1283 net gas metering), installed as an overlay on evm2's PETERSBURG opcode table; evm2 has no Constantinople spec and only implements EIP-2200 from Istanbul |
 | `src/network.rs` | Reports `final_paris_total_difficulty` instead of `0` when our DB's `head.total_difficulty` is zero — pre-merge AuRa peers refuse a TD=0 advertisement at block N>0 |
 
 ---
@@ -79,10 +80,10 @@ The trickiest interaction is between the rolling-finality tracker and the block 
         │      refresh_validators_via_get_validators(...)          │
         │  apply Balancer / AuRa bytecode rewrites                 │
         │  if pre-merge AND finalize_change_address.is_some():     │
-        │      system_call_and_commit(finalizeChange)              │
+        │      system_call(finalizeChange)                         │
         │      if posdao: refresh_validators_via_get_validators()  │
         │  blockhash + beacon_root standard system calls           │
-        │      (all go through factory.rs::transact_system_call,   │
+        │      (all go through block.rs::system_call,              │
         │       which uniformly preserves SYSTEM_ADDRESS)          │
         └──────────────────────────────────────────────────────────┘
                                   │
@@ -108,7 +109,7 @@ A few things to note while reviewing:
 
 - **Two layers of "is_pre_merge"**. The header itself says (`aura_step.is_some()`); the chain spec says (`!is_paris_active_at_block(N)`). Validation uses the header (`mod.rs::is_aura_header`). Execution uses the chain spec (`block.rs`, `evm_config.rs`). They agree at the merge block, but the gating is asymmetric.
 
-- **`SYSTEM_ADDRESS` preservation is centralized in `evm/factory.rs`** and applies *uniformly* to every system call (block-rewards, validator init / `finalizeChange` / `getValidators`, EIP-2935 blockhashes, EIP-4788 beacon-root, post-Shanghai withdrawals, post-Prague EIP-7002/7251 requests). This matches geth's `Finalise()`-level exemption rather than a per-call-site policy. There used to be a `preserve_system_address_for_aura` helper plus an explicit `state.remove(&SYSTEM_ADDRESS)` in withdrawals — both have been removed. Validated end-to-end by the 30M-block Gnosis-mainnet sync.
+- **`SYSTEM_ADDRESS` preservation is centralized in `block.rs::system_call`** and applies *uniformly* to every system call (block-rewards, validator init / `finalizeChange` / `getValidators`, EIP-2935 blockhashes, EIP-4788 beacon-root, post-Shanghai withdrawals, post-Prague EIP-7002/7251 requests). This matches geth's `Finalise()`-level exemption rather than a per-call-site policy. There used to be a `preserve_system_address_for_aura` helper plus an explicit `state.remove(&SYSTEM_ADDRESS)` in withdrawals — both have been removed. Validated end-to-end by the 30M-block Gnosis-mainnet sync.
 
 - **`rolling_finality` is `Arc<Mutex<RollingFinality>>`** and crosses three boundaries: (1) `evm_config.rs` builds the per-block ctx and inspects/clears scheduled `finalizeChange`; (2) `block.rs::apply_pre_execution_changes` reads/writes via the validator system calls; (3) `block.rs::finish` writes via `add_pending_transition` / `set_immediate_finalize` / `push`. Locks are held only briefly. **State is in-memory only — no disk persistence.** Across restarts the state is reconstructed from receipts (see next bullet).
 
@@ -133,15 +134,15 @@ These are the canonical implementations that informed each Gnosis-specific behav
 | Rolling finality | `src/Nethermind/Nethermind.Consensus.AuRa/AuRaBlockFinalizationManager.cs` |
 | Validator set persistence (Nethermind persists; we don't — we receipt-replay instead) | `src/Nethermind/Nethermind.Consensus.AuRa/Validators/ValidatorStore.cs` |
 | Bytecode rewrites | `src/Nethermind/Nethermind.Consensus.AuRa/Contracts/...` (`ContractRewriter` historically) |
-| EIP-158 disabled for AuRa system calls (Nethermind half of the precedent for our SYSTEM_ADDRESS preservation in `evm/factory.rs`) | `src/Nethermind/Nethermind.Consensus.AuRa/Transactions/SystemTransactionProcessor.cs` |
-| **`!tx.IsFree()` basefee gate** on London+ (matches `gnosis_evm.rs::reward_beneficiary`) | `src/Nethermind/Nethermind.Evm/TransactionProcessing/TransactionProcessor.cs` (`PayFees`) |
+| EIP-158 disabled for AuRa system calls (Nethermind half of the precedent for our SYSTEM_ADDRESS preservation in `block.rs::system_call`) | `src/Nethermind/Nethermind.Consensus.AuRa/Transactions/SystemTransactionProcessor.cs` |
+| **`!tx.IsFree()` basefee gate** on London+ (matches `evm/handler.rs::is_free`) | `src/Nethermind/Nethermind.Evm/TransactionProcessing/TransactionProcessor.cs` (`PayFees`) |
 | Receipt root with `skipStateAndStatus` fallback | `src/Nethermind/Nethermind.Blockchain/Receipts/ReceiptsRootCalculator.cs` |
 
 ### geth (Gnosis fork — https://github.com/gnosischain/go-ethereum)
 
 | Concern | File |
 |---|---|
-| **SYSTEM_ADDRESS exempt from EIP-158 pruning** (the canonical reference for our `entry/or_insert_with` block in `evm/factory.rs`). Look for `obj.address != params.SystemAddress` in the empty-account check inside `Finalise`. | `core/state/statedb.go::Finalise` |
+| **SYSTEM_ADDRESS exempt from EIP-158 pruning** (the canonical reference for `ensure_system_address_exists` in `block.rs`). Look for `obj.address != params.SystemAddress` in the empty-account check inside `Finalise`. | `core/state/statedb.go::Finalise` |
 | `RollingFinality`, epoch management, `hasSigner` rule | `consensus/aura/aura.go` |
 | Validator set extraction from events | `consensus/aura/validators.go` |
 
