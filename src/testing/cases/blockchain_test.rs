@@ -453,7 +453,9 @@ pub fn should_skip(path: &Path) -> bool {
         | "CALLBlake2f_MaxRounds.json"
         | "shiftCombinations.json"
 
-        // Skipped by revm as well: <https://github.com/bluealloy/revm/blob/be92e1db21f1c47b34c5a58cfbf019f6b97d7e4b/bins/revme/src/cmd/statetest/runner.rs#L115-L125>
+        // These create contracts at addresses that already hold storage, which on a live chain
+        // needs a hash collision (EIP-7610). reth's ef-tests skip them too:
+        // <https://github.com/paradigmxyz/reth/blob/v2.11.0/testing/ef-tests/src/cases/blockchain_test.rs#L458-L468>
         | "RevertInCreateInInit_Paris.json"
         | "RevertInCreateInInit.json"
         | "dynamicAccountOverwriteEmpty.json"

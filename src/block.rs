@@ -309,7 +309,7 @@ impl<'a, R: ReceiptBuilder> GnosisBlockExecutor<'a, R> {
     ) -> Result<(), BlockExecutionError> {
         let mut state = PendingState::default();
         for (address, increment) in increments {
-            // revm's `State::increment_balances` skipped zero increments entirely.
+            // A zero increment neither creates nor touches the account.
             if increment.is_zero() {
                 continue;
             }
@@ -483,7 +483,7 @@ impl<'a, R: ReceiptBuilder> GnosisBlockExecutor<'a, R> {
         // Ref: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
         //
         // Without contract code there are no rewards, and the call's state changes are not
-        // committed (as in the revm implementation).
+        // committed.
         let rewards_contract_has_code = self
             .evm
             .read_account_info(&block_rewards_contract)

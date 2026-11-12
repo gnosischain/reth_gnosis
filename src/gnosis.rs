@@ -207,8 +207,8 @@ pub fn rewrite_bytecodes<T: EvmTypes>(
 /// Records replacing the code of `address` with `code` (or removing it when `None`), keeping its
 /// balance and nonce.
 ///
-/// The revm implementation committed these changes as touched-but-not-created accounts, so an
-/// account left empty by the rewrite is removed (EIP-161) rather than kept as an empty account.
+/// An account left empty by the rewrite is removed (EIP-161 empty-account cleanup) rather than
+/// kept as an empty account.
 fn insert_code_change(
     state: &mut PendingState,
     address: Address,

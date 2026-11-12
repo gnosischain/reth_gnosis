@@ -51,7 +51,7 @@ impl GnosisEvmFactory {
     /// Returns the execution config (version data and opcode table) for `env`.
     fn execution_config(&self, env: &GnosisEvmEnv) -> ExecutionConfig<GnosisEvmTypes> {
         let block_number = env.block.number.saturating_to::<u64>();
-        // The window maps to PETERSBURG (see `gnosis_revm_spec`); the custom table is a
+        // The window maps to PETERSBURG (see `gnosis_spec_id`); the custom table is a
         // PETERSBURG overlay, so it can only be installed on that spec.
         if env.spec == SpecId::PETERSBURG && self.eip1283_active(block_number) {
             eip1283::execution_config(env.version)

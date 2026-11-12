@@ -102,12 +102,12 @@ impl TxHandlerHooks<GnosisEvmTypes> for GnosisTxHooks {
             let charge_fees = host.feature(EvmFeatures::FEE_CHARGE);
             let fee_collector = host.ext().fee_collector;
             let mut collector = host.state_mut().account(&fee_collector)?;
-            // The pre-evm2 implementation loaded the collector through the revm journal for every
-            // Prague transaction, which also warmed it (EIP-2929). Keep that so transactions that
-            // access the collector are charged the same gas as before.
+            // From Prague the collector is loaded, and so warmed (EIP-2929), for every
+            // transaction, whatever its blob fee. Transactions that later access it pay warm
+            // access gas; changing this would change their gas used.
             collector.warm();
             if charge_fees {
-                // A zero fee still touches the collector, as the revm implementation did.
+                // A zero fee still touches the collector.
                 collector.add_balance(blob_fee);
             }
         }

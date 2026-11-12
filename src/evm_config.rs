@@ -47,7 +47,7 @@ use crate::spec::gnosis_spec::GnosisChainSpec;
 /// the chain spec's Paris fork condition defaults to `activation_block_number: 0` when
 /// `merge_netsplit_block` is absent. This function detects pre-merge headers and returns
 /// the correct pre-merge spec instead.
-pub fn gnosis_revm_spec(chain_spec: &GnosisChainSpec, header: &GnosisHeader) -> SpecId {
+pub fn gnosis_spec_id(chain_spec: &GnosisChainSpec, header: &GnosisHeader) -> SpecId {
     if header.is_pre_merge() {
         // For pre-merge headers, compute spec without Paris/TTD consideration
         let block_number = header.number;
@@ -300,7 +300,7 @@ impl GnosisEvmConfig {
     fn header_evm_env(&self, header: &GnosisHeader) -> GnosisEvmEnv {
         let chain_spec = self.chain_spec();
         let blob_params = chain_spec.blob_params_at_timestamp(header.timestamp);
-        let spec = gnosis_revm_spec(chain_spec, header);
+        let spec = gnosis_spec_id(chain_spec, header);
         let version = gnosis_version(
             chain_spec,
             spec,
